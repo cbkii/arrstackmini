@@ -14,15 +14,15 @@ services:
       PORT_FORWARD_ONLY: "on"
       VPN_PORT_FORWARDING_UP_COMMAND: >-
         /bin/sh -c 'sleep 5 && curl -fsS --retry 3 --max-time 10 -X POST
-        "http://127.0.0.1:8080/api/v2/app/setPreferences"
+        "http://${GLUETUN_SERVICES_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/setPreferences"
         --data "json={\"listen_port\":{{FORWARDED_PORT}},\"upnp\":false}"'
-      HTTP_CONTROL_SERVER_ADDRESS: "127.0.0.1:${GLUETUN_CONTROL_PORT}"
+      HTTP_CONTROL_SERVER_ADDRESS: "${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}"
       HTTP_CONTROL_SERVER_AUTH_FILE: /gluetun/auth/config.toml
-      FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8"
-      FIREWALL_VPN_INPUT_PORTS: "8081,8989,7878,9696,6767,8191"
+      FIREWALL_OUTBOUND_SUBNETS: "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}"
+      FIREWALL_VPN_INPUT_PORTS: "${GLUETUN_VPN_INPUT_PORTS}"
       DOT: "off"
       UPDATER_PERIOD: "24h"
-      HEALTH_TARGET_ADDRESS: "1.1.1.1:443"
+      HEALTH_TARGET_ADDRESS: "${GLUETUN_HEALTH_TARGET_ADDRESS}"
       HEALTH_VPN_DURATION_INITIAL: 30s
       PUID: ${PUID}
       PGID: ${PGID}
@@ -32,15 +32,15 @@ services:
     volumes:
       - ${ARR_DOCKER_DIR}/gluetun:/gluetun
     ports:
-      - "127.0.0.1:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
-      - "${LAN_IP}:${QBT_HTTP_PORT_HOST}:8080"
+      - "${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
+      - "${LAN_IP}:${QBT_HTTP_PORT_HOST}:${QBT_HTTP_PORT_CONTAINER}"
       - "${LAN_IP}:${SONARR_PORT}:${SONARR_PORT}"
       - "${LAN_IP}:${RADARR_PORT}:${RADARR_PORT}"
       - "${LAN_IP}:${PROWLARR_PORT}:${PROWLARR_PORT}"
       - "${LAN_IP}:${BAZARR_PORT}:${BAZARR_PORT}"
       - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"]
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -57,7 +57,7 @@ services:
     container_name: qbittorrent
     network_mode: "service:gluetun"
     environment:
-      WEBUI_PORT: 8080
+      WEBUI_PORT: "${QBT_HTTP_PORT_CONTAINER}"
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
@@ -69,7 +69,7 @@ services:
       gluetun:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v2/app/version"]
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"]
       interval: 30s
       timeout: 10s
       retries: 6
@@ -92,7 +92,7 @@ services:
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8989"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${SONARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   radarr:
@@ -106,7 +106,7 @@ services:
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7878"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${RADARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   prowlarr:
@@ -117,7 +117,7 @@ services:
     volumes:
       - ${ARR_DOCKER_DIR}/prowlarr:/config
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9696"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${PROWLARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   bazarr:
@@ -130,7 +130,7 @@ services:
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6767"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${BAZARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   flaresolverr:
@@ -139,5 +139,5 @@ services:
     network_mode: "service:gluetun"
     environment: { LOG_LEVEL: info }
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8191"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${FLARESOLVERR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
