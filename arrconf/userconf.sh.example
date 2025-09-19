@@ -1,3 +1,8 @@
 # Override defaults here; this file is git‑ignored
 LAN_IP=192.168.1.50
 SERVER_COUNTRIES="Netherlands,Germany,Switzerland"
+
+# Example overrides for container identity and ports
+#PUID=1000
+#PGID=1000
+#QBT_HTTP_PORT_HOST=9081
