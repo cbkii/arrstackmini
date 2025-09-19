@@ -10,8 +10,10 @@ docker logs gluetun --tail 100
 > Ensure your shell has loaded values from the generated `.env` (for example, `set -a; source .env; set +a`).
 
 ```bash
-curl -u "gluetun:$GLUETUN_API_KEY" "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"
-curl -u "gluetun:$GLUETUN_API_KEY" "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded"
+curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
+  "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"
+curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
+  "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded"
 ```
 
 ## qBittorrent port
