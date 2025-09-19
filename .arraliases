@@ -1,0 +1,321 @@
+# shellcheck disable=SC1090,SC2154
+
+ARR_STACK_DIR=${ARR_STACK_DIR:-__ARR_STACK_DIR__}
+if [ -z "${ARR_STACK_DIR:-}" ]; then
+  ARR_STACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+ARR_ENV_FILE=${ARR_ENV_FILE:-__ARR_ENV_FILE__}
+ARR_DOCKER_DIR=${ARR_DOCKER_DIR:-__ARR_DOCKER_DIR__}
+ARRCONF_DIR=${ARRCONF_DIR:-__ARRCONF_DIR__}
+: "${ARR_ENV_FILE:=${ARR_STACK_DIR}/.env}"
+: "${ARR_DOCKER_DIR:=${ARR_STACK_DIR}/docker-data}"
+: "${ARRCONF_DIR:=${ARR_STACK_DIR}/arrconf}"
+export ARR_STACK_DIR ARR_ENV_FILE ARR_DOCKER_DIR ARRCONF_DIR
+
+_arr_env_get(){
+  local key="$1"
+  [[ -f "$ARR_ENV_FILE" ]] || return 1
+  awk -F= -v k="$key" '$1==k{print substr($0, index($0,"=")+1); exit}' "$ARR_ENV_FILE"
+}
+
+_arr_services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+
+_arr_compose(){ (cd "$ARR_STACK_DIR" && docker compose "$@" ); }
+
+_arr_is_tty(){ [ -t 1 ]; }
+
+_arr_host(){
+  local host
+  host="$(_arr_env_get LAN_IP)"
+  if [ -z "$host" ] || [ "$host" = "0.0.0.0" ]; then
+    host="127.0.0.1"
+  fi
+  printf '%s' "$host"
+}
+
+_arr_gluetun_port(){ printf '%s' "${GLUETUN_CONTROL_PORT:-$(_arr_env_get GLUETUN_CONTROL_PORT || echo 8000)}"; }
+
+_arr_gluetun_key(){
+  if [ -n "${GLUETUN_API_KEY:-}" ]; then
+    printf '%s' "$GLUETUN_API_KEY"
+  else
+    _arr_env_get GLUETUN_API_KEY
+  fi
+}
+
+_arr_gluetun_api(){
+  local endpoint="$1"
+  local key="$(_arr_gluetun_key)"
+  local port="$(_arr_gluetun_port)"
+  curl -fsS -u "gluetun:${key}" "http://127.0.0.1:${port}${endpoint}"
+}
+
+_arr_qbt_base(){
+  local host port
+  host="$(_arr_host)"
+  port="$(_arr_env_get QBT_HTTP_PORT_HOST)"
+  [ -n "$port" ] || port=8081
+  printf 'http://%s:%s' "$host" "$port"
+}
+
+_arr_qbt_auth(){
+  local user pass
+  user="$(_arr_env_get QBT_USER)"
+  pass="$(_arr_env_get QBT_PASS)"
+  if [ -n "$user" ] && [ -n "$pass" ]; then
+    curl -fsS -c /tmp/.qbt_cookies.$$ -b /tmp/.qbt_cookies.$$ -d "username=${user}&password=${pass}" "$(_arr_qbt_base)/api/v2/auth/login" >/dev/null
+  fi
+}
+
+_arr_api_key(){
+  local svc="$1"
+  local file="${ARR_DOCKER_DIR}/${svc}/config.xml"
+  [ -f "$file" ] || return 1
+  python3 - "$file" <<'PY' 2>/dev/null
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+root = tree.getroot()
+key = root.findtext('ApiKey') or ''
+print(key.strip())
+PY
+}
+
+arr.up(){ _arr_compose up -d "$@"; }
+arr.down(){ _arr_compose down "$@"; }
+arr.restart(){ if [ $# -eq 0 ]; then _arr_compose restart "${_arr_services[@]}"; else _arr_compose restart "$@"; fi }
+arr.pull(){ _arr_compose pull "$@"; }
+arr.logs(){ _arr_compose logs -f "$@"; }
+arr.ps(){ _arr_compose ps "$@"; }
+arr.stats(){ docker stats "${_arr_services[@]}" "$@"; }
+arr.shell(){
+  local svc="${1:-qbittorrent}"; shift || true
+  if _arr_is_tty; then
+    docker exec -it "$svc" "${@:-/bin/sh}"
+  else
+    docker exec -i "$svc" "${@:-/bin/sh}"
+  fi
+}
+arr.health(){
+  local svc
+  for svc in "${_arr_services[@]}"; do
+    if docker inspect "$svc" >/dev/null 2>&1; then
+      printf '%s: %s\n' "$svc" "$(docker inspect --format '{{.State.Health.Status}}' "$svc" 2>/dev/null || echo unknown)"
+    else
+      printf '%s: not running\n' "$svc"
+    fi
+  done
+}
+arr.backup(){
+  local dest="${1:-${ARR_STACK_DIR}/backups/$(date +%Y%m%d-%H%M%S)}"
+  mkdir -p "$dest"
+  for svc in gluetun qbittorrent sonarr radarr prowlarr bazarr; do
+    if [ -d "${ARR_DOCKER_DIR}/${svc}" ]; then
+      tar -czf "${dest}/${svc}.tgz" -C "${ARR_DOCKER_DIR}" "$svc"
+    fi
+  done
+  printf 'Backups stored in %s\n' "$dest"
+}
+arr.open(){
+  local host="$(_arr_host)"
+  local entries='qBittorrent QBT_HTTP_PORT_HOST 8081
+Sonarr SONARR_PORT 8989
+Radarr RADARR_PORT 7878
+Prowlarr PROWLARR_PORT 9696
+Bazarr BAZARR_PORT 6767
+FlareSolverr FLARESOLVERR_PORT 8191'
+  local opener=""
+  if command -v xdg-open >/dev/null 2>&1; then
+    opener=xdg-open
+  elif command -v open >/dev/null 2>&1; then
+    opener=open
+  fi
+  printf 'Service URLs (use your browser):\n'
+  while read -r name key fallback; do
+    [ -n "$name" ] || continue
+    local port="$(_arr_env_get "$key")"
+    [ -n "$port" ] || port="$fallback"
+    local url="http://${host}:${port}"
+    printf '  %s -> %s\n' "$name" "$url"
+    if [ -n "$opener" ]; then
+      "$opener" "$url" >/dev/null 2>&1 &
+    fi
+  done <<EOF
+$entries
+EOF
+}
+
+pvpn(){
+  local action="${1:-}"
+  shift || true
+  case "$action" in
+    connect|c) (cd "$ARR_STACK_DIR" && docker compose up -d gluetun qbittorrent "$@");;
+    reconnect|r) docker restart gluetun "$@";;
+    status)
+      _arr_gluetun_api /v1/publicip/ip && printf '\n'
+      local type="$(_arr_env_get VPN_TYPE)"
+      if [ "${type:-openvpn}" = "openvpn" ]; then
+        _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'
+      fi
+      ;;
+    creds) ${EDITOR:-nano} "${ARRCONF_DIR}/proton.auth";;
+    port)
+      local type="$(_arr_env_get VPN_TYPE)"
+      if [ "${type:-openvpn}" != "openvpn" ]; then
+        echo 'Port forwarding is only available for OpenVPN configurations.'
+        return 1
+      fi
+      _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'
+      ;;
+    paths) printf 'Config: %s\nAuth: %s\n' "${ARRCONF_DIR}" "${ARR_DOCKER_DIR}/gluetun";;
+    *) printf 'Usage: pvpn {connect|reconnect|status|creds|port|paths}\n' >&2; return 1;;
+  esac
+}
+
+pvpn.status(){ pvpn status; }
+pvpn.connect(){ pvpn connect "$@"; }
+pvpn.reconnect(){ pvpn reconnect "$@"; }
+pvpn.creds(){ pvpn creds; }
+pvpn.port(){ pvpn port; }
+pvpn.paths(){ pvpn paths; }
+
+glue.logs(){ docker logs -f gluetun; }
+glue.restart(){ docker restart gluetun; }
+glue.ip(){ _arr_gluetun_api /v1/publicip/ip && printf '\n'; }
+glue.pf(){ _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'; }
+glue.health(){ docker inspect --format '{{.State.Health.Status}}' gluetun 2>/dev/null || echo unknown; }
+
+arr_vpn_servers(){
+  command -v python3 >/dev/null 2>&1 || { echo "python3 is required"; return 1; }
+  local payload
+  payload="$(docker exec gluetun cat /gluetun/servers.json 2>/dev/null)" || { echo "Unable to read gluetun server catalog"; return 1; }
+  printf '%s' "$payload" | python3 - <<'PY' 2>/dev/null || { echo "Unable to parse server catalog"; return 1; }
+import json, sys
+try:
+    data=json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.exit(1)
+servers=data.get('openvpn', {}).get('protonvpn', [])
+for server in servers[:20]:
+    print(f"{server.get('name','?')} - {server.get('country','?')} ({server.get('region','?')})")
+PY
+}
+
+arr_vpn_country(){
+  if [ $# -eq 0 ]; then
+    printf 'Current SERVER_COUNTRIES=%s\n' "$(_arr_env_get SERVER_COUNTRIES)"
+    return 0
+  fi
+  local countries="$*"
+  local tmp="$(mktemp)"
+  if [ -f "$ARR_ENV_FILE" ]; then
+    awk -v v="SERVER_COUNTRIES=${countries}" 'BEGIN{done=0} /^SERVER_COUNTRIES=/{print v; done=1; next} {print} END{if(!done)print v}' "$ARR_ENV_FILE" >"$tmp"
+    mv "$tmp" "$ARR_ENV_FILE"
+    printf 'SERVER_COUNTRIES updated to %s. Restart Gluetun to apply.\n' "$countries"
+  else
+    printf 'Missing %s\n' "$ARR_ENV_FILE" >&2
+    return 1
+  fi
+}
+
+arr_vpn_fastest(){
+  docker exec gluetun /bin/sh -c 'gluetun servers --format table --limit 15' 2>/dev/null || echo "gluetun CLI not available."
+}
+
+_qbt_call(){
+  local method="$1"; shift
+  local endpoint="$1"; shift
+  _arr_qbt_auth
+  curl -fsS -X "$method" "$(_arr_qbt_base)${endpoint}" "$@"
+}
+
+qbt.url(){ printf '%s\n' "$(_arr_qbt_base)"; }
+qbt.port.get(){ command -v python3 >/dev/null 2>&1 || { echo "python3 is required"; return 1; }; _qbt_call GET /api/v2/app/preferences | python3 -c "import json,sys;print(json.load(sys.stdin).get('listen_port','unknown'))" 2>/dev/null; }
+qbt.port.set(){
+  if [ -z "$1" ]; then
+    printf 'Usage: qbt.port.set <port>\n' >&2
+    return 1
+  fi
+  _qbt_call POST /api/v2/app/setPreferences --data "json={\"listen_port\":$1}"
+  printf 'Requested port set to %s\n' "$1"
+}
+qbt.port.sync(){
+  local port
+  port=$(_arr_gluetun_api /v1/openvpn/portforwarded 2>/dev/null | grep -oE '[0-9]+' || true)
+  if [ -z "$port" ]; then
+    echo 'No forwarded port available.'
+    return 1
+  fi
+  qbt.port.set "$port"
+}
+qbt.list(){ command -v python3 >/dev/null 2>&1 || { echo "python3 is required"; return 1; }; _qbt_call GET /api/v2/torrents/info | python3 -c "import json,sys;print('\n'.join(t.get('name','') for t in json.load(sys.stdin)))" 2>/dev/null; }
+qbt.pause.all(){ _qbt_call POST /api/v2/torrents/pause --data 'hashes=all'; }
+qbt.resume.all(){ _qbt_call POST /api/v2/torrents/resume --data 'hashes=all'; }
+qbt.reannounce(){ _qbt_call POST /api/v2/torrents/reannounce --data 'hashes=all'; }
+qbt.add.url(){
+  if [ -z "$1" ]; then
+    printf 'Usage: qbt.add.url <torrent-or-magnet>\n' >&2
+    return 1
+  fi
+  _qbt_call POST /api/v2/torrents/add --data-urlencode "urls=$1"
+}
+qbt.limit(){
+  if [ $# -lt 2 ]; then
+    printf 'Usage: qbt.limit <down KiB/s> <up KiB/s>\n' >&2
+    return 1
+  fi
+  _qbt_call POST /api/v2/transfer/setDownloadLimit --data "limit=$1"
+  _qbt_call POST /api/v2/transfer/setUploadLimit --data "limit=$2"
+}
+
+_arr_service_helper(){
+  local svc="$1"; shift
+  case "$1" in
+    url) printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get "$2")";;
+    logs) docker logs -f "$svc";;
+    restart) docker restart "$svc";;
+    refresh) curl -fsS "http://127.0.0.1:$3/api/command" -X POST -d "name=$4";;
+    rss) curl -fsS "http://127.0.0.1:$3/api/command" -X POST -d "name=RssSync";;
+    *) printf 'Unsupported command\n' >&2; return 1;;
+  esac
+}
+
+sonarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get SONARR_PORT)"; }
+sonarr.logs(){ docker logs -f sonarr; }
+sonarr.restart(){ docker restart sonarr; }
+sonarr.refresh(){
+  local key="$(_arr_api_key sonarr)"
+  if [ -z "$key" ]; then echo 'Sonarr API key unavailable'; return 1; fi
+  curl -fsS -X POST "http://127.0.0.1:8989/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RescanFolders"}'
+}
+sonarr.rss(){
+  local key="$(_arr_api_key sonarr)"
+  if [ -z "$key" ]; then echo 'Sonarr API key unavailable'; return 1; fi
+  curl -fsS -X POST "http://127.0.0.1:8989/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RssSync"}'
+}
+
+radarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get RADARR_PORT)"; }
+radarr.logs(){ docker logs -f radarr; }
+radarr.restart(){ docker restart radarr; }
+radarr.refresh(){
+  local key="$(_arr_api_key radarr)"
+  if [ -z "$key" ]; then echo 'Radarr API key unavailable'; return 1; fi
+  curl -fsS -X POST "http://127.0.0.1:7878/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RescanMovie"}'
+}
+radarr.rss(){
+  local key="$(_arr_api_key radarr)"
+  if [ -z "$key" ]; then echo 'Radarr API key unavailable'; return 1; fi
+  curl -fsS -X POST "http://127.0.0.1:7878/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RssSync"}'
+}
+
+prowlarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get PROWLARR_PORT)"; }
+prowlarr.logs(){ docker logs -f prowlarr; }
+prowlarr.restart(){ docker restart prowlarr; }
+
+bazarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get BAZARR_PORT)"; }
+bazarr.logs(){ docker logs -f bazarr; }
+bazarr.restart(){ docker restart bazarr; }
+
+flare.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get FLARESOLVERR_PORT)"; }
+flare.logs(){ docker logs -f flaresolverr; }
+flare.restart(){ docker restart flaresolverr; }
