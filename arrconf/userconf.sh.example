@@ -1,6 +1,6 @@
 # Override defaults here; this file is git‑ignored
 LAN_IP=192.168.1.50
-SERVER_COUNTRIES="Netherlands,Germany,Switzerland"
+SERVER_COUNTRIES="Netherlands,Switzerland"
 
 # Example overrides for container identity and ports
 #PUID=1000

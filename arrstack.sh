@@ -326,7 +326,7 @@ E
   fi
   : "${TIMEZONE:=Australia/Sydney}"
   : "${LAN_IP:=0.0.0.0}"
-  : "${SERVER_COUNTRIES:=Netherlands,Germany,Switzerland}"
+  : "${SERVER_COUNTRIES:=Netherlands,Switzerland}"
   : "${LOCALHOST_IP:=127.0.0.1}"
   : "${GLUETUN_LOOPBACK_HOST:=${LOCALHOST_IP}}"
   : "${GLUETUN_CONTROL_HOST:=${LOCALHOST_IP}}"
@@ -359,7 +359,7 @@ LAN_IP=${LAN_IP}
 LOCALHOST_IP=${LOCALHOST_IP}
 GLUETUN_LOOPBACK_HOST=${GLUETUN_LOOPBACK_HOST}
 GLUETUN_API_KEY=${GLUETUN_API_KEY}
-GLUETUN_IMAGE=${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.39.1}
+GLUETUN_IMAGE=${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.41.0}
 QBITTORRENT_IMAGE=${QBITTORRENT_IMAGE:-lscr.io/linuxserver/qbittorrent:latest}
 SONARR_IMAGE=${SONARR_IMAGE:-lscr.io/linuxserver/sonarr:latest}
 RADARR_IMAGE=${RADARR_IMAGE:-lscr.io/linuxserver/radarr:latest}
