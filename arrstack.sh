@@ -297,22 +297,11 @@ api_key() {
     GLUETUN_API_KEY="$(openssl rand -base64 48 | tr -d '\n')"
     debug "api_key generated new key"
   fi
-  # ALWAYS write the auth config to keep credentials in sync with .env
-  cat >"$ARR_DOCKER_DIR/gluetun/auth/config.toml" <<EOF
-[[roles]]
-name="readonly"
-auth="basic"
-username="gluetun"
-password="${GLUETUN_API_KEY}"
-routes=[
-  "GET /v1/openvpn/status",
-  "GET /v1/publicip/ip",
-  "GET /v1/openvpn/portforwarded",
-  "POST /v1/openvpn/forwardport"
-]
-EOF
-  chmod 600 "$ARR_DOCKER_DIR/gluetun/auth/config.toml"
-  debug_leave "api_key" "config=${ARR_DOCKER_DIR}/gluetun/auth/config.toml"
+  if [[ -f "$ARR_DOCKER_DIR/gluetun/auth/config.toml" ]]; then
+    debug "api_key removing legacy auth config"
+    rm -f "$ARR_DOCKER_DIR/gluetun/auth/config.toml" || warn "Failed to remove legacy Gluetun auth config"
+  fi
+  debug_leave "api_key" "length=${#GLUETUN_API_KEY}"
 }
 
 write_env() {
@@ -322,8 +311,10 @@ write_env() {
   debug "write_env LAN_IP=${LAN_IP}"
   local PU PW
   if [[ "$VPN_TYPE" == openvpn ]]; then
+    [[ -s "$ARRCONF_DIR/proton.auth" ]] || die "Missing ${ARRCONF_DIR}/proton.auth"
     PU=$(grep '^PROTON_USER=' "$ARRCONF_DIR/proton.auth" | cut -d= -f2-)
     PW=$(grep '^PROTON_PASS=' "$ARRCONF_DIR/proton.auth" | cut -d= -f2-)
+    [[ -n "$PU" && -n "$PW" ]] || die "Empty PROTON_USER/PROTON_PASS in proton.auth"
     [[ "$PU" == *"+pmp" ]] || PU="${PU}+pmp"
     cat >"$ARRCONF_DIR/proton.env" <<E
 OPENVPN_USER=${PU}
@@ -355,6 +346,9 @@ E
   if [[ -z "${GLUETUN_VPN_INPUT_PORTS:-}" ]]; then
     GLUETUN_VPN_INPUT_PORTS="${QBT_HTTP_PORT_HOST},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}"
   fi
+  if [[ -z "${GLUETUN_LAN_INPUT_PORTS:-}" ]]; then
+    GLUETUN_LAN_INPUT_PORTS="${GLUETUN_CONTROL_PORT},${QBT_HTTP_PORT_HOST},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}"
+  fi
   [[ "$LAN_IP" == 0.0.0.0 ]] && warn "LAN_IP is 0.0.0.0 – services will bind on all interfaces."
   cat >"$ARR_ENV_FILE" <<E
 VPN_TYPE=${VPN_TYPE}
@@ -385,6 +379,7 @@ GLUETUN_CONTROL_LISTEN_IP=${GLUETUN_CONTROL_LISTEN_IP}
 GLUETUN_CONTROL_PORT=${GLUETUN_CONTROL_PORT}
 GLUETUN_FIREWALL_OUTBOUND_SUBNETS=${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}
 GLUETUN_VPN_INPUT_PORTS=${GLUETUN_VPN_INPUT_PORTS}
+GLUETUN_LAN_INPUT_PORTS=${GLUETUN_LAN_INPUT_PORTS}
 GLUETUN_HEALTH_TARGET_ADDRESS=${GLUETUN_HEALTH_TARGET_ADDRESS}
 ARR_DOCKER_DIR=${ARR_DOCKER_DIR}
 ARRCONF_DIR=${ARRCONF_DIR}
@@ -483,6 +478,7 @@ compose_write() {
     GLUETUN_LOOPBACK_HOST
     GLUETUN_FIREWALL_OUTBOUND_SUBNETS
     GLUETUN_VPN_INPUT_PORTS
+    GLUETUN_LAN_INPUT_PORTS
     GLUETUN_HEALTH_TARGET_ADDRESS
     QBT_HTTP_PORT_CONTAINER
     QBT_HTTP_PORT_HOST
@@ -536,10 +532,14 @@ services:
         /bin/sh -c 'sleep 5 && curl -fsS --retry 3 --max-time 10 -X POST
         "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/setPreferences"
         --data "json={\"listen_port\":{{FORWARDED_PORT}},\"upnp\":false}"'
-      HTTP_CONTROL_SERVER_ADDRESS: "0.0.0.0:${GLUETUN_CONTROL_PORT}"
-      HTTP_CONTROL_SERVER_AUTH_FILE: /gluetun/auth/config.toml
+      # Control server available to LAN + host loopback
+      HTTP_CONTROL_SERVER: "on"
+      HTTP_CONTROL_SERVER_ADDRESS: ":${GLUETUN_CONTROL_PORT}"
+      HTTP_CONTROL_SERVER_AUTH_TYPE: "apikey"
+      HTTP_CONTROL_SERVER_APIKEY: "${GLUETUN_API_KEY}"
       FIREWALL_OUTBOUND_SUBNETS: "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}"
       FIREWALL_VPN_INPUT_PORTS: "${GLUETUN_VPN_INPUT_PORTS}"
+      FIREWALL_INPUT_PORTS: "${GLUETUN_LAN_INPUT_PORTS}"
       DOT: "off"
       UPDATER_PERIOD: "24h"
       HEALTH_TARGET_ADDRESS: "${GLUETUN_HEALTH_TARGET_ADDRESS}"
@@ -563,9 +563,11 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS --user gluetun:$${GLUETUN_API_KEY} "http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" >/dev/null
-          && curl -fsS --user gluetun:$${GLUETUN_API_KEY} "http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/openvpn/status" | grep -qi running
+        - >-
+          curl -fsS -H "X-API-Key: $${GLUETUN_API_KEY}"
+          "http://${GLUETUN_LOOPBACK_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" >/dev/null &&
+          curl -fsS -H "X-API-Key: $${GLUETUN_API_KEY}"
+          "http://${GLUETUN_LOOPBACK_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status" | grep -qi running
       interval: 30s
       timeout: 10s
       retries: 10
@@ -596,8 +598,8 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS "http://127.0.0.1:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"
+        - >-
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -623,8 +625,8 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS "http://127.0.0.1:${SONARR_PORT}"
+        - >-
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${SONARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -650,8 +652,8 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS "http://127.0.0.1:${RADARR_PORT}"
+        - >-
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${RADARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -674,8 +676,8 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS "http://127.0.0.1:${PROWLARR_PORT}"
+        - >-
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${PROWLARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -700,8 +702,8 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS "http://127.0.0.1:${BAZARR_PORT}"
+        - >-
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${BAZARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -720,8 +722,8 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >
-          curl -fsS "http://127.0.0.1:${FLARESOLVERR_PORT}"
+        - >-
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${FLARESOLVERR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -756,7 +758,7 @@ gluetun_api() {
   local endpoint="$1"
   debug_enter "gluetun_api" "endpoint=${endpoint}"
   local response
-  if ! response=$(curl -fsS -u "gluetun:${GLUETUN_API_KEY}" -H "X-API-Key: ${GLUETUN_API_KEY}" \
+  if ! response=$(curl -fsS -H "X-API-Key: ${GLUETUN_API_KEY}" \
     "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}${endpoint}"); then
     local code=$?
     debug_leave "gluetun_api" "failed code=${code}"
