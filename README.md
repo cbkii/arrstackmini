@@ -85,7 +85,7 @@ All secrets and config directories are created with restrictive permissions (`06
 `arrstack.sh` writes `.env` during installation with values sourced from your overrides. You can edit `.env` or `arrconf/userconf.sh` and rerun the installer to regenerate settings. Key variables include:
 
 - `LAN_IP` – bind services to a specific RFC1918 address (auto-detected when empty).
-- `SERVER_COUNTRIES` – comma-separated Proton country list handed to Gluetun.
+- `SERVER_COUNTRIES` – comma-separated Proton country list handed to Gluetun (defaults to `Netherlands,Switzerland` so ProtonVPN stays on port-forwardable regions).
 - `GLUETUN_CONTROL_HOST`, `GLUETUN_CONTROL_PORT` – host exposure for the Gluetun control API.
 - `QBT_HTTP_PORT_HOST`, `SONARR_PORT`, etc. – LAN-facing ports; mirrored into firewall allow-lists.
 
