@@ -4,6 +4,7 @@ arrstack-*.log
 docker-data/
 arrconf/proton.auth
 arrconf/proton.env
+arrconf/userconf.sh
 gluetun/auth/config.toml
 *.tgz
 .DS_Store
