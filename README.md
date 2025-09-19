@@ -45,7 +45,8 @@ FlareSolverr: http://${LAN_IP:=0.0.0.0}:${FLARESOLVERR_PORT:=8191}
 Defaults are shown in `.env.example`. Set `LAN_IP` in `arrconf/userconf.sh` to bind to a single RFC1918 address.
 
 ## Security
-- Gluetun control API bound via `${GLUETUN_CONTROL_HOST:=127.0.0.1}:${GLUETUN_CONTROL_PORT:=8000}` with RBAC (basic auth; random API key).
+- Gluetun control API listens on `${GLUETUN_CONTROL_LISTEN_IP:=0.0.0.0}:${GLUETUN_CONTROL_PORT:=8000}` inside the VPN namespace and is
+  published to the host via `${GLUETUN_CONTROL_HOST:=127.0.0.1}` with RBAC (basic auth; random API key).
 - Health probes and forwarded port sync stay inside the shared namespace via `${GLUETUN_LOOPBACK_HOST:=127.0.0.1}`.
 - Secrets never printed to console; on disk files are `0600`, dirs `0700`.
 - Only LAN ports are published; no public exposure by default.
