@@ -297,6 +297,7 @@ api_key() {
     GLUETUN_API_KEY="$(openssl rand -base64 48 | tr -d '\n')"
     debug "api_key generated new key"
   fi
+  # ALWAYS write the auth config to keep credentials in sync with .env
   cat >"$ARR_DOCKER_DIR/gluetun/auth/config.toml" <<EOF
 [[roles]]
 name="readonly"
@@ -535,7 +536,7 @@ services:
         /bin/sh -c 'sleep 5 && curl -fsS --retry 3 --max-time 10 -X POST
         "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/setPreferences"
         --data "json={\"listen_port\":{{FORWARDED_PORT}},\"upnp\":false}"'
-      HTTP_CONTROL_SERVER_ADDRESS: "${GLUETUN_CONTROL_LISTEN_IP}:${GLUETUN_CONTROL_PORT}"
+      HTTP_CONTROL_SERVER_ADDRESS: "0.0.0.0:${GLUETUN_CONTROL_PORT}"
       HTTP_CONTROL_SERVER_AUTH_FILE: /gluetun/auth/config.toml
       FIREWALL_OUTBOUND_SUBNETS: "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}"
       FIREWALL_VPN_INPUT_PORTS: "${GLUETUN_VPN_INPUT_PORTS}"
@@ -563,10 +564,8 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS --user gluetun:$${GLUETUN_API_KEY} -H "X-API-Key: $${GLUETUN_API_KEY}"
-          "http://${GLUETUN_LOOPBACK_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" >/dev/null
-          && curl -fsS --user gluetun:$${GLUETUN_API_KEY} -H "X-API-Key: $${GLUETUN_API_KEY}"
-          "http://${GLUETUN_LOOPBACK_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status" | grep -qi running
+          curl -fsS --user gluetun:$${GLUETUN_API_KEY} "http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" >/dev/null
+          && curl -fsS --user gluetun:$${GLUETUN_API_KEY} "http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/openvpn/status" | grep -qi running
       interval: 30s
       timeout: 10s
       retries: 10
@@ -598,7 +597,7 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"
+          curl -fsS "http://127.0.0.1:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -625,7 +624,7 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${SONARR_PORT}"
+          curl -fsS "http://127.0.0.1:${SONARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -652,7 +651,7 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${RADARR_PORT}"
+          curl -fsS "http://127.0.0.1:${RADARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -676,7 +675,7 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${PROWLARR_PORT}"
+          curl -fsS "http://127.0.0.1:${PROWLARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -702,7 +701,7 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${BAZARR_PORT}"
+          curl -fsS "http://127.0.0.1:${BAZARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -722,7 +721,7 @@ services:
       test:
         - CMD-SHELL
         - >
-          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${FLARESOLVERR_PORT}"
+          curl -fsS "http://127.0.0.1:${FLARESOLVERR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
