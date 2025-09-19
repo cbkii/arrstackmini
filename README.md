@@ -2,7 +2,7 @@
 
 Minimal, reproducible ARR stack routed via Gluetun (ProtonVPN). One command brings up:
 
-- Gluetun (Proton, OpenVPN with native port‑forwarding; optional WireGuard w/o PF)
+- Gluetun (Proton OpenVPN with native port-forwarding)
 - qBittorrent (WebUI + Vuetorrent-compatible)
 - Sonarr, Radarr, Prowlarr, Bazarr
 - FlareSolverr
@@ -28,16 +28,8 @@ chmod 600 arrconf/proton.auth
 # Optional: pin server countries in .env (comma separated)
 cp .env.example .env && sed -i 's/^SERVER_COUNTRIES=.*/SERVER_COUNTRIES=Netherlands,Germany,Switzerland/' .env
 
-# Non‑interactive install
-./arrstack.sh --openvpn --yes
-```
-
-### WireGuard (no port forwarding)
-```bash
-# Place your Proton WireGuard config (proton.conf) into arrconf/
-cp ~/Downloads/proton.conf arrconf/
-chmod 600 arrconf/proton.conf
-./arrstack.sh --wireguard --yes
+# Non-interactive install
+./arrstack.sh --yes
 ```
 
 ### Service ports on your LAN IP (configurable via `.env`)
@@ -54,6 +46,7 @@ Defaults are shown in `.env.example`. Set `LAN_IP` in `arrconf/userconf.sh` to b
 
 ## Security
 - Gluetun control API bound via `${GLUETUN_CONTROL_HOST:=127.0.0.1}:${GLUETUN_CONTROL_PORT:=8000}` with RBAC (basic auth; random API key).
+- Health probes and forwarded port sync stay inside the shared namespace via `${GLUETUN_LOOPBACK_HOST:=127.0.0.1}`.
 - Secrets never printed to console; on disk files are `0600`, dirs `0700`.
 - Only LAN ports are published; no public exposure by default.
 

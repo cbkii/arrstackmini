@@ -14,7 +14,7 @@ services:
       PORT_FORWARD_ONLY: "on"
       VPN_PORT_FORWARDING_UP_COMMAND: >-
         /bin/sh -c 'sleep 5 && curl -fsS --retry 3 --max-time 10 -X POST
-        "http://${GLUETUN_SERVICES_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/setPreferences"
+        "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/setPreferences"
         --data "json={\"listen_port\":{{FORWARDED_PORT}},\"upnp\":false}"'
       HTTP_CONTROL_SERVER_ADDRESS: "${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}"
       HTTP_CONTROL_SERVER_AUTH_FILE: /gluetun/auth/config.toml
@@ -27,6 +27,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      GLUETUN_API_KEY: "${GLUETUN_API_KEY}"
     env_file:
       - ${ARRCONF_DIR}/proton.env
     volumes:
@@ -40,7 +41,11 @@ services:
       - "${LAN_IP}:${BAZARR_PORT}:${BAZARR_PORT}"
       - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS --user gluetun:$${GLUETUN_API_KEY} --max-time 5 "http://${GLUETUN_LOOPBACK_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" >/dev/null &&
+          curl -fsS --user gluetun:$${GLUETUN_API_KEY} --max-time 5 "http://${GLUETUN_LOOPBACK_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status" | grep -qi running
       interval: 30s
       timeout: 10s
       retries: 10
@@ -69,7 +74,7 @@ services:
       gluetun:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"]
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"]
       interval: 30s
       timeout: 10s
       retries: 6
@@ -92,7 +97,7 @@ services:
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${SONARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${SONARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   radarr:
@@ -106,7 +111,7 @@ services:
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${RADARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${RADARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   prowlarr:
@@ -117,7 +122,7 @@ services:
     volumes:
       - ${ARR_DOCKER_DIR}/prowlarr:/config
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${PROWLARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${PROWLARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   bazarr:
@@ -130,7 +135,7 @@ services:
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${BAZARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${BAZARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   flaresolverr:
@@ -139,5 +144,5 @@ services:
     network_mode: "service:gluetun"
     environment: { LOG_LEVEL: info }
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_SERVICES_HOST}:${FLARESOLVERR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${FLARESOLVERR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
