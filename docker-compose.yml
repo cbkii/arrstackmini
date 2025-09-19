@@ -1,0 +1,143 @@
+services:
+  gluetun:
+    image: ${GLUETUN_IMAGE}
+    container_name: gluetun
+    cap_add: ["NET_ADMIN"]
+    devices:
+      - /dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: ${VPN_TYPE}
+      SERVER_COUNTRIES: "${SERVER_COUNTRIES}"
+      VPN_PORT_FORWARDING: "on"
+      VPN_PORT_FORWARDING_PROVIDER: "protonvpn"
+      PORT_FORWARD_ONLY: "on"
+      VPN_PORT_FORWARDING_UP_COMMAND: >-
+        /bin/sh -c 'sleep 5 && curl -fsS --retry 3 --max-time 10 -X POST
+        "http://127.0.0.1:8080/api/v2/app/setPreferences"
+        --data "json={\"listen_port\":{{FORWARDED_PORT}},\"upnp\":false}"'
+      HTTP_CONTROL_SERVER_ADDRESS: "127.0.0.1:${GLUETUN_CONTROL_PORT}"
+      HTTP_CONTROL_SERVER_AUTH_FILE: /gluetun/auth/config.toml
+      FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8"
+      FIREWALL_VPN_INPUT_PORTS: "8081,8989,7878,9696,6767,8191"
+      DOT: "off"
+      UPDATER_PERIOD: "24h"
+      HEALTH_TARGET_ADDRESS: "1.1.1.1:443"
+      HEALTH_VPN_DURATION_INITIAL: 30s
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
+    env_file:
+      - ${ARRCONF_DIR}/proton.env
+    volumes:
+      - ${ARR_DOCKER_DIR}/gluetun:/gluetun
+    ports:
+      - "127.0.0.1:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
+      - "${LAN_IP}:${QBT_HTTP_PORT_HOST}:8080"
+      - "${LAN_IP}:${SONARR_PORT}:${SONARR_PORT}"
+      - "${LAN_IP}:${RADARR_PORT}:${RADARR_PORT}"
+      - "${LAN_IP}:${PROWLARR_PORT}:${PROWLARR_PORT}"
+      - "${LAN_IP}:${BAZARR_PORT}:${BAZARR_PORT}"
+      - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+  qbittorrent:
+    image: ${QBITTORRENT_IMAGE}
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    environment:
+      WEBUI_PORT: 8080
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
+    volumes:
+      - ${ARR_DOCKER_DIR}/qbittorrent:/config
+      - ${DOWNLOADS_DIR}:/downloads
+      - ${COMPLETED_DIR}:/completed
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v2/app/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 120s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.75'
+
+  sonarr:
+    image: ${SONARR_IMAGE}
+    container_name: sonarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/sonarr:/config
+      - ${TV_DIR}:/tv
+      - ${DOWNLOADS_DIR}:/downloads
+      - ${COMPLETED_DIR}:/completed
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${SONARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    restart: unless-stopped
+
+  radarr:
+    image: ${RADARR_IMAGE}
+    container_name: radarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/radarr:/config
+      - ${MOVIES_DIR}:/movies
+      - ${DOWNLOADS_DIR}:/downloads
+      - ${COMPLETED_DIR}:/completed
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${RADARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    restart: unless-stopped
+
+  prowlarr:
+    image: ${PROWLARR_IMAGE}
+    container_name: prowlarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/prowlarr:/config
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${PROWLARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    restart: unless-stopped
+
+  bazarr:
+    image: ${BAZARR_IMAGE}
+    container_name: bazarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/bazarr:/config
+      - ${TV_DIR}:/tv
+      - ${MOVIES_DIR}:/movies
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${BAZARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ${FLARESOLVERR_IMAGE}
+    container_name: flaresolverr
+    network_mode: "service:gluetun"
+    environment: { LOG_LEVEL: info }
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${FLARESOLVERR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    restart: unless-stopped

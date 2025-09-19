@@ -1,0 +1,9 @@
+# runtime
+.env
+arrstack-*.log
+docker-data/
+arrconf/proton.auth
+arrconf/proton.env
+gluetun/auth/config.toml
+*.tgz
+.DS_Store
