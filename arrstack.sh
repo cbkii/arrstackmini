@@ -11,11 +11,7 @@ export HISTFILE=/dev/null
 
 : "${DEBUG:=0}" : "${ARR_NONINTERACTIVE:=0}" : "${FORCE_ROTATE_API_KEY:=0}"
 : "${PURGE_NATIVE:=0}" : "${CHOWN_TREE:=0}" : "${PRUNE_VOLUMES:=0}" : "${BACKUP_EXISTING:=0}"
-: "${LOCALHOST_IP:=127.0.0.1}" : "${GLUETUN_LOOPBACK_HOST:=127.0.0.1}" : "${GLUETUN_CONTROL_PORT:=8000}" : "${QBT_HTTP_PORT_HOST:=8081}"
-: "${SONARR_PORT:=8989}" : "${RADARR_PORT:=7878}" : "${PROWLARR_PORT:=9696}"
-: "${BAZARR_PORT:=6767}" : "${FLARESOLVERR_PORT:=8191}"
 : "${GLUETUN_CONTROL_HOST:=${LOCALHOST_IP}}"
-: "${QBT_HTTP_PORT_CONTAINER:=8080}"
 : "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS:=192.168.0.0/16,10.0.0.0/8}"
 : "${GLUETUN_HEALTH_TARGET_ADDRESS:=1.1.1.1:443}"
 LOG_FILE=/dev/null
@@ -72,6 +68,15 @@ die(){ printf '%b%s%b\n' "$(color 31)" "$1" "$(color 0)" >&2; exit 1; }
 
 redact() { sed -E 's/(GLUETUN_API_KEY|OPENVPN_PASSWORD|OPENVPN_USER|QBT_PASS|PROTON_PASS|PROTON_USER)=[^[:space:]]+/\1=<REDACTED>/g'; }
 run(){ local -a c=("$@"); [[ "$DEBUG" == 1 ]] && printf '+ %s\n' "$(printf '%q ' "${c[@]}")" | redact >>"$LOG_FILE"; "${c[@]}"; }
+
+# lib/env.sh equivalent (inline for now)
+require_env() {
+  local name="$1"
+  if [ -z "${!name:-}" ]; then
+    echo "ERROR: required env var $name is not set" >&2
+    exit 1
+  fi
+}
 
 setup_logging(){ if [[ "$DEBUG" == 1 ]]; then mkdir -p "$ARR_STACK_DIR"; LOG_FILE="$ARR_STACK_DIR/arrstack-$(date +%Y%m%d-%H%M%S).log"; : >"$LOG_FILE"; chmod 600 "$LOG_FILE"; ln -sfn "$(basename "$LOG_FILE")" "$ARR_STACK_DIR/arrstack-install.log"; fi; }
 
@@ -163,6 +168,7 @@ GLUETUN_FIREWALL_OUTBOUND_SUBNETS=${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}
 GLUETUN_VPN_INPUT_PORTS=${GLUETUN_VPN_INPUT_PORTS}
 GLUETUN_HEALTH_TARGET_ADDRESS=${GLUETUN_HEALTH_TARGET_ADDRESS}
 ARR_DOCKER_DIR=${ARR_DOCKER_DIR}
+ARRCONF_DIR=${ARRCONF_DIR}
 DOWNLOADS_DIR=${DOWNLOADS_DIR}
 COMPLETED_DIR=${COMPLETED_DIR}
 TV_DIR=${TV_DIR}
@@ -229,18 +235,234 @@ os.chmod(conf_path, 0o600)
 PY
 }
 
-compose_write(){
-  msg "docker-compose.yml"
-  local src="$REPO_ROOT/docker-compose.yml"
-  local dest="$ARR_STACK_DIR/docker-compose.yml"
-  [[ -f "$src" ]] || die "compose missing"
+compose_write() {
+  msg "Generating docker-compose.yml dynamically"
   ensure_dir "$ARR_STACK_DIR"
-  run cp "$src" "$dest"
-  chmod 600 "$dest"
+
+  [[ -f "$ARR_ENV_FILE" ]] || die "Expected env file at $ARR_ENV_FILE"
+  # shellcheck disable=SC1090
+  . "$ARR_ENV_FILE"
+
+  local required_vars=(
+    VPN_TYPE
+    SERVER_COUNTRIES
+    TIMEZONE
+    LAN_IP
+    GLUETUN_CONTROL_HOST
+    GLUETUN_CONTROL_PORT
+    GLUETUN_API_KEY
+    GLUETUN_LOOPBACK_HOST
+    GLUETUN_FIREWALL_OUTBOUND_SUBNETS
+    GLUETUN_VPN_INPUT_PORTS
+    GLUETUN_HEALTH_TARGET_ADDRESS
+    QBT_HTTP_PORT_CONTAINER
+    QBT_HTTP_PORT_HOST
+    SONARR_PORT
+    RADARR_PORT
+    PROWLARR_PORT
+    BAZARR_PORT
+    FLARESOLVERR_PORT
+    ARR_DOCKER_DIR
+    ARRCONF_DIR
+    DOWNLOADS_DIR
+    COMPLETED_DIR
+    TV_DIR
+    MOVIES_DIR
+    PUID
+    PGID
+    GLUETUN_IMAGE
+    QBITTORRENT_IMAGE
+    SONARR_IMAGE
+    RADARR_IMAGE
+    PROWLARR_IMAGE
+    BAZARR_IMAGE
+    FLARESOLVERR_IMAGE
+  )
+
+  local var
+  for var in "${required_vars[@]}"; do
+    require_env "$var"
+  done
+
+  cat > "$ARR_STACK_DIR/docker-compose.yml" <<'YAML'
+services:
+  gluetun:
+    image: ${GLUETUN_IMAGE}
+    container_name: gluetun
+    cap_add: ["NET_ADMIN"]
+    devices: ["/dev/net/tun"]
+    environment:
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: ${VPN_TYPE}
+      SERVER_COUNTRIES: "${SERVER_COUNTRIES}"
+      VPN_PORT_FORWARDING: "on"
+      VPN_PORT_FORWARDING_PROVIDER: "protonvpn"
+      PORT_FORWARD_ONLY: "on"
+      # Keep internal callback strictly via loopback variable (no literals)
+      VPN_PORT_FORWARDING_UP_COMMAND: >-
+        /bin/sh -c 'sleep 5 && curl -fsS --retry 3 --max-time 10 -X POST
+        "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/setPreferences"
+        --data "json={\"listen_port\":{{FORWARDED_PORT}},\"upnp\":false}"'
+      HTTP_CONTROL_SERVER_ADDRESS: "${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}"
+      HTTP_CONTROL_SERVER_AUTH_FILE: /gluetun/auth/config.toml
+      FIREWALL_OUTBOUND_SUBNETS: "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}"
+      FIREWALL_VPN_INPUT_PORTS: "${GLUETUN_VPN_INPUT_PORTS}"
+      DOT: "off"
+      UPDATER_PERIOD: "24h"
+      HEALTH_TARGET_ADDRESS: "${GLUETUN_HEALTH_TARGET_ADDRESS}"
+      HEALTH_VPN_DURATION_INITIAL: 30s
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
+      GLUETUN_API_KEY: "${GLUETUN_API_KEY}"
+    env_file:
+      - ${ARRCONF_DIR}/proton.env
+    volumes:
+      - ${ARR_DOCKER_DIR}/gluetun:/gluetun
+    ports:
+      - "${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
+      - "${LAN_IP}:${QBT_HTTP_PORT_HOST}:${QBT_HTTP_PORT_CONTAINER}"
+      - "${LAN_IP}:${SONARR_PORT}:${SONARR_PORT}"
+      - "${LAN_IP}:${RADARR_PORT}:${RADARR_PORT}"
+      - "${LAN_IP}:${PROWLARR_PORT}:${PROWLARR_PORT}"
+      - "${LAN_IP}:${BAZARR_PORT}:${BAZARR_PORT}"
+      - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS --user gluetun:$${GLUETUN_API_KEY} -H "X-API-Key: $${GLUETUN_API_KEY}"
+          "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" >/dev/null
+          && curl -fsS --user gluetun:$${GLUETUN_API_KEY} -H "X-API-Key: $${GLUETUN_API_KEY}"
+          "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status" | grep -qi running
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+  qbittorrent:
+    image: ${QBITTORRENT_IMAGE}
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    environment:
+      WEBUI_PORT: "${QBT_HTTP_PORT_CONTAINER}"
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
+    volumes:
+      - ${ARR_DOCKER_DIR}/qbittorrent:/config
+      - ${DOWNLOADS_DIR}:/downloads
+      - ${COMPLETED_DIR}:/completed
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  sonarr:
+    image: ${SONARR_IMAGE}
+    container_name: sonarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/sonarr:/config
+      - ${TV_DIR}:/tv
+      - ${DOWNLOADS_DIR}:/downloads
+      - ${COMPLETED_DIR}:/completed
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${SONARR_PORT}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  radarr:
+    image: ${RADARR_IMAGE}
+    container_name: radarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/radarr:/config
+      - ${MOVIES_DIR}:/movies
+      - ${DOWNLOADS_DIR}:/downloads
+      - ${COMPLETED_DIR}:/completed
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${RADARR_PORT}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  prowlarr:
+    image: ${PROWLARR_IMAGE}
+    container_name: prowlarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/prowlarr:/config
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${PROWLARR_PORT}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  bazarr:
+    image: ${BAZARR_IMAGE}
+    container_name: bazarr
+    network_mode: "service:gluetun"
+    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    volumes:
+      - ${ARR_DOCKER_DIR}/bazarr:/config
+      - ${TV_DIR}:/tv
+      - ${MOVIES_DIR}:/movies
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${BAZARR_PORT}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  flaresolverr:
+    image: ${FLARESOLVERR_IMAGE}
+    container_name: flaresolverr
+    network_mode: "service:gluetun"
+    environment: { LOG_LEVEL: info }
+    depends_on: { gluetun: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${FLARESOLVERR_PORT}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+YAML
+
+  chmod 600 "$ARR_STACK_DIR/docker-compose.yml"
 }
 
 gluetun_api(){
-  curl -fsS -u "gluetun:${GLUETUN_API_KEY}" "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}$1"
+  curl -fsS -u "gluetun:${GLUETUN_API_KEY}" -H "X-API-Key: ${GLUETUN_API_KEY}" \
+    "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}$1"
 }
 
 wait_for_vpn_connected(){
@@ -341,7 +563,7 @@ cleanup_existing(){
 }
 
 start_stack(){
-  cd "$ARR_STACK_DIR"
+  cd "$ARR_STACK_DIR" || die "Failed to change to $ARR_STACK_DIR"
   cleanup_existing
   msg "Start Gluetun"
   run docker compose up -d gluetun
