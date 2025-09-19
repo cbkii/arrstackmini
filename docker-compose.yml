@@ -92,7 +92,7 @@ services:
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${SONARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8989"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   radarr:
@@ -106,7 +106,7 @@ services:
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${RADARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7878"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   prowlarr:
@@ -117,7 +117,7 @@ services:
     volumes:
       - ${ARR_DOCKER_DIR}/prowlarr:/config
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${PROWLARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9696"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   bazarr:
@@ -130,7 +130,7 @@ services:
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${BAZARR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6767"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
 
   flaresolverr:
@@ -139,5 +139,5 @@ services:
     network_mode: "service:gluetun"
     environment: { LOG_LEVEL: info }
     depends_on: { gluetun: { condition: service_healthy } }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${FLARESOLVERR_PORT}"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8191"], interval: 30s, timeout: 10s, retries: 5, start_period: 90s }
     restart: unless-stopped
