@@ -51,6 +51,12 @@ Defaults are shown in `.env.example`. Set `LAN_IP` in `arrconf/userconf.sh` to b
 - Secrets never printed to console; on disk files are `0600`, dirs `0700`.
 - Only LAN ports are published; no public exposure by default.
 
+## Logging
+- Pass `--debug` to `arrstack.sh` for comprehensive tracing of each installation step.
+- Timestamped logs are archived under `${ARRSTACK_LOG_ARCHIVE_DIR:=$ARR_STACK_DIR/logs/archive}` with the latest run symlinked at
+  `${ARRSTACK_LOG_FILE:=$ARR_STACK_DIR/logs/arrstack-install.log}`.
+- Override `ARRSTACK_LOG_DIR`, `ARRSTACK_LOG_ARCHIVE_DIR`, or `ARRSTACK_LOG_FILE` in `arrconf/userconf.sh` to relocate debug output.
+
 ## Operations
 ```bash
 # Start/stop

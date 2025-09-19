@@ -15,87 +15,174 @@ export HISTFILE=/dev/null
 : "${GLUETUN_CONTROL_LISTEN_IP:=0.0.0.0}"
 : "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS:=192.168.0.0/16,10.0.0.0/8}"
 : "${GLUETUN_HEALTH_TARGET_ADDRESS:=1.1.1.1:443}"
-LOG_FILE=/dev/null
+LOG_FILE="${ARRSTACK_LOG_FILE:-/dev/null}"
 
 is_rfc1918_ipv4() {
-  [[ "$1" =~ ^10\. ]] && return 0
-  [[ "$1" =~ ^192\.168\. ]] && return 0
-  [[ "$1" =~ ^172\.((1[6-9])|(2[0-9])|(3[0-1]))\. ]] && return 0
+  local ip="$1"
+  debug_enter "is_rfc1918_ipv4" "ip=${ip}"
+  if [[ "$ip" =~ ^10\. ]]; then
+    debug_leave "is_rfc1918_ipv4" "match=10/8"
+    return 0
+  fi
+  if [[ "$ip" =~ ^192\.168\. ]]; then
+    debug_leave "is_rfc1918_ipv4" "match=192.168/16"
+    return 0
+  fi
+  if [[ "$ip" =~ ^172\.((1[6-9])|(2[0-9])|(3[0-1]))\. ]]; then
+    debug_leave "is_rfc1918_ipv4" "match=172.16-31/12"
+    return 0
+  fi
+  debug_leave "is_rfc1918_ipv4" "match=none"
   return 1
 }
 
 detect_lan_ip_candidate() {
   local ip
   local source_cmd
+  debug_enter "detect_lan_ip_candidate"
   if command -v ip >/dev/null 2>&1; then
     source_cmd="ip -4 addr show scope global"
   else
     source_cmd="hostname -I"
   fi
+  debug "detect_lan_ip_candidate source command: ${source_cmd}"
   while read -r ip; do
+    debug "detect_lan_ip_candidate candidate: ${ip}"
     [[ -z "$ip" ]] && continue
     if is_rfc1918_ipv4 "$ip"; then
+      debug_leave "detect_lan_ip_candidate" "selected=${ip}"
       echo "$ip"
       return 0
     fi
   done < <(eval "$source_cmd" | awk '{for (i=1;i<=NF;i++) print $i}' | cut -d/ -f1)
+  debug_leave "detect_lan_ip_candidate" "no-private-ip"
   return 1
 }
 
 warn_lan_ip() {
+  debug "warn_lan_ip value=${1}"
   warn "LAN_IP is set to $1. Services bound to this address may be accessible from untrusted networks."
 }
 
 ensure_lan_ip_binding() {
   local candidate
+  debug_enter "ensure_lan_ip_binding" "LAN_IP=${LAN_IP:-}"
   if [[ -z "${LAN_IP:-}" || "$LAN_IP" == 0.0.0.0 ]]; then
     if candidate=$(detect_lan_ip_candidate); then
       LAN_IP="$candidate"
+      debug "ensure_lan_ip_binding auto-detected ${LAN_IP}"
       msg "Detected LAN_IP=${LAN_IP}"
     else
       LAN_IP="0.0.0.0"
+      debug "ensure_lan_ip_binding using fallback LAN_IP=${LAN_IP}"
       warn "Unable to detect a LAN IP address automatically; continuing with LAN_IP=0.0.0.0 (all interfaces)."
     fi
   elif ! is_rfc1918_ipv4 "$LAN_IP"; then
+    debug "ensure_lan_ip_binding non-RFC1918 LAN_IP=${LAN_IP}"
     warn_lan_ip "$LAN_IP"
   fi
+  debug_leave "ensure_lan_ip_binding" "LAN_IP=${LAN_IP}"
 }
 
 is_tty() { [[ -t 1 && "${NO_COLOR:-0}" -eq 0 ]]; }
 color() { is_tty && printf '\033[%sm' "$1" || true; }
-msg() { printf '%b%s%b\n' "$(
-  color 36
-  color 1
-)" "$1" "$(color 0)"; }
-warn() { printf '%b%s%b\n' "$(color 33)" "$1" "$(color 0)" >&2; }
+redact() { sed -E 's/(GLUETUN_API_KEY|OPENVPN_PASSWORD|OPENVPN_USER|QBT_PASS|PROTON_PASS|PROTON_USER)=[^[:space:]]+/\1=<REDACTED>/g'; }
+
+log_event() {
+  [[ "$DEBUG" == 1 ]] || return 0
+  local level="$1"
+  shift || true
+  local ts
+  local message="$*"
+  ts="$(date +%Y-%m-%dT%H:%M:%S%z)"
+  printf '%s [%s] %s\n' "$ts" "$level" "$message" | redact >>"$LOG_FILE"
+}
+
+debug() { log_event DEBUG "$@"; }
+info_log() { log_event INFO "$@"; }
+warn_log() { log_event WARN "$@"; }
+error_log() { log_event ERROR "$@"; }
+debug_enter() { debug "ENTER $1${2:+: $2}"; }
+debug_leave() { debug "LEAVE $1${2:+: $2}"; }
+
+msg() {
+  info_log "$1"
+  printf '%b%s%b\n' "$(color 36)$(color 1)" "$1" "$(color 0)"
+}
+
+warn() {
+  warn_log "$1"
+  printf '%b%s%b\n' "$(color 33)" "$1" "$(color 0)" >&2
+}
+
 die() {
+  error_log "$1"
   printf '%b%s%b\n' "$(color 31)" "$1" "$(color 0)" >&2
   exit 1
 }
 
-redact() { sed -E 's/(GLUETUN_API_KEY|OPENVPN_PASSWORD|OPENVPN_USER|QBT_PASS|PROTON_PASS|PROTON_USER)=[^[:space:]]+/\1=<REDACTED>/g'; }
 run() {
   local -a c=("$@")
-  [[ "$DEBUG" == 1 ]] && printf '+ %s\n' "$(printf '%q ' "${c[@]}")" | redact >>"$LOG_FILE"
+  if [[ "$DEBUG" == 1 ]]; then
+    debug "RUN $(printf '%q ' "${c[@]}")"
+  fi
   "${c[@]}"
+}
+
+log_file_snapshot() {
+  [[ "$DEBUG" == 1 ]] || return 0
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    {
+      printf '%s [DEBUG] Snapshot of %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$file"
+      sed 's/^/    /' "$file"
+    } | redact >>"$LOG_FILE"
+  else
+    debug "Snapshot requested for missing file: $file"
+  fi
 }
 
 # lib/env.sh equivalent (inline for now)
 require_env() {
   local name="$1"
+  debug_enter "require_env" "name=${name}"
   if [ -z "${!name:-}" ]; then
+    debug "require_env missing=${name}"
     echo "ERROR: required env var $name is not set" >&2
     exit 1
   fi
+  debug_leave "require_env" "value-present"
 }
 
-setup_logging() { if [[ "$DEBUG" == 1 ]]; then
-  mkdir -p "$ARR_STACK_DIR"
-  LOG_FILE="$ARR_STACK_DIR/arrstack-$(date +%Y%m%d-%H%M%S).log"
-  : >"$LOG_FILE"
-  chmod 600 "$LOG_FILE"
-  ln -sfn "$(basename "$LOG_FILE")" "$ARR_STACK_DIR/arrstack-install.log"
-fi; }
+setup_logging() {
+  if [[ "$DEBUG" == 1 ]]; then
+    local log_dir archive_dir archive_abs current
+    log_dir="$(dirname "$ARRSTACK_LOG_FILE")"
+    archive_dir="${ARRSTACK_LOG_ARCHIVE_DIR:-$log_dir}"
+    mkdir -p "$log_dir" "$archive_dir"
+    archive_abs="$(cd "$archive_dir" && pwd)"
+    current="${archive_abs}/arrstack-$(date +%Y%m%d-%H%M%S).log"
+    LOG_FILE="$current"
+    : >"$LOG_FILE"
+    chmod 600 "$LOG_FILE"
+    ln -sfn "$LOG_FILE" "$ARRSTACK_LOG_FILE"
+    debug "Debug logging enabled: archive_dir=${archive_dir}, current=${LOG_FILE}, symlink=${ARRSTACK_LOG_FILE}"
+  else
+    LOG_FILE="${ARRSTACK_LOG_FILE:-/dev/null}"
+  fi
+}
+
+on_error() {
+  local exit_code="$1"
+  local line_no="$2"
+  local cmd="$3"
+  error_log "Command failed (exit=${exit_code}) at line ${line_no}: ${cmd}"
+}
+
+on_exit() {
+  local exit_code="$1"
+  debug "Script exiting with status ${exit_code}"
+}
 
 help() {
   cat <<'H'
@@ -124,46 +211,92 @@ while [ $# -gt 0 ]; do
 done
 
 setup_logging
+trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+trap 'on_exit $?' EXIT
+debug "CLI summary DEBUG=${DEBUG} ASSUME_YES=${ASSUME_YES} FORCE_ROTATE_API_KEY=${FORCE_ROTATE_API_KEY} PURGE_NATIVE=${PURGE_NATIVE} CHOWN_TREE=${CHOWN_TREE} PRUNE_VOLUMES=${PRUNE_VOLUMES} BACKUP_EXISTING=${BACKUP_EXISTING}"
 export ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
 
-need() { command -v "$1" >/dev/null 2>&1 || die "Missing dependency: $1"; }
+need() {
+  local binary="$1"
+  debug_enter "need" "binary=${binary}"
+  if command -v "$binary" >/dev/null 2>&1; then
+    debug_leave "need" "available"
+    return 0
+  fi
+  debug "need missing binary=${binary}"
+  die "Missing dependency: $1"
+}
 install_missing() {
   local pkgs=()
+  debug_enter "install_missing"
   command -v docker >/dev/null || pkgs+=(docker.io)
   docker compose version >/dev/null 2>&1 || pkgs+=(docker-compose-plugin)
   command -v curl >/dev/null || pkgs+=(curl)
   command -v openssl >/dev/null || pkgs+=(openssl)
   command -v python3 >/dev/null || pkgs+=(python3)
   ((${#pkgs[@]})) && {
+    debug "install_missing packages=${pkgs[*]}"
     run sudo apt-get update -y
     run sudo apt-get install -y "${pkgs[@]}"
   }
+  debug_leave "install_missing" "installed=${#pkgs[@]}"
 }
 
-ensure_dir() { [[ -d "$1" ]] || { mkdir -p "$1" || { sudo mkdir -p "$1" && sudo chown "${USER}:${USER}" "$1"; }; }; }
+ensure_dir() {
+  local dir="$1"
+  debug_enter "ensure_dir" "dir=${dir}"
+  if [[ -d "$dir" ]]; then
+    debug_leave "ensure_dir" "exists"
+    return 0
+  fi
+  if mkdir -p "$dir"; then
+    debug_leave "ensure_dir" "created=local"
+    return 0
+  fi
+  debug "ensure_dir escalating privileges for ${dir}"
+  run sudo mkdir -p "$dir"
+  run sudo chown "${USER}:${USER}" "$dir"
+  debug_leave "ensure_dir" "created=sudo"
+}
 
 preflight() {
+  debug_enter "preflight" "ARRCONF_DIR=${ARRCONF_DIR}"
   msg "Preflight"
   install_missing
   [[ -f "${ARRCONF_DIR}/proton.auth" ]] || die "arrconf/proton.auth missing"
+  debug "preflight proton auth found at ${ARRCONF_DIR}/proton.auth"
   [[ "$ASSUME_YES" == 1 ]] || {
     printf 'Continue with ProtonVPN OpenVPN setup? [y/N]: '
     read -r a
+    debug "preflight user confirmation=${a}"
     [[ "$a" =~ ^[Yy]$ ]] || die Aborted
   }
+  debug_leave "preflight"
 }
 
 mkdirs() {
+  debug_enter "mkdirs"
   msg "Create dirs"
-  for d in "$ARR_STACK_DIR" "$ARR_DOCKER_DIR"/gluetun "$ARR_DOCKER_DIR"/{qbittorrent,sonarr,radarr,prowlarr,bazarr} "$DOWNLOADS_DIR" "$DOWNLOADS_DIR"/incomplete "$COMPLETED_DIR" "$MEDIA_DIR" "$TV_DIR" "$MOVIES_DIR" "$ARRCONF_DIR" "$ARR_DOCKER_DIR"/gluetun/auth; do ensure_dir "$d"; done
+  for d in "$ARR_STACK_DIR" "$ARR_DOCKER_DIR"/gluetun "$ARR_DOCKER_DIR"/{qbittorrent,sonarr,radarr,prowlarr,bazarr} "$DOWNLOADS_DIR" "$DOWNLOADS_DIR"/incomplete "$COMPLETED_DIR" "$MEDIA_DIR" "$TV_DIR" "$MOVIES_DIR" "$ARRCONF_DIR" "$ARR_DOCKER_DIR"/gluetun/auth; do
+    debug "mkdirs ensuring ${d}"
+    ensure_dir "$d"
+  done
   chmod 700 "$ARRCONF_DIR"
+  debug_leave "mkdirs"
 }
 
 api_key() {
+  debug_enter "api_key" "env_file=${ARR_ENV_FILE}"
   msg "API key"
   local exist=""
   [[ -f "$ARR_ENV_FILE" ]] && exist="$(grep '^GLUETUN_API_KEY=' "$ARR_ENV_FILE" 2>/dev/null | cut -d= -f2-)" || true
-  if [[ -n "$exist" && "$FORCE_ROTATE_API_KEY" != 1 ]]; then GLUETUN_API_KEY="$exist"; else GLUETUN_API_KEY="$(openssl rand -base64 48 | tr -d '\n')"; fi
+  if [[ -n "$exist" && "$FORCE_ROTATE_API_KEY" != 1 ]]; then
+    GLUETUN_API_KEY="$exist"
+    debug "api_key reusing existing key"
+  else
+    GLUETUN_API_KEY="$(openssl rand -base64 48 | tr -d '\n')"
+    debug "api_key generated new key"
+  fi
   cat >"$ARR_DOCKER_DIR/gluetun/auth/config.toml" <<EOF
 [[roles]]
 name="readonly"
@@ -178,11 +311,14 @@ routes=[
 ]
 EOF
   chmod 600 "$ARR_DOCKER_DIR/gluetun/auth/config.toml"
+  debug_leave "api_key" "config=${ARR_DOCKER_DIR}/gluetun/auth/config.toml"
 }
 
 write_env() {
+  debug_enter "write_env" "output=${ARR_ENV_FILE}"
   msg ".env"
   ensure_lan_ip_binding
+  debug "write_env LAN_IP=${LAN_IP}"
   local PU PW
   if [[ "$VPN_TYPE" == openvpn ]]; then
     PU=$(grep '^PROTON_USER=' "$ARRCONF_DIR/proton.auth" | cut -d= -f2-)
@@ -193,6 +329,8 @@ OPENVPN_USER=${PU}
 OPENVPN_PASSWORD=${PW}
 E
     chmod 600 "$ARRCONF_DIR/proton.env"
+    debug "write_env wrote Proton credentials to ${ARRCONF_DIR}/proton.env"
+    log_file_snapshot "$ARRCONF_DIR/proton.env"
   fi
   : "${TIMEZONE:=Australia/Sydney}"
   : "${LAN_IP:=0.0.0.0}"
@@ -256,15 +394,20 @@ TV_DIR=${TV_DIR}
 MOVIES_DIR=${MOVIES_DIR}
 E
   chmod 600 "$ARR_ENV_FILE"
+  log_file_snapshot "$ARR_ENV_FILE"
+  debug_leave "write_env"
 }
 
 ensure_qbt_conf_base() {
+  debug_enter "ensure_qbt_conf_base"
   msg "qBittorrent.conf"
   local conf="${ARR_DOCKER_DIR}/qbittorrent/qBittorrent.conf"
   ensure_dir "${ARR_DOCKER_DIR}/qbittorrent"
   local py="$(command -v python3 || command -v python || true)"
+  debug "ensure_qbt_conf_base interpreter=${py:-none}"
   if [[ -z "$py" ]]; then
     warn "Python is unavailable; skipping qBittorrent.conf generation."
+    debug_leave "ensure_qbt_conf_base" "skipped"
     return 0
   fi
   "$py" - "$conf" <<'PY'
@@ -314,15 +457,18 @@ with conf_path.open('w', encoding='utf-8') as handle:
 
 os.chmod(conf_path, 0o600)
 PY
+  debug_leave "ensure_qbt_conf_base" "config=${conf}"
 }
 
 compose_write() {
+  debug_enter "compose_write" "compose_dir=${ARR_STACK_DIR}"
   msg "Generating docker-compose.yml dynamically"
   ensure_dir "$ARR_STACK_DIR"
 
   [[ -f "$ARR_ENV_FILE" ]] || die "Expected env file at $ARR_ENV_FILE"
   # shellcheck disable=SC1090
   . "$ARR_ENV_FILE"
+  debug "compose_write sourced environment from ${ARR_ENV_FILE}"
 
   local required_vars=(
     VPN_TYPE
@@ -365,6 +511,7 @@ compose_write() {
   for var in "${required_vars[@]}"; do
     require_env "$var"
   done
+  debug "compose_write validated required variables (${#required_vars[@]})"
 
   cat >"$ARR_STACK_DIR/docker-compose.yml" <<'YAML'
 ---
@@ -584,29 +731,52 @@ services:
 YAML
 
   if command -v docker >/dev/null 2>&1; then
+    debug "compose_write docker binary present"
     if docker compose version >/dev/null 2>&1; then
+      debug "compose_write validating docker compose config"
       docker compose -f "$ARR_STACK_DIR/docker-compose.yml" --env-file "$ARR_ENV_FILE" config >/dev/null
+    else
+      debug "compose_write docker compose plugin not available"
     fi
+  else
+    debug "compose_write docker binary missing"
   fi
   if command -v yamllint >/dev/null 2>&1; then
+    debug "compose_write running yamllint"
     yamllint -s "$ARR_STACK_DIR/docker-compose.yml"
+  else
+    debug "compose_write skipping yamllint (not installed)"
   fi
 
   chmod 600 "$ARR_STACK_DIR/docker-compose.yml"
+  log_file_snapshot "$ARR_STACK_DIR/docker-compose.yml"
+  debug_leave "compose_write" "compose=${ARR_STACK_DIR}/docker-compose.yml"
 }
 
 gluetun_api() {
-  curl -fsS -u "gluetun:${GLUETUN_API_KEY}" -H "X-API-Key: ${GLUETUN_API_KEY}" \
-    "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}$1"
+  local endpoint="$1"
+  debug_enter "gluetun_api" "endpoint=${endpoint}"
+  local response
+  if ! response=$(curl -fsS -u "gluetun:${GLUETUN_API_KEY}" -H "X-API-Key: ${GLUETUN_API_KEY}" \
+    "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}${endpoint}"); then
+    local code=$?
+    debug_leave "gluetun_api" "failed code=${code}"
+    return $code
+  fi
+  debug_leave "gluetun_api" "bytes=${#response}"
+  printf '%s\n' "$response"
 }
 
 wait_for_vpn_connected() {
+  debug_enter "wait_for_vpn_connected"
   msg "Wait for VPN session"
   local attempts=0 status
   while true; do
     status=$(gluetun_api "/v1/${VPN_TYPE}/status" || true)
+    debug "wait_for_vpn_connected status=${status}"
     if [[ "$status" =~ "status"[[:space:]]*:[[:space:]]*"connected" ]] || [[ "$status" =~ "connected"[[:space:]]*:[[:space:]]*true ]]; then
       msg "VPN reports connected."
+      debug_leave "wait_for_vpn_connected" "attempts=${attempts}"
       break
     fi
     sleep 5
@@ -616,11 +786,16 @@ wait_for_vpn_connected() {
 }
 
 wait_for_port_forwarding() {
-  [[ "$VPN_TYPE" == openvpn ]] || return 0
+  debug_enter "wait_for_port_forwarding" "vpn_type=${VPN_TYPE}"
+  [[ "$VPN_TYPE" == openvpn ]] || {
+    debug_leave "wait_for_port_forwarding" "skipped"
+    return 0
+  }
   msg "Wait for forwarded port"
   local attempts=0 pf port
   while true; do
     pf=$(gluetun_api "/v1/openvpn/portforwarded" || true)
+    debug "wait_for_port_forwarding payload=${pf}"
     if [[ "$pf" =~ ([0-9]{4,5}) ]]; then
       port="${BASH_REMATCH[1]}"
     else
@@ -628,6 +803,7 @@ wait_for_port_forwarding() {
     fi
     if [[ -n "$port" ]]; then
       msg "Forwarded port acquired: $port"
+      debug_leave "wait_for_port_forwarding" "port=${port}"
       echo "$port"
       return 0
     fi
@@ -638,11 +814,17 @@ wait_for_port_forwarding() {
 }
 
 validate_native_port_forwarding() {
-  [[ "$VPN_TYPE" == openvpn ]] || return 0
+  debug_enter "validate_native_port_forwarding" "vpn_type=${VPN_TYPE}"
+  [[ "$VPN_TYPE" == openvpn ]] || {
+    debug_leave "validate_native_port_forwarding" "skipped"
+    return 0
+  }
   local raw port
   raw=$(gluetun_api "/v1/openvpn/portforwarded" || true)
+  debug "validate_native_port_forwarding raw=${raw}"
   if [[ -z "$raw" ]]; then
     warn "Port forwarding API did not return a port"
+    debug_leave "validate_native_port_forwarding" "empty-response"
     return 0
   fi
   if [[ "$raw" =~ ([0-9]{4,5}) ]]; then
@@ -652,15 +834,19 @@ validate_native_port_forwarding() {
   fi
   if [[ -n "$port" ]]; then
     msg "Current forwarded port: $port"
+    debug_leave "validate_native_port_forwarding" "port=${port}"
   else
     warn "Port forwarding API did not return a port"
+    debug_leave "validate_native_port_forwarding" "no-port"
   fi
 }
 
 validate_lan_access() {
+  debug_enter "validate_lan_access"
   msg "Validate LAN"
   local host="$LAN_IP"
   [[ "$host" == 0.0.0.0 ]] && host="${LOCALHOST_IP}"
+  debug "validate_lan_access host=${host}"
   local -a checks=(
     "qBittorrent:${QBT_HTTP_PORT_HOST:-8081}:http"
     "Sonarr:${SONARR_PORT:-8989}:http"
@@ -675,18 +861,22 @@ validate_lan_access() {
     proto=${item##*:}
     port=${item%:*}
     port=${port##*:}
+    debug "validate_lan_access checking ${name}@${port}"
     if curl -fsS "${proto}://${host}:${port}" >/dev/null 2>&1; then
       msg "OK ${name}@${port}"
     else
       warn "${name}@${port} not reachable on ${host}"
     fi
   done
+  debug_leave "validate_lan_access"
 }
 
 cleanup_existing() {
+  debug_enter "cleanup_existing"
   local -a containers=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
   local removed=0 c
   for c in "${containers[@]}"; do
+    debug "cleanup_existing inspecting ${c}"
     if docker inspect "$c" >/dev/null 2>&1; then
       if ((removed == 0)); then
         msg "Cleanup containers"
@@ -697,9 +887,11 @@ cleanup_existing() {
       removed=1
     fi
   done
+  debug_leave "cleanup_existing" "removed=${removed}"
 }
 
 start_stack() {
+  debug_enter "start_stack" "stack_dir=${ARR_STACK_DIR}"
   cd "$ARR_STACK_DIR" || die "Failed to change to $ARR_STACK_DIR"
   cleanup_existing
   msg "Start Gluetun"
@@ -709,15 +901,18 @@ start_stack() {
   while ! docker inspect gluetun --format '{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; do
     sleep 10
     ((tries++))
+    debug "start_stack gluetun health retry=${tries}"
     ((tries > 30)) && die "Gluetun not healthy"
   done
   wait_for_vpn_connected
   local pf=""
   if [[ "$VPN_TYPE" == openvpn ]]; then
     pf=$(wait_for_port_forwarding || true)
+    debug "start_stack port_forward=${pf:-none}"
   fi
   local ip
   ip=$(gluetun_api "/v1/publicip/ip" || true)
+  debug "start_stack public_ip=${ip:-unknown}"
   [[ -n "$ip" ]] && msg "Public IP: $ip" || warn "IP unknown"
   msg "Start services"
   run docker compose up -d
@@ -725,25 +920,33 @@ start_stack() {
     sleep 8
     validate_native_port_forwarding
   fi
+  debug_leave "start_stack"
 }
 
 validate() {
+  debug_enter "validate"
   validate_lan_access
   validate_native_port_forwarding
+  debug_leave "validate"
 }
 
 install_aliases() {
+  debug_enter "install_aliases"
   msg "Aliases"
   local template="${REPO_ROOT}/.arraliases"
+  debug "install_aliases template=${template}"
   if [[ ! -f "$template" ]]; then
     warn "Alias template missing at $template"
+    debug_leave "install_aliases" "missing-template"
     return 0
   fi
   local dest="${ARR_STACK_DIR}/.arraliases"
   local py
   py=$(command -v python3 || command -v python || true)
+  debug "install_aliases interpreter=${py:-none}"
   if [[ -z "$py" ]]; then
     warn "Python unavailable; skipping alias installation."
+    debug_leave "install_aliases" "no-python"
     return 0
   fi
   "$py" - "$template" "$dest" <<'ALIASES_PY'
@@ -780,38 +983,75 @@ ALIASES_PY
       } >>"$rc"
     fi
   done
+  debug_leave "install_aliases" "dest=${dest}"
 }
 
 backup() {
-  [[ "$BACKUP_EXISTING" == 1 ]] || return 0
+  debug_enter "backup" "enabled=${BACKUP_EXISTING}"
+  [[ "$BACKUP_EXISTING" == 1 ]] || {
+    debug_leave "backup" "skipped"
+    return 0
+  }
   msg "Backup"
   local bdir="${ARR_BASE}/backups/$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$bdir"
-  for a in gluetun qbittorrent sonarr radarr prowlarr bazarr; do [[ -d "$ARR_DOCKER_DIR/$a" ]] && tar -czf "$bdir/$a.tgz" -C "$ARR_DOCKER_DIR" "$a"; done
+  debug "backup dir=${bdir}"
+  for a in gluetun qbittorrent sonarr radarr prowlarr bazarr; do
+    if [[ -d "$ARR_DOCKER_DIR/$a" ]]; then
+      debug "backup archiving ${a}"
+      run tar -czf "$bdir/$a.tgz" -C "$ARR_DOCKER_DIR" "$a"
+    else
+      debug "backup skipping missing ${a}"
+    fi
+  done
+  debug_leave "backup"
 }
 
 purge() {
-  [[ "$PURGE_NATIVE" == 1 ]] || return 0
+  debug_enter "purge" "enabled=${PURGE_NATIVE}"
+  [[ "$PURGE_NATIVE" == 1 ]] || {
+    debug_leave "purge" "skipped"
+    return 0
+  }
   msg "Purge native"
-  for p in sonarr radarr prowlarr bazarr qbittorrent transmission-daemon; do dpkg -l | grep -q "^ii.*$p" && run sudo apt-get purge -y "$p"; done
+  for p in sonarr radarr prowlarr bazarr qbittorrent transmission-daemon; do
+    if dpkg -l | grep -q "^ii.*$p"; then
+      debug "purge removing ${p}"
+      run sudo apt-get purge -y "$p"
+    else
+      debug "purge package-not-installed ${p}"
+    fi
+  done
   run sudo apt-get autoremove -y
+  debug_leave "purge"
 }
 
 fixperms() {
-  [[ "$CHOWN_TREE" == 1 ]] || return 0
+  debug_enter "fixperms" "enabled=${CHOWN_TREE}"
+  [[ "$CHOWN_TREE" == 1 ]] || {
+    debug_leave "fixperms" "skipped"
+    return 0
+  }
   msg "Permissions"
   run sudo chown -R "${USER}:${USER}" "$ARR_BASE"
   find "$ARR_BASE" -type d -exec chmod 755 {} +
   find "$ARR_BASE" -type f -exec chmod 644 {} +
+  debug_leave "fixperms"
 }
 
 prunev() {
-  [[ "$PRUNE_VOLUMES" == 1 ]] || return 0
+  debug_enter "prunev" "enabled=${PRUNE_VOLUMES}"
+  [[ "$PRUNE_VOLUMES" == 1 ]] || {
+    debug_leave "prunev" "skipped"
+    return 0
+  }
   msg "Prune volumes"
-  docker volume prune -f
+  run docker volume prune -f
+  debug_leave "prunev"
 }
 
 main() {
+  debug_enter "main" "args=$*"
   preflight
   mkdirs
   api_key
@@ -826,5 +1066,6 @@ main() {
   validate
   install_aliases
   msg "Done."
+  debug_leave "main"
 }
 main "$@"
