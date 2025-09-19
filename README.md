@@ -40,20 +40,20 @@ chmod 600 arrconf/proton.conf
 ./arrstack.sh --wireguard --yes
 ```
 
-### Default service ports on your LAN IP
+### Service ports on your LAN IP (configurable via `.env`)
 ```
-qBittorrent : http://$LAN_IP:8081
-Sonarr      : http://$LAN_IP:8989
-Radarr      : http://$LAN_IP:7878
-Prowlarr    : http://$LAN_IP:9696
-Bazarr      : http://$LAN_IP:6767
-FlareSolverr: http://$LAN_IP:8191
+qBittorrent : http://${LAN_IP:=0.0.0.0}:${QBT_HTTP_PORT_HOST:=8081} (container ${QBT_HTTP_PORT_CONTAINER:=8080})
+Sonarr      : http://${LAN_IP:=0.0.0.0}:${SONARR_PORT:=8989}
+Radarr      : http://${LAN_IP:=0.0.0.0}:${RADARR_PORT:=7878}
+Prowlarr    : http://${LAN_IP:=0.0.0.0}:${PROWLARR_PORT:=9696}
+Bazarr      : http://${LAN_IP:=0.0.0.0}:${BAZARR_PORT:=6767}
+FlareSolverr: http://${LAN_IP:=0.0.0.0}:${FLARESOLVERR_PORT:=8191}
 ```
 
-> Set `LAN_IP` in `arrconf/userconf.sh` to bind to a single RFC1918 address.
+Defaults are shown in `.env.example`. Set `LAN_IP` in `arrconf/userconf.sh` to bind to a single RFC1918 address.
 
 ## Security
-- Gluetun control API bound to `127.0.0.1` with RBAC (basic auth; random API key).
+- Gluetun control API bound via `${GLUETUN_CONTROL_HOST:=127.0.0.1}:${GLUETUN_CONTROL_PORT:=8000}` with RBAC (basic auth; random API key).
 - Secrets never printed to console; on disk files are `0600`, dirs `0700`.
 - Only LAN ports are published; no public exposure by default.
 
