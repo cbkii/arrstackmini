@@ -363,12 +363,15 @@ compose_write() {
   done
 
   cat >"$ARR_STACK_DIR/docker-compose.yml" <<'YAML'
+---
 services:
   gluetun:
     image: ${GLUETUN_IMAGE}
     container_name: gluetun
-    cap_add: ["NET_ADMIN"]
-    devices: ["/dev/net/tun"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
     environment:
       VPN_SERVICE_PROVIDER: protonvpn
       VPN_TYPE: ${VPN_TYPE}
@@ -441,7 +444,10 @@ services:
       gluetun:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${QBT_HTTP_PORT_CONTAINER}/api/v2/app/version"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -452,15 +458,23 @@ services:
     image: ${SONARR_IMAGE}
     container_name: sonarr
     network_mode: "service:gluetun"
-    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
     volumes:
       - ${ARR_DOCKER_DIR}/sonarr:/config
       - ${TV_DIR}:/tv
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
-    depends_on: { gluetun: { condition: service_healthy } }
+    depends_on:
+      gluetun:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${SONARR_PORT}"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${SONARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -471,15 +485,23 @@ services:
     image: ${RADARR_IMAGE}
     container_name: radarr
     network_mode: "service:gluetun"
-    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
     volumes:
       - ${ARR_DOCKER_DIR}/radarr:/config
       - ${MOVIES_DIR}:/movies
       - ${DOWNLOADS_DIR}:/downloads
       - ${COMPLETED_DIR}:/completed
-    depends_on: { gluetun: { condition: service_healthy } }
+    depends_on:
+      gluetun:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${RADARR_PORT}"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${RADARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -490,12 +512,20 @@ services:
     image: ${PROWLARR_IMAGE}
     container_name: prowlarr
     network_mode: "service:gluetun"
-    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
     volumes:
       - ${ARR_DOCKER_DIR}/prowlarr:/config
-    depends_on: { gluetun: { condition: service_healthy } }
+    depends_on:
+      gluetun:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${PROWLARR_PORT}"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${PROWLARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -506,14 +536,22 @@ services:
     image: ${BAZARR_IMAGE}
     container_name: bazarr
     network_mode: "service:gluetun"
-    environment: { PUID: ${PUID}, PGID: ${PGID}, TZ: ${TIMEZONE} }
+    environment:
+      PUID: ${PUID}
+      PGID: ${PGID}
+      TZ: ${TIMEZONE}
     volumes:
       - ${ARR_DOCKER_DIR}/bazarr:/config
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
-    depends_on: { gluetun: { condition: service_healthy } }
+    depends_on:
+      gluetun:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${BAZARR_PORT}"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${BAZARR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
@@ -524,16 +562,31 @@ services:
     image: ${FLARESOLVERR_IMAGE}
     container_name: flaresolverr
     network_mode: "service:gluetun"
-    environment: { LOG_LEVEL: info }
-    depends_on: { gluetun: { condition: service_healthy } }
+    environment:
+      LOG_LEVEL: info
+    depends_on:
+      gluetun:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://${GLUETUN_LOOPBACK_HOST}:${FLARESOLVERR_PORT}"]
+      test:
+        - CMD-SHELL
+        - >
+          curl -fsS "http://${GLUETUN_LOOPBACK_HOST}:${FLARESOLVERR_PORT}"
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 90s
     restart: unless-stopped
 YAML
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      docker compose -f "$ARR_STACK_DIR/docker-compose.yml" --env-file "$ARR_ENV_FILE" config >/dev/null
+    fi
+  fi
+  if command -v yamllint >/dev/null 2>&1; then
+    yamllint -s "$ARR_STACK_DIR/docker-compose.yml"
+  fi
 
   chmod 600 "$ARR_STACK_DIR/docker-compose.yml"
 }
