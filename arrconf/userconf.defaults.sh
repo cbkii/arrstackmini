@@ -12,4 +12,3 @@ MOVIES_DIR="${MOVIES_DIR:-$MEDIA_DIR/movies}"
 # Defaults
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
 LAN_IP="${LAN_IP:-0.0.0.0}"
-VPN_TYPE="${VPN_TYPE:-openvpn}"

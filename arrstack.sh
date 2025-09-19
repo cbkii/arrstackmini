@@ -11,10 +11,10 @@ export HISTFILE=/dev/null
 
 : "${DEBUG:=0}" : "${ARR_NONINTERACTIVE:=0}" : "${FORCE_ROTATE_API_KEY:=0}"
 : "${PURGE_NATIVE:=0}" : "${CHOWN_TREE:=0}" : "${PRUNE_VOLUMES:=0}" : "${BACKUP_EXISTING:=0}"
-: "${LOCALHOST_IP:=127.0.0.1}" : "${GLUETUN_CONTROL_PORT:=8000}" : "${QBT_HTTP_PORT_HOST:=8081}"
+: "${LOCALHOST_IP:=127.0.0.1}" : "${GLUETUN_LOOPBACK_HOST:=127.0.0.1}" : "${GLUETUN_CONTROL_PORT:=8000}" : "${QBT_HTTP_PORT_HOST:=8081}"
 : "${SONARR_PORT:=8989}" : "${RADARR_PORT:=7878}" : "${PROWLARR_PORT:=9696}"
 : "${BAZARR_PORT:=6767}" : "${FLARESOLVERR_PORT:=8191}"
-: "${GLUETUN_CONTROL_HOST:=${LOCALHOST_IP}}" : "${GLUETUN_SERVICES_HOST:=${LOCALHOST_IP}}"
+: "${GLUETUN_CONTROL_HOST:=${LOCALHOST_IP}}"
 : "${QBT_HTTP_PORT_CONTAINER:=8080}"
 : "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS:=192.168.0.0/16,10.0.0.0/8}"
 : "${GLUETUN_HEALTH_TARGET_ADDRESS:=1.1.1.1:443}"
@@ -76,14 +76,14 @@ run(){ local -a c=("$@"); [[ "$DEBUG" == 1 ]] && printf '+ %s\n' "$(printf '%q '
 setup_logging(){ if [[ "$DEBUG" == 1 ]]; then mkdir -p "$ARR_STACK_DIR"; LOG_FILE="$ARR_STACK_DIR/arrstack-$(date +%Y%m%d-%H%M%S).log"; : >"$LOG_FILE"; chmod 600 "$LOG_FILE"; ln -sfn "$(basename "$LOG_FILE")" "$ARR_STACK_DIR/arrstack-install.log"; fi; }
 
 help(){ cat <<'H'
-Usage: ./arrstack.sh [--openvpn|--wireguard] [-y|--yes] [--debug] [--rotate-apikey]
+Usage: ./arrstack.sh [-y|--yes] [--debug] [--rotate-apikey]
        [--purge-native] [--chown-tree] [--prune-volumes] [--backup-existing]
 H
 }
 
-VPN_TYPE="${VPN_TYPE:-openvpn}"; ASSUME_YES=0
+VPN_TYPE="openvpn"; ASSUME_YES=0
 while [ $# -gt 0 ]; do case "$1" in
-  --openvpn) VPN_TYPE=openvpn;; --wireguard) VPN_TYPE=wireguard;; --debug) DEBUG=1;;
+  --debug) DEBUG=1;;
   -y|--yes) ASSUME_YES=1; ARR_NONINTERACTIVE=1;; --rotate-apikey) FORCE_ROTATE_API_KEY=1;;
   --purge-native) PURGE_NATIVE=1;; --chown-tree) CHOWN_TREE=1;; --prune-volumes) PRUNE_VOLUMES=1;; --backup-existing) BACKUP_EXISTING=1;;
   -h|--help) help; exit 0;; *) warn "Unknown option: $1";; esac; shift; done
@@ -97,9 +97,8 @@ install_missing(){ local pkgs=(); command -v docker >/dev/null || pkgs+=(docker.
 ensure_dir(){ [[ -d "$1" ]] || { mkdir -p "$1" || { sudo mkdir -p "$1" && sudo chown "${USER}:${USER}" "$1"; }; }; }
 
 preflight(){ msg "Preflight"; install_missing
-  if [[ "$VPN_TYPE" == openvpn ]]; then [[ -f "${ARRCONF_DIR}/proton.auth" ]] || die "arrconf/proton.auth missing"; fi
-  if [[ "$VPN_TYPE" == wireguard ]]; then [[ -f "${ARRCONF_DIR}/proton.conf" ]] || die "arrconf/proton.conf missing"; fi
-  [[ "$ASSUME_YES" == 1 ]] || { printf 'Continue with VPN_TYPE=%s? [y/N]: ' "$VPN_TYPE"; read -r a; [[ "$a" =~ ^[Yy]$ ]] || die Aborted; }
+  [[ -f "${ARRCONF_DIR}/proton.auth" ]] || die "arrconf/proton.auth missing"
+  [[ "$ASSUME_YES" == 1 ]] || { printf 'Continue with ProtonVPN OpenVPN setup? [y/N]: '; read -r a; [[ "$a" =~ ^[Yy]$ ]] || die Aborted; }
 }
 
 mkdirs(){ msg "Create dirs"; for d in "$ARR_STACK_DIR" "$ARR_DOCKER_DIR"/gluetun "$ARR_DOCKER_DIR"/{qbittorrent,sonarr,radarr,prowlarr,bazarr} "$DOWNLOADS_DIR" "$DOWNLOADS_DIR"/incomplete "$COMPLETED_DIR" "$MEDIA_DIR" "$TV_DIR" "$MOVIES_DIR" "$ARRCONF_DIR" "$ARR_DOCKER_DIR"/gluetun/auth; do ensure_dir "$d"; done; chmod 700 "$ARRCONF_DIR"; }
@@ -114,7 +113,6 @@ username="gluetun"
 password="${GLUETUN_API_KEY}"
 routes=[
   "GET /v1/openvpn/status",
-  "GET /v1/wireguard/status",
   "GET /v1/publicip/ip",
   "GET /v1/openvpn/portforwarded",
   "POST /v1/openvpn/forwardport"
@@ -129,7 +127,7 @@ OPENVPN_PASSWORD=${PW}
 E
 chmod 600 "$ARRCONF_DIR/proton.env"; fi
   : "${TIMEZONE:=Australia/Sydney}"; : "${LAN_IP:=0.0.0.0}"; : "${SERVER_COUNTRIES:=Netherlands,Germany,Switzerland}"
-  : "${GLUETUN_CONTROL_HOST:=${LOCALHOST_IP}}"; : "${GLUETUN_SERVICES_HOST:=${LOCALHOST_IP}}"
+  : "${GLUETUN_CONTROL_HOST:=${LOCALHOST_IP}}"
   : "${QBT_HTTP_PORT_CONTAINER:=8080}"
   : "${GLUETUN_FIREWALL_OUTBOUND_SUBNETS:=192.168.0.0/16,10.0.0.0/8}"
   : "${GLUETUN_HEALTH_TARGET_ADDRESS:=1.1.1.1:443}"
@@ -142,6 +140,7 @@ PGID=$(id -g)
 TIMEZONE=${TIMEZONE}
 LAN_IP=${LAN_IP}
 LOCALHOST_IP=${LOCALHOST_IP}
+GLUETUN_LOOPBACK_HOST=${GLUETUN_LOOPBACK_HOST}
 GLUETUN_API_KEY=${GLUETUN_API_KEY}
 GLUETUN_IMAGE=${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.39.1}
 QBITTORRENT_IMAGE=${QBITTORRENT_IMAGE:-lscr.io/linuxserver/qbittorrent:latest}
@@ -159,7 +158,6 @@ PROWLARR_PORT=${PROWLARR_PORT:-9696}
 BAZARR_PORT=${BAZARR_PORT:-6767}
 FLARESOLVERR_PORT=${FLARESOLVERR_PORT:-8191}
 GLUETUN_CONTROL_HOST=${GLUETUN_CONTROL_HOST}
-GLUETUN_SERVICES_HOST=${GLUETUN_SERVICES_HOST}
 GLUETUN_CONTROL_PORT=${GLUETUN_CONTROL_PORT:-8000}
 GLUETUN_FIREWALL_OUTBOUND_SUBNETS=${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}
 GLUETUN_VPN_INPUT_PORTS=${GLUETUN_VPN_INPUT_PORTS}
@@ -231,7 +229,15 @@ os.chmod(conf_path, 0o600)
 PY
 }
 
-compose_write(){ msg "docker-compose.yml"; [[ -f "$REPO_ROOT/docker-compose.yml" ]] || die "compose missing"; }
+compose_write(){
+  msg "docker-compose.yml"
+  local src="$REPO_ROOT/docker-compose.yml"
+  local dest="$ARR_STACK_DIR/docker-compose.yml"
+  [[ -f "$src" ]] || die "compose missing"
+  ensure_dir "$ARR_STACK_DIR"
+  run cp "$src" "$dest"
+  chmod 600 "$dest"
+}
 
 gluetun_api(){
   curl -fsS -u "gluetun:${GLUETUN_API_KEY}" "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}$1"
@@ -255,31 +261,18 @@ wait_for_vpn_connected(){
 wait_for_port_forwarding(){
   [[ "$VPN_TYPE" == openvpn ]] || return 0
   msg "Wait for forwarded port"
-  local attempts=0 pf
+  local attempts=0 pf port
   while true; do
     pf=$(gluetun_api "/v1/openvpn/portforwarded" || true)
-    if [[ -n "$pf" ]]; then
-      local port
-      port=$(GLUETUN_PF_JSON="$pf" python3 -c 'import json, os, re, sys
-raw = os.environ.get("GLUETUN_PF_JSON", "")
-port = None
-try:
-    data = json.loads(raw)
-    port = data.get("port") or data.get("forwarded_port") or data.get("data", {}).get("port")
-except json.JSONDecodeError:
-    match = re.search(r"\d+", raw)
-    if match:
-        port = match.group(0)
-if port:
-    print(port)
-else:
-    sys.exit(1)
-' 2>/dev/null || true)
-      if [[ -n "$port" ]]; then
-        msg "Forwarded port acquired: $port"
-        echo "$port"
-        return 0
-      fi
+    if [[ "$pf" =~ ([0-9]{4,5}) ]]; then
+      port="${BASH_REMATCH[1]}"
+    else
+      port=""
+    fi
+    if [[ -n "$port" ]]; then
+      msg "Forwarded port acquired: $port"
+      echo "$port"
+      return 0
     fi
     sleep 5
     ((attempts++))
@@ -295,21 +288,11 @@ validate_native_port_forwarding(){
     warn "Port forwarding API did not return a port"
     return 0
   fi
-  port=$(GLUETUN_PF_JSON="$raw" python3 -c 'import json, os, re, sys
-raw = os.environ.get("GLUETUN_PF_JSON", "")
-port = None
-try:
-    data = json.loads(raw)
-    port = data.get("port") or data.get("forwarded_port") or data.get("data", {}).get("port")
-except json.JSONDecodeError:
-    match = re.search(r"\d+", raw)
-    if match:
-        port = match.group(0)
-if port:
-    print(port)
-else:
-    sys.exit(1)
-' 2>/dev/null || true)
+  if [[ "$raw" =~ ([0-9]{4,5}) ]]; then
+    port="${BASH_REMATCH[1]}"
+  else
+    port=""
+  fi
   if [[ -n "$port" ]]; then
     msg "Current forwarded port: $port"
   else
@@ -341,9 +324,26 @@ validate_lan_access(){
   done
 }
 
+cleanup_existing(){
+  local -a containers=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  local removed=0 c
+  for c in "${containers[@]}"; do
+    if docker inspect "$c" >/dev/null 2>&1; then
+      if (( removed == 0 )); then
+        msg "Cleanup containers"
+      fi
+      if ! run docker rm -f "$c"; then
+        warn "Failed to remove container $c"
+      fi
+      removed=1
+    fi
+  done
+}
+
 start_stack(){
-  msg "Start Gluetun"
   cd "$ARR_STACK_DIR"
+  cleanup_existing
+  msg "Start Gluetun"
   run docker compose up -d gluetun
   msg "Wait for health (≤5m)"
   local tries=0
