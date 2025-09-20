@@ -1,8 +1,10 @@
-# Override defaults here; this file is git‑ignored
-LAN_IP=192.168.1.50
-SERVER_COUNTRIES="Netherlands,Switzerland"
+#!/usr/bin/env bash
+# Example user configuration overrides
 
-# Example overrides for container identity and ports
-#PUID=1000
-#PGID=1000
-#QBT_HTTP_PORT_HOST=9081
+# Network settings
+# LAN_IP=192.168.1.50              # Force specific IP
+# SERVER_COUNTRIES="Netherlands"    # Use specific ProtonVPN countries
+
+# Custom ports (if defaults conflict)
+# QBT_HTTP_PORT_HOST=9091           # qBittorrent WebUI
+# SONARR_PORT=8990                  # Sonarr

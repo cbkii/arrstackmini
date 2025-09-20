@@ -1,58 +1,47 @@
+#!/usr/bin/env bash
+# Default configuration for ARR Stack
+# Override these in arrconf/userconf.sh (git-ignored)
+
 # Base paths
 ARR_BASE="${ARR_BASE:-$PWD}"
-ARR_STACK_DIR="${ARR_STACK_DIR:-$ARR_BASE}"
-ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-$ARR_BASE/docker-data}"
-ARRCONF_DIR="${ARRCONF_DIR:-$ARR_BASE/arrconf}"
-DOWNLOADS_DIR="${DOWNLOADS_DIR:-$ARR_BASE/downloads}"
-COMPLETED_DIR="${COMPLETED_DIR:-$ARR_BASE/completed}"
+ARR_STACK_DIR="${ARR_STACK_DIR:-${ARR_BASE}/arrstack}"
+ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"
+ARRCONF_DIR="${ARRCONF_DIR:-${PWD}/arrconf}"
 
-# Media directories
-MEDIA_DIR="${MEDIA_DIR:-$ARR_BASE/media}"
-TV_DIR="${TV_DIR:-$MEDIA_DIR/tv}"
-MOVIES_DIR="${MOVIES_DIR:-$MEDIA_DIR/movies}"
+# Download paths
+DOWNLOADS_DIR="${DOWNLOADS_DIR:-${HOME}/Downloads}"
+COMPLETED_DIR="${COMPLETED_DIR:-${DOWNLOADS_DIR}/completed}"
 
-# Container identity
+# Media library
+MEDIA_DIR="${MEDIA_DIR:-/media/mediasmb}"
+TV_DIR="${TV_DIR:-${MEDIA_DIR}/Shows}"
+MOVIES_DIR="${MOVIES_DIR:-${MEDIA_DIR}/Movies}"
+# SUBS_DIR="${SUBS_DIR:-${MEDIA_DIR}/subs}"
+
+# Container identity (current user by default)
 PUID="${PUID:-$(id -u)}"
 PGID="${PGID:-$(id -g)}"
 
-# Core runtime defaults
-VPN_TYPE="${VPN_TYPE:-openvpn}"
+# Location
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
-LAN_IP="${LAN_IP:-0.0.0.0}"
+LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands,Switzerland}"
 
-# Logging
-ARRSTACK_LOG_DIR="${ARRSTACK_LOG_DIR:-$ARR_STACK_DIR/logs}"
-ARRSTACK_LOG_ARCHIVE_DIR="${ARRSTACK_LOG_ARCHIVE_DIR:-$ARRSTACK_LOG_DIR/archive}"
-ARRSTACK_LOG_FILE="${ARRSTACK_LOG_FILE:-$ARRSTACK_LOG_DIR/arrstack-install.log}"
-
-# Loopback and control hosts – default to localhost but configurable
-GLUETUN_LOOPBACK_HOST="${GLUETUN_LOOPBACK_HOST:-$LOCALHOST_IP}"
-GLUETUN_CONTROL_HOST="${GLUETUN_CONTROL_HOST:-$LOCALHOST_IP}"
-GLUETUN_CONTROL_LISTEN_IP="${GLUETUN_CONTROL_LISTEN_IP:-0.0.0.0}"
+# Gluetun control server
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
 GLUETUN_API_KEY="${GLUETUN_API_KEY:-}"
 
-# Web ports (container-internal and host bind)
-QBT_HTTP_PORT_CONTAINER="${QBT_HTTP_PORT_CONTAINER:-8080}"
+# Service ports
 QBT_HTTP_PORT_HOST="${QBT_HTTP_PORT_HOST:-8081}"
 SONARR_PORT="${SONARR_PORT:-8989}"
 RADARR_PORT="${RADARR_PORT:-7878}"
 PROWLARR_PORT="${PROWLARR_PORT:-9696}"
 BAZARR_PORT="${BAZARR_PORT:-6767}"
 FLARESOLVERR_PORT="${FLARESOLVERR_PORT:-8191}"
-# Allow host→Gluetun LAN input ports (comma-separated list of numbers).
-# Derived from service port vars so single-port overrides flow through.
-GLUETUN_LAN_INPUT_PORTS="${GLUETUN_LAN_INPUT_PORTS:-${GLUETUN_CONTROL_PORT},${QBT_HTTP_PORT_CONTAINER},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}}"
-
-# Firewall & health defaults
-GLUETUN_FIREWALL_OUTBOUND_SUBNETS="${GLUETUN_FIREWALL_OUTBOUND_SUBNETS:-192.168.0.0/16,10.0.0.0/8}"
-GLUETUN_HEALTH_TARGET_ADDRESS="${GLUETUN_HEALTH_TARGET_ADDRESS:-1.1.1.1:443}"
-GLUETUN_VPN_INPUT_PORTS="${GLUETUN_VPN_INPUT_PORTS:-${QBT_HTTP_PORT_HOST},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}}"
 
 # Images
-GLUETUN_IMAGE="${GLUETUN_IMAGE:-qmcgaw/gluetun:latest}"
+GLUETUN_IMAGE="${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.39.1}"
 QBITTORRENT_IMAGE="${QBITTORRENT_IMAGE:-lscr.io/linuxserver/qbittorrent:latest}"
 SONARR_IMAGE="${SONARR_IMAGE:-lscr.io/linuxserver/sonarr:latest}"
 RADARR_IMAGE="${RADARR_IMAGE:-lscr.io/linuxserver/radarr:latest}"
@@ -60,3 +49,6 @@ PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}"
 BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:latest}"
 FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:latest}"
 
+# Behaviour flags
+ASSUME_YES="${ASSUME_YES:-0}"
+FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
