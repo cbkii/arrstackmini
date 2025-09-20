@@ -61,23 +61,25 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
    ```bash
    ./arrstack.sh --yes
    ```
-   - Add `--debug` for verbose tracing under `logs/`.
-   - Other flags: `--rotate-apikey`, `--purge-native`, `--chown-tree`, `--prune-volumes`, `--backup-existing`.
+   - Use `--yes` to skip the interactive confirmation prompt.
+   - Run `./arrstack.sh --help` for available flags such as `--rotate-api-key`.
 
-The script provisions dependencies (Docker, Compose, curl, openssl, python3), builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers.
+The script checks for Docker, Compose, curl, jq, and openssl, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers.
 
 ## Configuration
 ### Directory layout
 Defaults are defined in `arrconf/userconf.defaults.sh` and can be overridden in `arrconf/userconf.sh`.
 
-| Purpose              | Default path (relative to repo) |
-| -------------------- | -------------------------------- |
-| Stack root           | `${ARR_BASE}` (defaults to repo) |
-| Docker volumes       | `${ARR_DOCKER_DIR}` (`docker-data/`)
-| Proton auth/env      | `${ARRCONF_DIR}` (`arrconf/`)
-| Downloads (incomplete)| `${DOWNLOADS_DIR}/incomplete`
-| Completed downloads  | `${COMPLETED_DIR}`
-| Media library        | `${MEDIA_DIR}` → `${TV_DIR}`, `${MOVIES_DIR}`
+| Purpose             | Default path |
+| ------------------- | ------------ |
+| Stack root          | `${ARR_STACK_DIR}` (`${HOME}/srv/arrstack`)
+| Docker volumes      | `${ARR_DOCKER_DIR}` (`${HOME}/srv/docker-data`)
+| Proton auth/env     | `${ARRCONF_DIR}` (`<repo>/arrconf`)
+| Downloads           | `${DOWNLOADS_DIR}` (`${HOME}/Downloads`)
+| Completed downloads | `${COMPLETED_DIR}` (`${HOME}/Downloads/completed`)
+| Media library       | `${MEDIA_DIR}` (`/media/mediasmb`)
+| TV library          | `${TV_DIR}` (`/media/mediasmb/Shows`)
+| Movies library      | `${MOVIES_DIR}` (`/media/mediasmb/Movies`)
 
 All secrets and config directories are created with restrictive permissions (`0600`/`0700`).
 
@@ -86,68 +88,54 @@ All secrets and config directories are created with restrictive permissions (`06
 
 - `LAN_IP` – bind services to a specific RFC1918 address (auto-detected when empty).
 - `SERVER_COUNTRIES` – comma-separated Proton country list handed to Gluetun (defaults to `Netherlands,Switzerland` so ProtonVPN stays on port-forwardable regions).
-- `GLUETUN_CONTROL_HOST`, `GLUETUN_CONTROL_PORT` – host exposure for the Gluetun control API.
+- `LOCALHOST_IP`, `GLUETUN_CONTROL_PORT` – host exposure for the Gluetun control API.
 - `QBT_HTTP_PORT_HOST`, `SONARR_PORT`, etc. – LAN-facing ports; mirrored into firewall allow-lists.
 
 ### Service ports
 The defaults below are published on your LAN IP and configurable via `.env`/`arrconf/userconf.sh`:
 
-| Service       | LAN URL                                         | Container port |
-| ------------- | ------------------------------------------------ | -------------- |
-| qBittorrent   | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8081}` | `${QBT_HTTP_PORT_CONTAINER:-8080}` |
-| Sonarr        | `http://${LAN_IP:-0.0.0.0}:${SONARR_PORT:-8989}`        | `8989` |
-| Radarr        | `http://${LAN_IP:-0.0.0.0}:${RADARR_PORT:-7878}`        | `7878` |
-| Prowlarr      | `http://${LAN_IP:-0.0.0.0}:${PROWLARR_PORT:-9696}`      | `9696` |
-| Bazarr        | `http://${LAN_IP:-0.0.0.0}:${BAZARR_PORT:-6767}`        | `6767` |
-| FlareSolverr  | `http://${LAN_IP:-0.0.0.0}:${FLARESOLVERR_PORT:-8191}`  | `8191` |
+| Service      | LAN URL                                         |
+| ------------ | ----------------------------------------------- |
+| qBittorrent  | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8081}` |
+| Sonarr       | `http://${LAN_IP:-0.0.0.0}:${SONARR_PORT:-8989}`        |
+| Radarr       | `http://${LAN_IP:-0.0.0.0}:${RADARR_PORT:-7878}`        |
+| Prowlarr     | `http://${LAN_IP:-0.0.0.0}:${PROWLARR_PORT:-9696}`      |
+| Bazarr       | `http://${LAN_IP:-0.0.0.0}:${BAZARR_PORT:-6767}`        |
+| FlareSolverr | `http://${LAN_IP:-0.0.0.0}:${FLARESOLVERR_PORT:-8191}`  |
 
 Set `LAN_IP` in `arrconf/userconf.sh` to bind to a single interface when desired.
 
 ## Daily operations
-After installation, `~/.bashrc`/`~/.zshrc` sources `.arraliases` so helper functions are available in new shells:
+The installer adds two aliases to `~/.bashrc` when possible:
 
 ```bash
-arr.up         # docker compose up -d
-arr.down       # docker compose down
-arr.logs       # follow stack logs
-arr.restart    # restart all services
-pvpn.status    # Gluetun public IP + forwarded port (OpenVPN)
-qbt.port.sync  # re-apply forwarded port to qBittorrent
+arrstack       # rerun the installer from the repo
+arrstack-logs  # follow Gluetun logs
 ```
 
-Additional helpers include `arr.health`, `arr.backup`, `arr.open`, and `arr.shell <service>` for targeted exec access.
+Manage the stack directly with Docker Compose commands from `${ARR_STACK_DIR}` if you prefer finer-grained control.
 
 ## Security posture
 ### Gluetun control API
-The control server listens inside the VPN namespace at `${GLUETUN_CONTROL_LISTEN_IP:-0.0.0.0}:${GLUETUN_CONTROL_PORT:-8000}` and is published to the host at `${GLUETUN_CONTROL_HOST:-127.0.0.1}`. API-key-only authentication is enforced:
-
-```env
-HTTP_CONTROL_SERVER="on"
-HTTP_CONTROL_SERVER_AUTH_TYPE="apikey"
-HTTP_CONTROL_SERVER_APIKEY="${GLUETUN_API_KEY}"
-```
-
-All requests must supply the `X-API-Key` header:
+The control server listens inside the VPN namespace and is published to the host at `${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}`. API-key authentication is required; requests must include `X-API-Key: ${GLUETUN_API_KEY}`:
 
 ```bash
 curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
-  "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/publicip/ip"
 
 curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
-  "http://${GLUETUN_CONTROL_HOST}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded"
 ```
 
 ### Firewall and namespace
-- `GLUETUN_LAN_INPUT_PORTS` populates Gluetun's `FIREWALL_INPUT_PORTS`, limiting host/LAN ingress.
-- `GLUETUN_VPN_INPUT_PORTS` feeds `FIREWALL_VPN_INPUT_PORTS` for VPN provider port forwarding only.
-- Scope exposure by adjusting `${GLUETUN_CONTROL_HOST}` (`127.0.0.1` keeps the API loopback-only; `0.0.0.0` opens all interfaces).
-- Health probes and forwarded port sync execute over `${GLUETUN_LOOPBACK_HOST:-127.0.0.1}` inside the namespace.
+- Gluetun exposes only the configured LAN service ports plus the control API on `${LOCALHOST_IP}`.
+- Health probes and forwarded port sync execute over the control API using the generated key.
 - Secrets are never echoed to stdout; files land with `0600` and directories with `0700` permissions.
 
 ## Logging and diagnostics
-- Pass `--debug` to `arrstack.sh` for full tracing. Logs live under `${ARRSTACK_LOG_ARCHIVE_DIR:=$ARR_STACK_DIR/logs/archive}` with the latest run symlinked at `${ARRSTACK_LOG_FILE:=$ARR_STACK_DIR/logs/arrstack-install.log}`.
-- Override `ARRSTACK_LOG_DIR`, `ARRSTACK_LOG_ARCHIVE_DIR`, or `ARRSTACK_LOG_FILE` in `arrconf/userconf.sh` to relocate installer output.
-- `arr.logs` streams container logs; `arr.health` inspects Docker health checks.
+- Re-run the installer with `--rotate-api-key` to regenerate credentials if needed.
+- Use `docker logs gluetun` (or the `arrstack-logs` alias) to monitor VPN connectivity.
+- `docker compose ps` from `${ARR_STACK_DIR}` surfaces container state and health checks.
 
 ## Troubleshooting
 Refer to [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for Proton port-forward validation, health check tips, and common fixes.

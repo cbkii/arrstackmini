@@ -1,10 +1,26 @@
-# runtime
+# Environment and secrets
 .env
-arrstack-*.log
-docker-data/
 arrconf/proton.auth
-arrconf/proton.env
 arrconf/userconf.sh
-gluetun/auth/config.toml
+
+# Runtime data
+docker-data/
+downloads/
+completed/
+media/
+
+# Logs
+logs/
+*.log
+
+# Backups
+*.backup
+*.bak
 *.tgz
+
+# OS files
 .DS_Store
+
+# Editor files
+*.swp
+.vscode/
