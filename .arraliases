@@ -65,7 +65,18 @@ _arr_gluetun_api(){
   local endpoint="$1"
   local key="$(_arr_gluetun_key)"
   local port="$(_arr_gluetun_port)"
-  curl -fsS -u "gluetun:${key}" "http://$(_arr_gluetun_host):${port}${endpoint}"
+  local host="$(_arr_gluetun_host)"
+
+  if [ -z "$key" ]; then
+    echo "Warning: GLUETUN_API_KEY is unset; rerun arrstack to regenerate." >&2
+    return 1
+  fi
+
+  if curl -fsS -H "X-Api-Key: ${key}" "http://${host}:${port}${endpoint}" 2>/dev/null; then
+    return 0
+  fi
+
+  curl -fsS -u "gluetun:${key}" "http://${host}:${port}${endpoint}"
 }
 
 _arr_qbt_base(){

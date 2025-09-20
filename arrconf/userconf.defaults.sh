@@ -40,14 +40,18 @@ PROWLARR_PORT="${PROWLARR_PORT:-9696}"
 BAZARR_PORT="${BAZARR_PORT:-6767}"
 FLARESOLVERR_PORT="${FLARESOLVERR_PORT:-8191}"
 
+# qBittorrent credentials (override after first login)
+QBT_USER="${QBT_USER:-admin}"
+QBT_PASS="${QBT_PASS:-adminadmin}"
+
 # Images
 GLUETUN_IMAGE="${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.39.1}"
-QBITTORRENT_IMAGE="${QBITTORRENT_IMAGE:-lscr.io/linuxserver/qbittorrent:latest}"
-SONARR_IMAGE="${SONARR_IMAGE:-lscr.io/linuxserver/sonarr:latest}"
-RADARR_IMAGE="${RADARR_IMAGE:-lscr.io/linuxserver/radarr:latest}"
-PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}"
-BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:latest}"
-FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:latest}"
+QBITTORRENT_IMAGE="${QBITTORRENT_IMAGE:-lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
+SONARR_IMAGE="${SONARR_IMAGE:-lscr.io/linuxserver/sonarr:4.0.15.2941-ls291}"
+RADARR_IMAGE="${RADARR_IMAGE:-lscr.io/linuxserver/radarr:5.27.5.10198-ls283}"
+PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:1.28.2-ls207}"
+BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:1.5.1-ls288}"
+FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
 
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"
