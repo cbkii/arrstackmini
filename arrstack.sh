@@ -10,7 +10,8 @@ ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
-SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands,Switzerland}"
+# Restrict to ProtonVPN servers supporting port forwarding by default
+SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
 
 : "${PUID:=$(id -u)}"
 : "${PGID:=$(id -g)}"
@@ -136,9 +137,19 @@ mkdirs() {
   ensure_dir "$ARR_DOCKER_DIR/flaresolverr"
   ensure_dir "$DOWNLOADS_DIR"
   ensure_dir "$COMPLETED_DIR"
-  ensure_dir "$TV_DIR"
-  ensure_dir "$MOVIES_DIR"
   ensure_dir "$ARR_STACK_DIR/scripts"
+
+  if [[ ! -d "$TV_DIR" ]]; then
+    warn "TV directory does not exist: $TV_DIR"
+    warn "Creating it now (may fail if parent directory is missing)"
+    mkdir -p "$TV_DIR" 2>/dev/null || warn "Could not create TV directory"
+  fi
+
+  if [[ ! -d "$MOVIES_DIR" ]]; then
+    warn "Movies directory does not exist: $MOVIES_DIR"
+    warn "Creating it now (may fail if parent directory is missing)"
+    mkdir -p "$MOVIES_DIR" 2>/dev/null || warn "Could not create Movies directory"
+  fi
 }
 
 generate_api_key() {
@@ -254,6 +265,8 @@ services:
       HTTP_CONTROL_SERVER_ADDRESS: :${GLUETUN_CONTROL_PORT}
       HTTP_CONTROL_SERVER_AUTH: "apikey"
       HTTP_CONTROL_SERVER_APIKEY: ${GLUETUN_API_KEY}
+      VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
+      PORT_FORWARD_ONLY: "yes"
       FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
       DOT: "off"
       UPDATER_PERIOD: "24h"
@@ -415,7 +428,8 @@ QBITTORRENT_ADDR="${QBITTORRENT_ADDR:-http://localhost:8080}"
 UPDATE_INTERVAL="${UPDATE_INTERVAL:-300}"
 QBT_USER="${QBT_USER:-}"
 QBT_PASS="${QBT_PASS:-}"
-RETRY_DELAY=10
+NO_PORT_RETRIES=0
+MAX_NO_PORT_RETRIES=10
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [PORT-SYNC] $1"
@@ -426,6 +440,17 @@ get_gluetun_port() {
     port_json=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
         "${GLUETUN_ADDR}/v1/openvpn/portforwarded" || echo '{}')
     echo "$port_json" | sed -n 's/.*"port":\s*\([0-9]\+\).*/\1/p'
+}
+
+restart_gluetun_if_needed() {
+    log "No port after $NO_PORT_RETRIES attempts, restarting Gluetun..."
+    if command -v docker >/dev/null 2>&1; then
+        docker restart gluetun >/dev/null 2>&1 || log "Unable to restart Gluetun automatically"
+    else
+        log "Docker CLI unavailable in port-sync container; please restart Gluetun manually"
+    fi
+    sleep 60
+    NO_PORT_RETRIES=0
 }
 
 set_preferences_payload() {
@@ -476,11 +501,20 @@ while true; do
         log "Forwarded port: $port"
         if update_qbittorrent_port "$port"; then
             log "Successfully updated qBittorrent port to $port"
+            NO_PORT_RETRIES=0
         else
             log "Failed to update qBittorrent port"
         fi
     else
-        log "No forwarded port available yet"
+        NO_PORT_RETRIES=$((NO_PORT_RETRIES + 1))
+        log "No forwarded port available (attempt ${NO_PORT_RETRIES}/${MAX_NO_PORT_RETRIES})"
+
+        if [ "$NO_PORT_RETRIES" -ge "$MAX_NO_PORT_RETRIES" ]; then
+            restart_gluetun_if_needed
+        elif [ "$NO_PORT_RETRIES" -eq 5 ]; then
+            log "Hint: Port forwarding may require a different ProtonVPN server"
+            log "      Consider changing SERVER_COUNTRIES in .env"
+        fi
     fi
 
     sleep "$UPDATE_INTERVAL"
@@ -536,6 +570,16 @@ start_stack() {
   msg "Starting Gluetun..."
   "${DOCKER_COMPOSE_CMD[@]}" up -d gluetun
 
+  sleep 2
+  local gluetun_status
+  gluetun_status=$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+  if [[ "$gluetun_status" != "running" && "$gluetun_status" != "restarting" && "$gluetun_status" != "starting" && "$gluetun_status" != "created" ]]; then
+    warn "Gluetun container failed to start (status: $gluetun_status)"
+    warn "Check logs with: docker logs gluetun"
+    warn "Common issues: invalid ProtonVPN credentials or network conflicts"
+    die "Cannot continue without a running VPN container"
+  fi
+
   msg "Waiting for VPN connection (up to 5 minutes)..."
   local tries=0
   while ! docker inspect gluetun --format '{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; do
@@ -551,10 +595,12 @@ start_stack() {
     fi
   done
 
-  local ip
-  ip=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" 2>/dev/null | \
-    jq -r '.public_ip // empty' || true)
+  local ip ip_response
+  ip=""
+  if ip_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" 2>/dev/null); then
+    ip=$(printf '%s' "$ip_response" | jq -r '.public_ip // empty' 2>/dev/null || echo "")
+  fi
 
   if [[ -n "$ip" ]]; then
     msg "✅ VPN connected! Public IP: $ip"
@@ -563,14 +609,56 @@ start_stack() {
     warn "Check: docker logs gluetun --tail 100"
   fi
 
+  msg "Checking port forwarding status..."
+  local pf_port_response pf_port
+  if pf_port_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
+    pf_port=$(printf '%s' "$pf_port_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
+  else
+    pf_port="0"
+  fi
+
+  if [[ "$pf_port" == "0" ]]; then
+    warn "================================================"
+    warn "Port forwarding is not active yet. Services will still start."
+    warn "If torrenting fails, try restarting Gluetun or adjusting SERVER_COUNTRIES"
+    warn "================================================"
+  else
+    msg "✅ Port forwarding active: Port $pf_port"
+  fi
+
   msg "Starting all services..."
-  "${DOCKER_COMPOSE_CMD[@]}" up -d
+  local service output
+  for service in qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
+    msg "  Starting $service..."
+    if output=$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1); then
+      if [[ "$output" == *"is up-to-date"* ]]; then
+        msg "  $service is up-to-date"
+      elif [[ -n "$output" ]]; then
+        while IFS= read -r line; do
+          printf '    %s\n' "$line"
+        done <<<"$output"
+      fi
+    else
+      warn "  Failed to start $service"
+      if [[ -n "$output" ]]; then
+        while IFS= read -r line; do
+          printf '    %s\n' "$line"
+        done <<<"$output"
+      fi
+    fi
+    sleep 2
+  done
 
   msg "Waiting for services to initialize..."
-  sleep 15
+  sleep 20
 
   msg "Service status summary:"
-  docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E 'gluetun|qbittorrent|sonarr|radarr|prowlarr|bazarr|flaresolverr|port-sync' || true
+  for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
+    local status
+    status=$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+    printf '  %-15s: %s\n' "$service" "$status"
+  done
 }
 
 install_aliases() {
@@ -589,6 +677,108 @@ install_aliases() {
       msg "Added aliases to ${bashrc}"
     fi
   fi
+
+  local diag_script="${ARR_STACK_DIR}/diagnose-vpn.sh"
+  cat >"$diag_script" <<'DIAG'
+#!/bin/bash
+set -euo pipefail
+
+msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
+warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
+
+ARR_STACK_DIR="__ARR_STACK_DIR__"
+ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
+
+if [[ -f "$ARR_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ARR_ENV_FILE"
+  set +a
+fi
+
+msg "🔍 VPN Diagnostics Starting..."
+
+GLUETUN_STATUS=$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+msg "Gluetun container: $GLUETUN_STATUS"
+
+if [[ "$GLUETUN_STATUS" != "running" ]]; then
+  warn "Gluetun is not running. Attempting to start..."
+  if docker compose version >/dev/null 2>&1; then
+    docker compose up -d gluetun
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose up -d gluetun
+  else
+    warn "Docker Compose not available; please start Gluetun manually."
+  fi
+  sleep 30
+fi
+
+msg "Checking VPN connection..."
+PUBLIC_IP=""
+if response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+  "http://localhost:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" 2>/dev/null); then
+  PUBLIC_IP=$(printf '%s' "$response" | jq -r '.public_ip // empty' 2>/dev/null || echo "")
+fi
+
+if [[ -n "$PUBLIC_IP" ]]; then
+  msg "✅ VPN Connected: $PUBLIC_IP"
+else
+  warn "VPN not connected"
+fi
+
+msg "Checking port forwarding..."
+PF_PORT="0"
+if pf_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+  "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
+  PF_PORT=$(printf '%s' "$pf_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
+fi
+
+if [[ "$PF_PORT" != "0" ]]; then
+  msg "✅ Port forwarding active: Port $PF_PORT"
+else
+  warn "Port forwarding not working"
+  warn "Attempting fix: Restarting Gluetun..."
+  if docker restart gluetun >/dev/null 2>&1; then
+    sleep 60
+    if pf_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+      "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
+      PF_PORT=$(printf '%s' "$pf_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
+    fi
+    if [[ "$PF_PORT" != "0" ]]; then
+      msg "✅ Port forwarding recovered: Port $PF_PORT"
+    else
+      warn "Port forwarding still not working"
+      warn "Try changing SERVER_COUNTRIES in .env to: Romania,Czech Republic,Iceland"
+      warn "Then rerun ./arrstack.sh --yes"
+    fi
+  else
+    warn "Docker restart command failed; restart Gluetun manually."
+  fi
+fi
+
+msg "Checking service health..."
+for service in qbittorrent sonarr radarr prowlarr bazarr; do
+  STATUS=$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+  if [[ "$STATUS" == "running" ]]; then
+    msg "  $service: ✅ running"
+  else
+    warn "  $service: ❌ $STATUS"
+  fi
+done
+
+msg "Diagnostics complete!"
+DIAG
+
+  local diag_tmp
+  diag_tmp="$(mktemp "${diag_script}.XXXX")"
+  local diag_dir_escaped
+  diag_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
+  diag_dir_escaped=${diag_dir_escaped//&/\&}
+  diag_dir_escaped=${diag_dir_escaped//|/\|}
+  sed -e "s|__ARR_STACK_DIR__|${diag_dir_escaped}|g" "$diag_script" >"$diag_tmp"
+  mv "$diag_tmp" "$diag_script"
+  chmod +x "$diag_script"
+  msg "Diagnostic script: ${diag_script}"
 }
 
 write_aliases_file() {
@@ -603,21 +793,36 @@ write_aliases_file() {
     return 0
   fi
 
-  if ! python3 - "$template_file" "$aliases_file" "$ARR_STACK_DIR" "$ARR_ENV_FILE" "$ARR_DOCKER_DIR" "$ARRCONF_DIR" <<'PY'; then
-import pathlib
-import sys
+  local tmp_file
+  tmp_file="$(mktemp "${aliases_file}.XXXX")"
 
-template_path, output_path, stack_dir, env_file, docker_dir, conf_dir = sys.argv[1:7]
-content = pathlib.Path(template_path).read_text()
-content = content.replace("__ARR_STACK_DIR__", stack_dir)
-content = content.replace("__ARR_ENV_FILE__", env_file)
-content = content.replace("__ARR_DOCKER_DIR__", docker_dir)
-content = content.replace("__ARRCONF_DIR__", conf_dir)
-pathlib.Path(output_path).write_text(content)
-PY
-    warn "Failed to render aliases file"
-    return 0
+  local stack_dir_escaped env_file_escaped docker_dir_escaped arrconf_dir_escaped
+  stack_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
+  stack_dir_escaped=${stack_dir_escaped//&/\&}
+  stack_dir_escaped=${stack_dir_escaped//|/\|}
+  env_file_escaped=${ARR_ENV_FILE//\\/\\\\}
+  env_file_escaped=${env_file_escaped//&/\&}
+  env_file_escaped=${env_file_escaped//|/\|}
+  docker_dir_escaped=${ARR_DOCKER_DIR//\\/\\\\}
+  docker_dir_escaped=${docker_dir_escaped//&/\&}
+  docker_dir_escaped=${docker_dir_escaped//|/\|}
+  arrconf_dir_escaped=${ARRCONF_DIR//\\/\\\\}
+  arrconf_dir_escaped=${arrconf_dir_escaped//&/\&}
+  arrconf_dir_escaped=${arrconf_dir_escaped//|/\|}
+
+  sed -e "s|__ARR_STACK_DIR__|${stack_dir_escaped}|g" \
+      -e "s|__ARR_ENV_FILE__|${env_file_escaped}|g" \
+      -e "s|__ARR_DOCKER_DIR__|${docker_dir_escaped}|g" \
+      -e "s|__ARRCONF_DIR__|${arrconf_dir_escaped}|g" \
+      "$template_file" >"$tmp_file"
+
+  if grep -q "__ARR_" "$tmp_file"; then
+    warn "Failed to replace all template placeholders in aliases file"
+    rm -f "$tmp_file"
+    return 1
   fi
+
+  mv "$tmp_file" "$aliases_file"
 
   chmod 600 "$aliases_file"
   cp "$aliases_file" "$configured_template"
@@ -699,7 +904,9 @@ main() {
   write_compose
   write_port_sync_script
   write_qbt_config
-  write_aliases_file
+  if ! write_aliases_file; then
+    warn "Helper aliases file could not be generated"
+  fi
   install_aliases
   start_stack
   show_summary

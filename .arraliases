@@ -68,15 +68,21 @@ _arr_gluetun_api(){
   local host="$(_arr_gluetun_host)"
 
   if [ -z "$key" ]; then
-    echo "Warning: GLUETUN_API_KEY is unset; rerun arrstack to regenerate." >&2
+    echo "Error: GLUETUN_API_KEY not found. Run: ./arrstack.sh --rotate-api-key" >&2
     return 1
   fi
 
-  if curl -fsS -H "X-Api-Key: ${key}" "http://${host}:${port}${endpoint}" 2>/dev/null; then
+  local response
+  response=$(curl -fsS -H "X-Api-Key: ${key}" "http://${host}:${port}${endpoint}" 2>&1)
+  local result=$?
+
+  if [ $result -eq 0 ]; then
+    printf '%s\n' "$response"
     return 0
   fi
 
-  curl -fsS -u "gluetun:${key}" "http://${host}:${port}${endpoint}"
+  echo "API call failed. Check: docker logs gluetun" >&2
+  return 1
 }
 
 _arr_qbt_base(){
