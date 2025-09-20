@@ -72,14 +72,16 @@ Defaults are defined in `arrconf/userconf.defaults.sh` and can be overridden in 
 
 | Purpose             | Default path |
 | ------------------- | ------------ |
-| Stack root          | `${ARR_STACK_DIR}` (`${HOME}/srv/arrstack`)
-| Docker volumes      | `${ARR_DOCKER_DIR}` (`${HOME}/srv/docker-data`)
+| Stack root          | `${PWD}/arrstack` (`${ARR_BASE}/arrstack`)
+| Docker volumes      | `${ARR_DOCKER_DIR}` (`${ARR_BASE}/docker-data`)
 | Proton auth/env     | `${ARRCONF_DIR}` (`<repo>/arrconf`)
 | Downloads           | `${DOWNLOADS_DIR}` (`${HOME}/Downloads`)
 | Completed downloads | `${COMPLETED_DIR}` (`${HOME}/Downloads/completed`)
 | Media library       | `${MEDIA_DIR}` (`/media/mediasmb`)
 | TV library          | `${TV_DIR}` (`/media/mediasmb/Shows`)
 | Movies library      | `${MOVIES_DIR}` (`/media/mediasmb/Movies`)
+
+Ensure to edit media and download directories before running, using paths with sufficient free storage space.
 
 All secrets and config directories are created with restrictive permissions (`0600`/`0700`).
 
