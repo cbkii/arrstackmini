@@ -25,9 +25,9 @@ Minimal, reproducible ARR stack routed through Gluetun with ProtonVPN port forwa
 
 - Gluetun (Proton OpenVPN with native port forwarding)
 - qBittorrent (Vuetorrent-compatible WebUI)
+- port-sync (Alpine helper that keeps qBittorrent aligned with the forwarded port)
 - Sonarr, Radarr, Prowlarr, Bazarr
 - FlareSolverr
-- port-sync (Alpine helper that keeps qBittorrent aligned with the forwarded port)
 
 By default only LAN listeners are published; *arr apps and qBittorrent egress the tunnel while auxiliary services (health probes, port-sync) stay inside the namespace.
 
