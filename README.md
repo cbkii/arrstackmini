@@ -45,7 +45,7 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 ## Quick start
 1. **Clone and enter the repository.**
    ```bash
-   git clone https://github.com/<you>/arrstackmini.git
+   git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
 2. **Prepare configuration directories and Proton credentials.**
@@ -57,7 +57,7 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
    EOF_AUTH
    chmod 600 arrconf/proton.auth
    ```
-3. **(Optional) Pre-set overrides.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and adjust values such as `LAN_IP`, `SERVER_COUNTRIES`, or host port overrides before installation.
+3. **(Optional) Pre-set overrides.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and adjust values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories or host port overrides before installation.
 4. **(Optional) Seed a `.env`.** `arrstack.sh` will generate `.env`, but you can copy `.env.example` for reference or to pin VPN countries in advance.
 5. **Run the installer.**
    ```bash
@@ -66,21 +66,21 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
    - Use `--yes` to skip the interactive confirmation prompt.
    - Run `./arrstack.sh --help` for available flags such as `--rotate-api-key`.
 
-   The script checks for Docker, Compose, curl, jq, openssl, and Python 3, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings where safe fallbacks exist (e.g. unknown LAN IP, default credentials) so first-time installs always complete.
+   The script checks for Docker, Compose, curl, jq, openssl, and Python 3, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings where safe fallbacks exist (e.g. unknown LAN IP, default credentials) so first-time installs should always complete.
 
 ## Important notes
 
 - ✅ **Pinned container versions** – every service ships with a known-good tag. Override them in `.env`/`arrconf/userconf.sh` if you need something newer and review the [version management guide](docs/VERSION_MANAGEMENT.md).
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
-- 🔐 **Credentials** – qBittorrent starts with `admin/adminadmin` so the port sync helper can authenticate. Change this immediately after the first login and mirror the values in `.env`.
+- ⚠️🔐 **Credentials** – qBittorrent starts with `admin/adminadmin` so the port sync helper can authenticate. Change this immediately after the first login and mirror the values in `.env`.
 
 ### First-time checklist
 After `./arrstack.sh --yes` finishes:
 
 1. **Change the qBittorrent password.** Settings → WebUI. Update `QBT_USER`/`QBT_PASS` in `.env` afterwards.
 2. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
-3. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and friends.
+3. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
 4. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
 5. **Consult the changelog.** Release notes live in [CHANGELOG.md](CHANGELOG.md) alongside upgrade paths in [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md).
 
