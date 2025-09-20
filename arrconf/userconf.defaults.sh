@@ -26,7 +26,7 @@ PGID="${PGID:-$(id -g)}"
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
 LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
-SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands,Switzerland}"
+SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
 
 # Gluetun control server
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
