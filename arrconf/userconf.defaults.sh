@@ -43,6 +43,10 @@ FLARESOLVERR_PORT="${FLARESOLVERR_PORT:-8191}"
 # qBittorrent credentials (override after first login)
 QBT_USER="${QBT_USER:-admin}"
 QBT_PASS="${QBT_PASS:-adminadmin}"
+QBT_DOCKER_MODS="${QBT_DOCKER_MODS:-ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
+
+# Comma-separated CIDR list that can bypass the qBittorrent WebUI login
+QBT_AUTH_WHITELIST="${QBT_AUTH_WHITELIST:-127.0.0.1/8,::1/128}"
 
 # Images
 GLUETUN_IMAGE="${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.39.1}"

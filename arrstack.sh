@@ -31,6 +31,8 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${FLARESOLVERR_PORT:=8191}"
 : "${QBT_USER:=admin}"
 : "${QBT_PASS:=adminadmin}"
+: "${QBT_DOCKER_MODS:=ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
+: "${QBT_AUTH_WHITELIST:=127.0.0.1/8,::1/128}"
 
 : "${GLUETUN_IMAGE:=qmcgaw/gluetun:v3.39.1}"
 : "${QBITTORRENT_IMAGE:=lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
@@ -88,7 +90,7 @@ detect_lan_ip() {
 
 install_missing() {
   msg "🔧 Checking dependencies"
-  local required=(docker curl jq openssl python3)
+  local required=(docker curl jq openssl)
   local missing=()
 
   for cmd in "${required[@]}"; do
@@ -117,6 +119,34 @@ ensure_dir() {
 
 escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[&/]/\\&/g'
+}
+
+set_qbt_conf_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+
+  tmp="$(mktemp)"
+
+  if [[ -f "$file" ]]; then
+    local replaced=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "$key="* ]]; then
+        printf '%s=%s\n' "$key" "$value" >>"$tmp"
+        replaced=1
+      else
+        printf '%s\n' "$line" >>"$tmp"
+      fi
+    done <"$file"
+    if (( ! replaced )); then
+      printf '%s=%s\n' "$key" "$value" >>"$tmp"
+    fi
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  fi
+
+  mv "$tmp" "$file"
 }
 
 persist_env_var() {
@@ -259,6 +289,7 @@ FLARESOLVERR_PORT=${FLARESOLVERR_PORT}
 # qBittorrent credentials (change in WebUI after install, then update here)
 QBT_USER=${QBT_USER}
 QBT_PASS=${QBT_PASS}
+QBT_DOCKER_MODS=${QBT_DOCKER_MODS}
 
 # Paths
 ARR_DOCKER_DIR=${ARR_DOCKER_DIR}
@@ -338,6 +369,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      DOCKER_MODS: ${QBT_DOCKER_MODS}
     volumes:
       - ${ARR_DOCKER_DIR}/qbittorrent:/config
       - ${DOWNLOADS_DIR}:/downloads
@@ -345,6 +377,31 @@ services:
     depends_on:
       gluetun:
         condition: service_healthy
+    restart: unless-stopped
+
+  vuetorrent-monthly-update:
+    image: alpine:3.20.3
+    container_name: vuetorrent-monthly-update
+    network_mode: none
+    entrypoint: ["/bin/sh","-c"]
+    command: |
+      set -e
+      if ! command -v docker >/dev/null 2>&1; then
+        apk add --no-cache docker-cli docker-cli-compose >/dev/null
+      fi
+      cat >/usr/local/bin/runner.sh <<'EOF'
+      #!/bin/sh
+      set -e
+      while :; do
+        docker compose -f /stack/docker-compose.yml up -d qbittorrent || true
+        sleep $((30*24*60*60))
+      done
+      EOF
+      chmod +x /usr/local/bin/runner.sh
+      exec /usr/local/bin/runner.sh
+    volumes:
+      - ${ARR_STACK_DIR}:/stack:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
 
   sonarr:
@@ -504,17 +561,24 @@ api_get() {
 }
 
 login_qbt() {
-    if [ -n "$QBT_USER" ] && [ -n "$QBT_PASS" ]; then
-        if curl -fsSL -c "$COOKIE_JAR" \
-            --data-urlencode "username=${QBT_USER}" \
-            --data-urlencode "password=${QBT_PASS}" \
-            "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
-            return 0
-        fi
-        rm -f "$COOKIE_JAR"
-        log 'warn: failed to authenticate with qBittorrent, relying on localhost bypass'
+    # Use provided credentials when available; otherwise rely on localhost bypass
+    if [ -z "$QBT_USER" ] || [ -z "$QBT_PASS" ]; then
+        return 0
     fi
+
+    if curl -fsSL -c "$COOKIE_JAR" \
+        --data-urlencode "username=${QBT_USER}" \
+        --data-urlencode "password=${QBT_PASS}" \
+        "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    rm -f "$COOKIE_JAR"
+    log 'warn: login failed; relying on localhost bypass (ensure LocalHostAuth=true)'
+    return 0
 }
+
+ensure_qbt_session() { [ -s "$COOKIE_JAR" ] || login_qbt; }
 
 get_pf_port() {
     local response port
@@ -556,25 +620,28 @@ get_pf_port() {
 
 get_qbt_listen_port() {
     local response
-    if [ -f "$COOKIE_JAR" ]; then
-        response=$(curl -fsSL -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)
-    else
-        response=$(curl -fsSL "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)
+    response=$(curl -fsSL -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null \
+        || curl -fsSL "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)
+    if [ -z "$response" ]; then
+        rm -f "$COOKIE_JAR"
+        return 1
     fi
-    [ -z "$response" ] && return 1
     printf '%s' "$response" | tr -d ' \n\r' | sed -n 's/.*"listen_port":\([0-9]\+\).*/\1/p'
 }
 
 set_qbt_listen_port() {
     local port="$1" payload
     payload="json={\"listen_port\":${port},\"random_port\":false}"
-    if [ -f "$COOKIE_JAR" ]; then
-        curl -fsSL -b "$COOKIE_JAR" --data "$payload" \
-            "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1
-    else
-        curl -fsSL --data "$payload" \
-            "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1
+    if curl -fsSL -b "$COOKIE_JAR" --data "$payload" \
+        "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
+        return 0
     fi
+    if curl -fsSL --data "$payload" \
+        "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
+        return 0
+    fi
+    rm -f "$COOKIE_JAR"
+    return 1
 }
 
 cleanup() {
@@ -584,14 +651,29 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 log "starting port-sync against ${GLUETUN_ADDR} -> ${QBITTORRENT_ADDR}"
-login_qbt || true
+if ! ensure_qbt_session; then
+    log 'warn: waiting for valid qBittorrent credentials'
+fi
 
 last_reported=""
 
 while :; do
     if pf_port=$(get_pf_port); then
         if [ -n "$pf_port" ]; then
+            if ! ensure_qbt_session; then
+                log 'warn: unable to authenticate with qBittorrent; retrying'
+                sleep "$UPDATE_INTERVAL"
+                continue
+            fi
             current_port=$(get_qbt_listen_port || true)
+            if [ -z "$current_port" ]; then
+                if ! ensure_qbt_session; then
+                    log 'warn: unable to authenticate with qBittorrent; retrying'
+                    sleep "$UPDATE_INTERVAL"
+                    continue
+                fi
+                current_port=$(get_qbt_listen_port || true)
+            fi
             if [ "$current_port" != "$pf_port" ]; then
                 log "applying forwarded port ${pf_port} (current: ${current_port:-unset})"
                 if set_qbt_listen_port "$pf_port"; then
@@ -697,19 +779,47 @@ write_qbt_config() {
   local config_dir="${ARR_DOCKER_DIR}/qbittorrent/qBittorrent"
   local conf_file="${config_dir}/qBittorrent.conf"
   ensure_dir "$config_dir"
-  local auth_whitelist="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
-  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" ]]; then
-    local subnet_base
-    subnet_base=$(echo "$LAN_IP" | sed 's/\.[0-9]*$/.0/')
-    auth_whitelist="${subnet_base}/24"
-    msg "  Configuring qBittorrent for passwordless LAN access from: $auth_whitelist"
+  local auth_whitelist=""
+  append_whitelist_entry() {
+    local entry="$1"
+    entry="${entry//[[:space:]]/}"
+    if [[ -z "$entry" ]]; then
+      return
+    fi
+    if [[ ",${auth_whitelist}," == *",${entry},"* ]]; then
+      return
+    fi
+    if [[ -z "$auth_whitelist" ]]; then
+      auth_whitelist="$entry"
+    else
+      auth_whitelist="${auth_whitelist},${entry}"
+    fi
+  }
+
+  if [[ -n "${QBT_AUTH_WHITELIST:-}" ]]; then
+    local sanitized="${QBT_AUTH_WHITELIST//[[:space:]]/}"
+    if [[ -n "$sanitized" ]]; then
+      local -a entries=()
+      IFS=',' read -ra entries <<<"$sanitized"
+      local entry
+      for entry in "${entries[@]}"; do
+        append_whitelist_entry "$entry"
+      done
+    fi
   fi
 
-  if [[ "$QBT_USER" == "admin" && "$QBT_PASS" == "adminadmin" ]]; then
-    QBT_PASS="$(openssl rand -base64 12 | tr -d '\n/')"
-    msg "  Generated secure initial password for qBittorrent"
-    persist_env_var QBT_PASS "$QBT_PASS"
+  append_whitelist_entry "127.0.0.1/8"
+  append_whitelist_entry "::1/128"
+
+  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
+    append_whitelist_entry "${LAN_IP%.*}.0/24"
   fi
+
+  if [[ -z "$auth_whitelist" ]]; then
+    auth_whitelist="127.0.0.1/8,::1/128"
+  fi
+
+  msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
 
   if [[ ! -f "$conf_file" ]]; then
     cat >"$conf_file" <<EOF
@@ -737,18 +847,28 @@ Downloads\SavePath=/completed/
 Downloads\TempPath=/downloads/incomplete/
 Downloads\TempPathEnabled=true
 WebUI\Address=0.0.0.0
+WebUI\AlternativeUIEnabled=true
+WebUI\RootFolder=/vuetorrent
 WebUI\Port=8080
 WebUI\Username=${QBT_USER}
-WebUI\LocalHostAuth=false
+WebUI\LocalHostAuth=true
 WebUI\AuthSubnetWhitelistEnabled=true
 WebUI\AuthSubnetWhitelist=${auth_whitelist}
 WebUI\CSRFProtection=true
 WebUI\ClickjackingProtection=true
 WebUI\HostHeaderValidation=true
 WebUI\HTTPS\Enabled=false
+WebUI\ServerDomains=*
 EOF
     chmod 600 "$conf_file"
   fi
+  set_qbt_conf_value "$conf_file" 'WebUI\AlternativeUIEnabled' 'true'
+  set_qbt_conf_value "$conf_file" 'WebUI\RootFolder' '/vuetorrent'
+  set_qbt_conf_value "$conf_file" 'WebUI\ServerDomains' '*'
+  set_qbt_conf_value "$conf_file" 'WebUI\LocalHostAuth' 'true'
+  set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelistEnabled' 'true'
+  set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
+  unset -f append_whitelist_entry || true
 }
 
 cleanup_existing() {
@@ -846,6 +966,54 @@ validate_images() {
   fi
 }
 
+compose_up_service() {
+  local service="$1"
+  local output=""
+
+  msg "  Starting $service..."
+  if output=$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1); then
+    if [[ "$output" == *"is up-to-date"* ]]; then
+      msg "  $service is up-to-date"
+    elif [[ -n "$output" ]]; then
+      while IFS= read -r line; do
+        printf '    %s\n' "$line"
+      done <<<"$output"
+    fi
+  else
+    warn "  Failed to start $service"
+    if [[ -n "$output" ]]; then
+      while IFS= read -r line; do
+        printf '    %s\n' "$line"
+      done <<<"$output"
+    fi
+  fi
+  sleep 2
+}
+
+sync_qbt_password_from_logs() {
+  if [[ "$QBT_PASS" != "adminadmin" ]]; then
+    return
+  fi
+
+  msg "  Detecting qBittorrent temporary password..."
+  local attempts=0
+  local detected=""
+
+  while (( attempts < 60 )); do
+    detected=$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}')
+    if [[ -n "$detected" ]]; then
+      QBT_PASS="$detected"
+      persist_env_var QBT_PASS "$QBT_PASS"
+      msg "  Saved qBittorrent temporary password to .env (QBT_PASS)"
+      return
+    fi
+    sleep 2
+    ((attempts++))
+  done
+
+  warn "  Unable to automatically determine the qBittorrent password. Update QBT_PASS in .env manually."
+}
+
 start_stack() {
   msg "🚀 Starting services"
 
@@ -906,28 +1074,17 @@ start_stack() {
     msg "✅ Port forwarding active: Port $pf_port"
   fi
 
-  msg "Starting all services..."
-  local service output
-  for service in qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
-    msg "  Starting $service..."
-    if output=$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1); then
-      if [[ "$output" == *"is up-to-date"* ]]; then
-        msg "  $service is up-to-date"
-      elif [[ -n "$output" ]]; then
-        while IFS= read -r line; do
-          printf '    %s\n' "$line"
-        done <<<"$output"
-      fi
-    else
-      warn "  Failed to start $service"
-      if [[ -n "$output" ]]; then
-        while IFS= read -r line; do
-          printf '    %s\n' "$line"
-        done <<<"$output"
-      fi
-    fi
-    sleep 2
+  msg "Starting qBittorrent..."
+  compose_up_service qbittorrent
+  sync_qbt_password_from_logs
+
+  msg "Starting supporting services..."
+  for service in sonarr radarr prowlarr bazarr flaresolverr vuetorrent-monthly-update; do
+    compose_up_service "$service"
   done
+
+  msg "Starting port-sync..."
+  compose_up_service port-sync
 
   msg "Waiting for services to initialize..."
   sleep 20
@@ -1117,20 +1274,13 @@ SUMMARY
 
   # Always show qBittorrent access information prominently
   local qbt_pass_msg=""
-  if docker ps --format '{{.Names}}' | grep -q qbittorrent; then
-    local temp_pass
-    temp_pass=$(docker logs qbittorrent 2>&1 | grep "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}')
-
-    if [[ -n "$temp_pass" ]]; then
-      qbt_pass_msg="TEMPORARY PASSWORD: $temp_pass (change this immediately!)"
-    elif [[ -f "$ARR_ENV_FILE" ]]; then
-      local configured_pass
-      configured_pass=$(grep "^QBT_PASS=" "$ARR_ENV_FILE" | cut -d= -f2-)
-      if [[ -n "$configured_pass" && "$configured_pass" != "adminadmin" ]]; then
-        qbt_pass_msg="Password: (configured in .env)"
-      else
-        qbt_pass_msg="Password: Check docker logs qbittorrent"
-      fi
+  if [[ -f "$ARR_ENV_FILE" ]]; then
+    local configured_pass
+    configured_pass=$(grep "^QBT_PASS=" "$ARR_ENV_FILE" | cut -d= -f2-)
+    if [[ -n "$configured_pass" && "$configured_pass" != "adminadmin" ]]; then
+      qbt_pass_msg="Password: ${configured_pass} (from .env)"
+    else
+      qbt_pass_msg="Password: Check docker logs qbittorrent"
     fi
   fi
 
