@@ -29,6 +29,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PROWLARR_PORT:=9696}"
 : "${BAZARR_PORT:=6767}"
 : "${FLARESOLVERR_PORT:=8191}"
+
 : "${QBT_USER:=admin}"
 : "${QBT_PASS:=adminadmin}"
 : "${QBT_DOCKER_MODS:=ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
@@ -192,6 +193,52 @@ obfuscate_sensitive() {
   printf '%s%s%s' "$prefix" "$mask" "$suffix"
 }
 
+calculate_qbt_auth_whitelist() {
+  local auth_whitelist=""
+
+  append_whitelist_entry() {
+    local entry="$1"
+    entry="${entry//[[:space:]]/}"
+    if [[ -z "$entry" ]]; then
+      return
+    fi
+    if [[ ",${auth_whitelist}," == *",${entry},"* ]]; then
+      return
+    fi
+    if [[ -z "$auth_whitelist" ]]; then
+      auth_whitelist="$entry"
+    else
+      auth_whitelist="${auth_whitelist},${entry}"
+    fi
+  }
+
+  if [[ -n "${QBT_AUTH_WHITELIST:-}" ]]; then
+    local sanitized="${QBT_AUTH_WHITELIST//[[:space:]]/}"
+    if [[ -n "$sanitized" ]]; then
+      local -a entries=()
+      IFS=',' read -ra entries <<<"$sanitized"
+      local entry
+      for entry in "${entries[@]}"; do
+        append_whitelist_entry "$entry"
+      done
+    fi
+  fi
+
+  append_whitelist_entry "127.0.0.1/8"
+  append_whitelist_entry "::1/128"
+
+  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
+    append_whitelist_entry "${LAN_IP%.*}.0/24"
+  fi
+
+  if [[ -z "$auth_whitelist" ]]; then
+    auth_whitelist="127.0.0.1/8,::1/128"
+  fi
+
+  printf '%s' "$auth_whitelist"
+  unset -f append_whitelist_entry || true
+}
+
 show_configuration_preview() {
   msg "🔎 Configuration preview"
 
@@ -211,6 +258,14 @@ show_configuration_preview() {
   local qbt_pass_display
   qbt_pass_display="$(obfuscate_sensitive "${QBT_PASS:-}")"
 
+  local openvpn_user_display
+  if [[ -n "$proton_user" ]]; then
+    openvpn_user_display="$proton_user"
+    [[ "$openvpn_user_display" == *"+pmp" ]] || openvpn_user_display="${openvpn_user_display}+pmp"
+  else
+    openvpn_user_display="(not set)"
+  fi
+
   local gluetun_api_key_display
   if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
     gluetun_api_key_display="$(obfuscate_sensitive "$GLUETUN_API_KEY")"
@@ -218,6 +273,8 @@ show_configuration_preview() {
     gluetun_api_key_display="(will be generated during setup)"
   fi
 
+  local qbt_auth_whitelist_preview
+  qbt_auth_whitelist_preview="$(calculate_qbt_auth_whitelist)"
   local lan_ip_display
   if [[ -n "${LAN_IP:-}" ]]; then
     lan_ip_display="$LAN_IP"
@@ -246,10 +303,12 @@ Network & system
 
 Credentials & secrets
   • Proton username: ${proton_user_display}
+  • Proton OpenVPN username: ${openvpn_user_display}
   • Proton password: ${proton_pass_display}
   • Gluetun API key: ${gluetun_api_key_display}
   • qBittorrent username: ${QBT_USER}
   • qBittorrent password: ${qbt_pass_display}
+  • qBittorrent auth whitelist (final): ${qbt_auth_whitelist_preview}
   • qBittorrent auth whitelist: ${QBT_AUTH_WHITELIST}
 
 Ports
@@ -883,46 +942,8 @@ write_qbt_config() {
   local config_dir="${ARR_DOCKER_DIR}/qbittorrent/qBittorrent"
   local conf_file="${config_dir}/qBittorrent.conf"
   ensure_dir "$config_dir"
-  local auth_whitelist=""
-  append_whitelist_entry() {
-    local entry="$1"
-    entry="${entry//[[:space:]]/}"
-    if [[ -z "$entry" ]]; then
-      return
-    fi
-    if [[ ",${auth_whitelist}," == *",${entry},"* ]]; then
-      return
-    fi
-    if [[ -z "$auth_whitelist" ]]; then
-      auth_whitelist="$entry"
-    else
-      auth_whitelist="${auth_whitelist},${entry}"
-    fi
-  }
-
-  if [[ -n "${QBT_AUTH_WHITELIST:-}" ]]; then
-    local sanitized="${QBT_AUTH_WHITELIST//[[:space:]]/}"
-    if [[ -n "$sanitized" ]]; then
-      local -a entries=()
-      IFS=',' read -ra entries <<<"$sanitized"
-      local entry
-      for entry in "${entries[@]}"; do
-        append_whitelist_entry "$entry"
-      done
-    fi
-  fi
-
-  append_whitelist_entry "127.0.0.1/8"
-  append_whitelist_entry "::1/128"
-
-  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
-    append_whitelist_entry "${LAN_IP%.*}.0/24"
-  fi
-
-  if [[ -z "$auth_whitelist" ]]; then
-    auth_whitelist="127.0.0.1/8,::1/128"
-  fi
-
+  local auth_whitelist
+  auth_whitelist="$(calculate_qbt_auth_whitelist)"
   msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
 
   if [[ ! -f "$conf_file" ]]; then
@@ -972,7 +993,6 @@ EOF
   set_qbt_conf_value "$conf_file" 'WebUI\LocalHostAuth' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelistEnabled' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
-  unset -f append_whitelist_entry || true
 }
 
 cleanup_existing() {
