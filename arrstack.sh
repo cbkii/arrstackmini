@@ -168,6 +168,108 @@ persist_env_var() {
   fi
 }
 
+obfuscate_sensitive() {
+  local value="${1-}"
+  if [[ -z "$value" ]]; then
+    printf '(not set)'
+    return
+  fi
+
+  local length=${#value}
+
+  if (( length <= 4 )); then
+    printf '%*s' "$length" '' | tr ' ' '*'
+    return
+  fi
+
+  local visible=2
+  local prefix="${value:0:visible}"
+  local suffix="${value: -visible}"
+  local hidden_len=$((length - visible * 2))
+  local mask
+  mask=$(printf '%*s' "$hidden_len" '' | tr ' ' '*')
+
+  printf '%s%s%s' "$prefix" "$mask" "$suffix"
+}
+
+show_configuration_preview() {
+  msg "🔎 Configuration preview"
+
+  local proton_file="${ARRCONF_DIR}/proton.auth"
+  local proton_user=""
+  local proton_pass=""
+
+  if [[ -f "$proton_file" ]]; then
+    proton_user="$(grep '^PROTON_USER=' "$proton_file" | head -n1 | cut -d= -f2- || true)"
+    proton_pass="$(grep '^PROTON_PASS=' "$proton_file" | head -n1 | cut -d= -f2- || true)"
+  fi
+
+  local proton_user_display="${proton_user:-'(not set)'}"
+  local proton_pass_display
+  proton_pass_display="$(obfuscate_sensitive "$proton_pass")"
+
+  local qbt_pass_display
+  qbt_pass_display="$(obfuscate_sensitive "${QBT_PASS:-}")"
+
+  local gluetun_api_key_display
+  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+    gluetun_api_key_display="$(obfuscate_sensitive "$GLUETUN_API_KEY")"
+  else
+    gluetun_api_key_display="(will be generated during setup)"
+  fi
+
+  local lan_ip_display
+  if [[ -n "${LAN_IP:-}" ]]; then
+    lan_ip_display="$LAN_IP"
+  else
+    lan_ip_display="(auto-detect during setup)"
+  fi
+
+  cat <<CONFIG
+------------------------------------------------------------
+ARR Stack configuration preview
+------------------------------------------------------------
+Paths
+  • Stack directory: ${ARR_STACK_DIR}
+  • Docker data root: ${ARR_DOCKER_DIR}
+  • Downloads: ${DOWNLOADS_DIR}
+  • Completed downloads: ${COMPLETED_DIR}
+  • TV library: ${TV_DIR}
+  • Movies library: ${MOVIES_DIR}
+
+Network & system
+  • Timezone: ${TIMEZONE}
+  • LAN IP: ${lan_ip_display}
+  • Localhost IP override: ${LOCALHOST_IP}
+  • Server countries: ${SERVER_COUNTRIES}
+  • User/Group IDs: ${PUID}/${PGID}
+
+Credentials & secrets
+  • Proton username: ${proton_user_display}
+  • Proton password: ${proton_pass_display}
+  • Gluetun API key: ${gluetun_api_key_display}
+  • qBittorrent username: ${QBT_USER}
+  • qBittorrent password: ${qbt_pass_display}
+  • qBittorrent auth whitelist: ${QBT_AUTH_WHITELIST}
+
+Ports
+  • Gluetun control: ${GLUETUN_CONTROL_PORT}
+  • qBittorrent WebUI (host): ${QBT_HTTP_PORT_HOST}
+  • Sonarr: ${SONARR_PORT}
+  • Radarr: ${RADARR_PORT}
+  • Prowlarr: ${PROWLARR_PORT}
+  • Bazarr: ${BAZARR_PORT}
+  • FlareSolverr: ${FLARESOLVERR_PORT}
+
+Files that will be created/updated
+  • Environment file: ${ARR_ENV_FILE}
+  • Compose file: ${ARR_STACK_DIR}/docker-compose.yml
+
+If anything looks incorrect, edit arrconf/userconf.sh before continuing.
+------------------------------------------------------------
+CONFIG
+}
+
 
 GLUETUN_LIB="${REPO_ROOT}/scripts/lib/gluetun.sh"
 if [[ -f "$GLUETUN_LIB" ]]; then
@@ -185,6 +287,8 @@ preflight() {
   fi
 
   install_missing
+
+  show_configuration_preview
 
   if [[ "$ASSUME_YES" != 1 ]]; then
     printf 'Continue with ProtonVPN OpenVPN setup? [y/N]: '
