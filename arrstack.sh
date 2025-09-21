@@ -1412,7 +1412,7 @@ Downloads\TempPath=/downloads/incomplete/
 Downloads\TempPathEnabled=true
 WebUI\Address=0.0.0.0
 WebUI\AlternativeUIEnabled=true
-WebUI\RootFolder=/vuetorrent
+WebUI\RootFolder=/config/vuetorrent
 WebUI\Port=8080
 WebUI\Username=${QBT_USER}
 WebUI\LocalHostAuth=true
@@ -1427,7 +1427,7 @@ EOF
     chmod 600 "$conf_file"
   fi
   set_qbt_conf_value "$conf_file" 'WebUI\AlternativeUIEnabled' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\RootFolder' '/vuetorrent'
+  set_qbt_conf_value "$conf_file" 'WebUI\RootFolder' '/config/vuetorrent'
   set_qbt_conf_value "$conf_file" 'WebUI\ServerDomains' '*'
   set_qbt_conf_value "$conf_file" 'WebUI\LocalHostAuth' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelistEnabled' 'true'
@@ -1456,22 +1456,66 @@ install_vuetorrent() {
   fi
 
   local temp_zip="/tmp/vuetorrent-$$.zip"
-  if curl -sL "$download_url" -o "$temp_zip"; then
-    if unzip -qo "$temp_zip" -d "$vuetorrent_dir"; then
-      rm -f "$temp_zip"
-
-      chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
-      chmod -R 755 "$vuetorrent_dir" 2>/dev/null || true
-
-      msg "  ✅ VueTorrent installed successfully"
-    else
-      rm -f "$temp_zip"
-      warn "  Failed to extract VueTorrent archive, continuing without it"
-    fi
-  else
+  if ! curl -sL "$download_url" -o "$temp_zip"; then
     rm -f "$temp_zip"
     warn "  Failed to download VueTorrent, continuing without it"
+    return 0
   fi
+
+  local temp_extract=""
+  temp_extract="$(mktemp -d "/tmp/vuetorrent.XXXX" 2>/dev/null || printf '')"
+  if [[ -z "$temp_extract" ]]; then
+    rm -f "$temp_zip"
+    warn "  Failed to create temporary directory for VueTorrent, continuing without it"
+    return 0
+  fi
+
+  if ! unzip -qo "$temp_zip" -d "$temp_extract"; then
+    rm -f "$temp_zip"
+    rm -rf "$temp_extract"
+    warn "  Failed to extract VueTorrent archive, continuing without it"
+    return 0
+  fi
+
+  rm -f "$temp_zip"
+
+  local source_root="$temp_extract"
+  if [[ ! -f "$source_root/index.html" ]]; then
+    local nested_index=""
+    nested_index="$(find "$temp_extract" -type f -name 'index.html' -print -quit 2>/dev/null || printf '')"
+    if [[ -n "$nested_index" ]]; then
+      source_root="$(dirname "$nested_index")"
+    fi
+  fi
+
+  if [[ ! -f "$source_root/index.html" ]]; then
+    rm -rf "$temp_extract"
+    warn "  VueTorrent archive did not contain an index.html, skipping installation"
+    return 0
+  fi
+
+  find "$vuetorrent_dir" -mindepth 1 -exec rm -rf {} + 2>/dev/null || true
+
+  ensure_dir "$vuetorrent_dir"
+
+  local copy_failed=0
+  shopt -s dotglob nullglob
+  if ! cp -a "$source_root"/* "$vuetorrent_dir"/ 2>/dev/null; then
+    copy_failed=1
+  fi
+  shopt -u dotglob nullglob
+
+  rm -rf "$temp_extract"
+
+  if (( copy_failed )); then
+    warn "  Failed to install VueTorrent files, continuing without it"
+    return 0
+  fi
+
+  chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
+  chmod -R 755 "$vuetorrent_dir" 2>/dev/null || true
+
+  msg "  ✅ VueTorrent installed successfully"
 }
 
 safe_cleanup() {
