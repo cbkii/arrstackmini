@@ -70,7 +70,7 @@ webui_port() {
 }
 
 config_file_path() {
-  printf '%s/qbittorrent/qBittorrent/qBittorrent.conf' "$DOCKER_DATA"
+  printf '%s/qbittorrent/qBittorrent.conf' "$DOCKER_DATA"
 }
 
 stop_container() {
