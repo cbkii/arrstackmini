@@ -46,30 +46,29 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - Proton VPN OpenVPN credentials stored in `arrconf/proton.auth` (`PROTON_USER`, `PROTON_PASS`).
 
 ## Quick start
-1. **Clone and enter the repository.**
+1. **Create the default stack root (`~/srv`) and clone arrstack-mini.**
    ```bash
+   mkdir -p ~/srv
+   cd ~/srv
    git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
-2. **Prepare configuration directories and Proton credentials.**
+2. **Add your ProtonVPN credentials.**
    ```bash
-   mkdir -p arrconf docker-data
-   cat > arrconf/proton.auth <<'EOF_AUTH'
-   PROTON_USER=your_proton_username
-   PROTON_PASS=your_proton_password
-   EOF_AUTH
-   chmod 600 arrconf/proton.auth
+   cp arrconf/proton.auth.example arrconf/proton.auth
+   nano arrconf/proton.auth
    ```
-3. **(Optional) Pre-set overrides.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and adjust values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories or host port overrides before installation.
-4. **(Optional) Seed a `.env`.** `arrstack.sh` will generate `.env`, but you can copy `.env.example` for reference or to pin VPN countries in advance.
-5. **Run the installer.**
+   Replace the placeholders with your Proton VPN username and password (the installer tightens the file permissions automatically).
+3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
+4. **Run the installer.**
    ```bash
-   ./arrstack.sh --yes
+   ./arrstack.sh
    ```
-   - Use `--yes` to skip the interactive confirmation prompt.
-   - Run `./arrstack.sh --help` for available flags such as `--rotate-api-key`.
+   - Review the summary shown before containers launch and confirm to proceed.
+   - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install.
+   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`.
 
-    The script checks for Docker, Compose, curl, jq, and openssl, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings where safe fallbacks exist (e.g. unknown LAN IP, default credentials) so first-time installs should always complete.
+    The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
 
 ## Important notes
 
@@ -80,7 +79,7 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. Port-sync will use those credentials when available but otherwise relies on the localhost/LAN auth bypass. Log in with the recorded value, update it in the WebUI, then mirror the new password in `.env` for continued convenience.
 
 ### First-time checklist
-After `./arrstack.sh --yes` finishes:
+After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 
 1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
 2. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
@@ -94,8 +93,8 @@ Defaults are defined in `arrconf/userconf.defaults.sh` and can be overridden in 
 
 | Purpose             | Default path |
 | ------------------- | ------------ |
-| Stack root          | `${PWD}/arrstack` (`${ARR_BASE}/arrstack`)
-| Docker volumes      | `${ARR_DOCKER_DIR}` (`${ARR_BASE}/docker-data`)
+| Stack root          | `~/srv/arrstack` (`${ARR_BASE}/arrstack`)
+| Docker volumes      | `${ARR_DOCKER_DIR}` (`${ARR_BASE}/docker-data` → `~/srv/docker-data` by default)
 | Proton auth/env     | `${ARRCONF_DIR}` (`<repo>/arrconf`)
 | Downloads           | `${DOWNLOADS_DIR}` (`${HOME}/Downloads`)
 | Completed downloads | `${COMPLETED_DIR}` (`${HOME}/Downloads/completed`)
@@ -109,26 +108,77 @@ All secrets and config directories are created with restrictive permissions (`06
 To allow read-only collaboration, set `ARR_PERMISSION_PROFILE=collaborative` in `arrconf/userconf.sh`. This relaxes non-secret files to group-readable (`0640`) and data directories to `0750` while keeping secrets locked to `0600`.
 
 ### Environment variables
-`arrstack.sh` writes `.env` during installation with values sourced from your overrides. You can edit `.env` or `arrconf/userconf.sh` and rerun the installer to regenerate settings. Key variables include:
+`arrstack.sh` writes `.env` during installation by reading `arrconf/userconf.defaults.sh` and applying any overrides from `arrconf/userconf.sh`. Beginners can copy `arrconf/userconf.sh.example`, adjust values, and rerun `./arrstack.sh` whenever they want the stack to pick up new settings.
 
-- `LAN_IP` – bind services to a specific RFC1918 address (auto-detected when empty).
-- `SERVER_COUNTRIES` – comma-separated Proton country list handed to Gluetun (defaults to `Switzerland,Iceland,Romania,Czech Republic,Netherlands` so ProtonVPN stays on port-forwardable regions).
-- `LOCALHOST_IP`, `GLUETUN_CONTROL_PORT` – host exposure for the Gluetun control API.
-- `QBT_HTTP_PORT_HOST`, `SONARR_PORT`, etc. – LAN-facing ports; mirrored into firewall allow-lists.
+The tables below summarise every configurable input exposed by `arrstack.sh` together with practical reasons to change them.
+
+#### Paths and storage
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `ARR_BASE` | `~/srv` | Move the entire stack to a different root without editing every path individually. `ARR_STACK_DIR` and `ARR_DOCKER_DIR` inherit from this value. |
+| `ARR_STACK_DIR` | `${ARR_BASE}/arrstack` | Relocate the generated `docker-compose.yml`, scripts, and `.arraliases`. Useful when storing the stack on another disk. |
+| `ARR_ENV_FILE` | `${ARR_STACK_DIR}/.env` | Keep the generated `.env` in a separate secrets vault or version-controlled directory. |
+| `ARR_DOCKER_DIR` | `${ARR_BASE}/docker-data` | Choose where Docker volumes live (e.g. move to a large external drive). |
+| `ARRCONF_DIR` | `<repo>/arrconf` | Relocate Proton credentials and user config if you want them outside the repo tree. |
+| `DOWNLOADS_DIR` | `~/Downloads` | Set the root for active qBittorrent downloads. |
+| `COMPLETED_DIR` | `${DOWNLOADS_DIR}/completed` | Control where finished downloads are moved. |
+| `MEDIA_DIR` | `/media/mediasmb` | Point to the base of your media library share. |
+| `TV_DIR` | `${MEDIA_DIR}/Shows` | Tell Sonarr where your TV library lives. |
+| `MOVIES_DIR` | `${MEDIA_DIR}/Movies` | Tell Radarr where your movie library lives. |
+
+> Tip: The defaults already place the stack under `~/srv`, but you can set `ARR_BASE` to another path (for example `/mnt/fastdisk`) and the inherited values for `ARR_STACK_DIR` and `ARR_DOCKER_DIR` will follow automatically.
+
+#### Identity and networking
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `PUID` | Current user ID (`id -u`) | Run containers as another user (e.g. a dedicated media account). |
+| `PGID` | Current group ID (`id -g`) | Match the media group so containers can write to shared folders. |
+| `TIMEZONE` | `Australia/Sydney` | Align container logs and cron tasks with your local timezone. |
+| `LAN_IP` | Auto-detected (falls back to `0.0.0.0`) | Bind services to a specific RFC1918 address instead of all interfaces. |
+| `LOCALHOST_IP` | `127.0.0.1` | Change where the Gluetun control API binds on the host (advanced). |
+| `SERVER_COUNTRIES` | `Switzerland,Iceland,Romania,Czech Republic,Netherlands` | Limit ProtonVPN exits to countries that support port forwarding or suit your latency. |
+| `GLUETUN_CONTROL_PORT` | `8000` | Adjust the host port for the Gluetun control API when 8000 is taken. |
+
+#### Credentials and WebUI access
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `GLUETUN_API_KEY` | Generated on first run | Reuse an existing key when migrating installs. Leave blank to auto-generate. |
+| `QBT_USER` | `admin` | Set your desired qBittorrent username before the first login. |
+| `QBT_PASS` | `adminadmin` | Seed a temporary qBittorrent password (update in WebUI afterwards). |
+| `QBT_DOCKER_MODS` | `ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest` | Swap to a different qBittorrent WebUI mod or remove mods entirely. |
+| `QBT_AUTH_WHITELIST` | `127.0.0.1/8,::1/128` | Allow extra CIDR ranges to bypass the qBittorrent login page (useful on trusted LANs). |
+
+#### Behaviour toggles
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `ARR_PERMISSION_PROFILE` | `strict` | Switch to `collaborative` to make non-secret files group-readable (`0640`/`0750`) when sharing the host with other users. |
+| `ASSUME_YES` | `0` | Set to `1` for unattended installs that must skip prompts (avoid enabling on first run). |
+| `FORCE_ROTATE_API_KEY` | `0` | Set to `1` to regenerate the Gluetun API key on the next run (useful if the key leaked). |
+
+#### Container images
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `GLUETUN_IMAGE` | `qmcgaw/gluetun:v3.39.1` | Pin to a newer Gluetun tag after validating compatibility. |
+| `QBITTORRENT_IMAGE` | `lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415` | Track a newer qBittorrent release. |
+| `SONARR_IMAGE` | `lscr.io/linuxserver/sonarr:4.0.15.2941-ls291` | Upgrade/downgrade Sonarr carefully when required. |
+| `RADARR_IMAGE` | `lscr.io/linuxserver/radarr:5.27.5.10198-ls283` | Change Radarr tag once confirmed stable. |
+| `PROWLARR_IMAGE` | `lscr.io/linuxserver/prowlarr:latest` | Pin to a specific version to avoid unexpected updates. |
+| `BAZARR_IMAGE` | `lscr.io/linuxserver/bazarr:latest` | Pin to a specific version to avoid unexpected updates. |
+| `FLARESOLVERR_IMAGE` | `ghcr.io/flaresolverr/flaresolverr:v3.3.21` | Track newer FlareSolverr releases when needed. |
 
 ### Service ports
-The defaults below are published on your LAN IP and configurable via `.env`/`arrconf/userconf.sh`:
+Each service publishes a configurable LAN port. Edit the matching variable in `arrconf/userconf.sh` (or `.env`) if a port clashes with something else on your network.
 
-| Service      | LAN URL                                         |
-| ------------ | ----------------------------------------------- |
-| qBittorrent  | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8080}` |
-| Sonarr       | `http://${LAN_IP:-0.0.0.0}:${SONARR_PORT:-8989}`        |
-| Radarr       | `http://${LAN_IP:-0.0.0.0}:${RADARR_PORT:-7878}`        |
-| Prowlarr     | `http://${LAN_IP:-0.0.0.0}:${PROWLARR_PORT:-9696}`      |
-| Bazarr       | `http://${LAN_IP:-0.0.0.0}:${BAZARR_PORT:-6767}`        |
-| FlareSolverr | `http://${LAN_IP:-0.0.0.0}:${FLARESOLVERR_PORT:-8191}`  |
+| Service      | Variable | Default port | LAN URL pattern |
+| ------------ | -------- | ------------- | --------------- |
+| qBittorrent  | `QBT_HTTP_PORT_HOST` | `8080` | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8080}` |
+| Sonarr       | `SONARR_PORT` | `8989` | `http://${LAN_IP:-0.0.0.0}:${SONARR_PORT:-8989}` |
+| Radarr       | `RADARR_PORT` | `7878` | `http://${LAN_IP:-0.0.0.0}:${RADARR_PORT:-7878}` |
+| Prowlarr     | `PROWLARR_PORT` | `9696` | `http://${LAN_IP:-0.0.0.0}:${PROWLARR_PORT:-9696}` |
+| Bazarr       | `BAZARR_PORT` | `6767` | `http://${LAN_IP:-0.0.0.0}:${BAZARR_PORT:-6767}` |
+| FlareSolverr | `FLARESOLVERR_PORT` | `8191` | `http://${LAN_IP:-0.0.0.0}:${FLARESOLVERR_PORT:-8191}` |
 
-Set `LAN_IP` in `arrconf/userconf.sh` to bind to a single interface when desired.
+Set `LAN_IP` to a single RFC1918 address to restrict access or leave it blank to bind on all interfaces (the installer warns when it falls back to `0.0.0.0`).
 
 ## Daily operations
 The installer adds two aliases to `~/.bashrc` when possible:

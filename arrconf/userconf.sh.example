@@ -1,10 +1,59 @@
 #!/usr/bin/env bash
-# Example user configuration overrides
+# Beginner-friendly overrides. Copy to arrconf/userconf.sh and edit as needed.
 
-# Network settings
-# LAN_IP=192.168.1.50              # Force specific IP
-# SERVER_COUNTRIES="Netherlands"    # Use specific ProtonVPN countries
+# --- Stack paths ---
+ARR_BASE="${HOME}/srv"                 # Root directory for generated stack files
+ARR_STACK_DIR="${ARR_BASE}/arrstack"  # Location for docker-compose.yml, scripts, and aliases
+ARR_ENV_FILE="${ARR_STACK_DIR}/.env"  # Path to the generated .env secrets file
+ARR_DOCKER_DIR="${ARR_BASE}/docker-data"  # Docker volumes and persistent data storage
+# ARRCONF_DIR="${PWD}/arrconf"         # Uncomment to move Proton credentials outside the repo tree
 
-# Custom ports (if defaults conflict)
-# QBT_HTTP_PORT_HOST=9091           # qBittorrent WebUI
-# SONARR_PORT=8990                  # Sonarr
+# --- Permissions ---
+ARR_PERMISSION_PROFILE="strict"        # strict keeps secrets 600/700, collaborative loosens group access
+
+# --- Downloads and media ---
+DOWNLOADS_DIR="${HOME}/Downloads"      # Active qBittorrent download folder
+COMPLETED_DIR="${DOWNLOADS_DIR}/completed"  # Destination for completed downloads
+MEDIA_DIR="/media/mediasmb"            # Root of the media library share
+TV_DIR="${MEDIA_DIR}/Shows"            # Sonarr TV library path
+MOVIES_DIR="${MEDIA_DIR}/Movies"       # Radarr movie library path
+# SUBS_DIR="${MEDIA_DIR}/subs"         # Optional Bazarr subtitles directory
+
+# --- User identity ---
+PUID="$(id -u)"                        # Numeric user ID containers should run as
+PGID="$(id -g)"                        # Numeric group ID with write access to media folders
+TIMEZONE="Australia/Sydney"            # Timezone for container logs and schedules
+
+# --- Networking ---
+LAN_IP=""                              # Bind services to one LAN IP (leave blank to listen on all)
+LOCALHOST_IP="127.0.0.1"               # Loopback used by the Gluetun control API
+SERVER_COUNTRIES="Switzerland,Iceland,Romania,Czech Republic,Netherlands"  # ProtonVPN exit country list
+GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API
+
+# --- Credentials ---
+QBT_USER="admin"                       # Initial qBittorrent username (change after first login)
+QBT_PASS="adminadmin"                  # Initial qBittorrent password (update immediately after install)
+GLUETUN_API_KEY=""                     # Pre-seed a Gluetun API key or leave empty to auto-generate
+# QBT_DOCKER_MODS="ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest"  # Alternate qBittorrent WebUI mod image
+QBT_AUTH_WHITELIST="127.0.0.1/8,::1/128"  # CIDRs allowed to bypass the qBittorrent login prompt
+
+# --- Service ports ---
+QBT_HTTP_PORT_HOST="8080"              # qBittorrent WebUI port exposed on the LAN
+SONARR_PORT="8989"                     # Sonarr WebUI port exposed on the LAN
+RADARR_PORT="7878"                     # Radarr WebUI port exposed on the LAN
+PROWLARR_PORT="9696"                   # Prowlarr WebUI port exposed on the LAN
+BAZARR_PORT="6767"                     # Bazarr WebUI port exposed on the LAN
+FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on the LAN
+
+# --- Container images (advanced) ---
+# GLUETUN_IMAGE="qmcgaw/gluetun:v3.39.1"                     # Override the Gluetun container tag
+# QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415"  # Override the qBittorrent container tag
+# SONARR_IMAGE="lscr.io/linuxserver/sonarr:4.0.15.2941-ls291"         # Override the Sonarr container tag
+# RADARR_IMAGE="lscr.io/linuxserver/radarr:5.27.5.10198-ls283"        # Override the Radarr container tag
+# PROWLARR_IMAGE="lscr.io/linuxserver/prowlarr:latest"                # Override the Prowlarr container tag
+# BAZARR_IMAGE="lscr.io/linuxserver/bazarr:latest"                    # Override the Bazarr container tag
+# FLARESOLVERR_IMAGE="ghcr.io/flaresolverr/flaresolverr:v3.3.21"      # Override the FlareSolverr container tag
+
+# --- Behaviour toggles ---
+# ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs
+# FORCE_ROTATE_API_KEY="0"               # Force regeneration of the Gluetun API key on next run
