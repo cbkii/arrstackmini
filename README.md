@@ -46,35 +46,28 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - Proton VPN OpenVPN credentials stored in `arrconf/proton.auth` (`PROTON_USER`, `PROTON_PASS`).
 
 ## Quick start
-1. **Create the default stack root (`~/srv`) and move into it.**
+1. **Create the default stack root (`~/srv`) and clone arrstack-mini.**
    ```bash
    mkdir -p ~/srv
    cd ~/srv
-   ```
-2. **Clone arrstack-mini and enter the repository.**
-   ```bash
    git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
-3. **Prepare configuration directories and Proton credentials.**
+2. **Add your ProtonVPN credentials.**
    ```bash
-   mkdir -p arrconf
-   cat > arrconf/proton.auth <<'EOF_AUTH'
-   PROTON_USER=your_proton_username
-   PROTON_PASS=your_proton_password
-   EOF_AUTH
-   chmod 600 arrconf/proton.auth
+   cp arrconf/proton.auth.example arrconf/proton.auth
+   nano arrconf/proton.auth
    ```
-4. **(Optional) Pre-set overrides.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and adjust values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories or host port overrides before installation.
-5. **(Optional) Seed a `.env`.** `arrstack.sh` will generate `.env`, but you can copy `.env.example` for reference or to pin VPN countries in advance.
-6. **Run the installer.**
+   Replace the placeholders with your Proton VPN username and password (the installer tightens the file permissions automatically).
+3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
+4. **Run the installer.**
    ```bash
    ./arrstack.sh --yes
    ```
    - Use `--yes` to skip the interactive confirmation prompt.
-   - Run `./arrstack.sh --help` for available flags such as `--rotate-api-key`.
+   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`.
 
-    The script checks for Docker, Compose, curl, jq, and openssl, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings where safe fallbacks exist (e.g. unknown LAN IP, default credentials) so first-time installs should always complete.
+    The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
 
 ## Important notes
 
