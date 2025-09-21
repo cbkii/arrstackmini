@@ -6,6 +6,12 @@ REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ] && . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
 [ -f "${REPO_ROOT}/arrconf/userconf.sh" ] && . "${REPO_ROOT}/arrconf/userconf.sh"
 
+# Handle case where docker-data is in ~/srv instead of repo
+if [[ -z "${ARR_DOCKER_DIR}" && -d "${HOME}/srv/docker-data" ]]; then
+  ARR_DOCKER_DIR="${HOME}/srv/docker-data"
+  ARR_STACK_DIR="${ARR_STACK_DIR:-${PWD}/arrstack}"
+fi
+
 ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
@@ -107,6 +113,29 @@ install_missing() {
 ensure_dir() {
   local dir="$1"
   mkdir -p "$dir"
+}
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[&/]/\\&/g'
+}
+
+persist_env_var() {
+  local key="$1"
+  local value="$2"
+
+  if [[ -z "$key" ]]; then
+    return
+  fi
+
+  if [[ -f "$ARR_ENV_FILE" ]]; then
+    if grep -q "^${key}=" "$ARR_ENV_FILE"; then
+      local escaped
+      escaped=$(escape_sed_replacement "$value")
+      sed -i "s/^${key}=.*/${key}=${escaped}/" "$ARR_ENV_FILE"
+    else
+      printf '%s=%s\n' "$key" "$value" >>"$ARR_ENV_FILE"
+    fi
+  fi
 }
 
 preflight() {
@@ -587,32 +616,77 @@ msg "Run './arrstack.sh --yes' to apply changes"
 FIXVER
 
   chmod +x "$ARR_STACK_DIR/scripts/fix-versions.sh"
+
+}
+
+write_qbt_helper_script() {
+  msg "🧰 Writing qBittorrent helper script"
+
+  ensure_dir "$ARR_STACK_DIR/scripts"
+
+  cp "${REPO_ROOT}/scripts/qbt-helper.sh" "$ARR_STACK_DIR/scripts/qbt-helper.sh"
+  chmod +x "$ARR_STACK_DIR/scripts/qbt-helper.sh"
+
+  msg "  qBittorrent helper: ${ARR_STACK_DIR}/scripts/qbt-helper.sh"
 }
 
 write_qbt_config() {
   msg "🧩 Writing qBittorrent config"
-  local conf_dir="${ARR_DOCKER_DIR}/qbittorrent"
-  local conf_file="${conf_dir}/qBittorrent.conf"
+  local config_dir="${ARR_DOCKER_DIR}/qbittorrent/qBittorrent"
+  local conf_file="${config_dir}/qBittorrent.conf"
 
-  ensure_dir "$conf_dir"
+  ensure_dir "$config_dir"
+
+  local auth_whitelist="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
+  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" ]]; then
+    local subnet_base
+    subnet_base=$(echo "$LAN_IP" | sed 's/\.[0-9]*$/.0/')
+    auth_whitelist="${subnet_base}/24"
+    msg "  Configuring qBittorrent for passwordless LAN access from: $auth_whitelist"
+  fi
+
+  if [[ "$QBT_USER" == "admin" && "$QBT_PASS" == "adminadmin" ]]; then
+    QBT_PASS="$(openssl rand -base64 12 | tr -d '\n/')"
+    msg "  Generated secure initial password for qBittorrent"
+    persist_env_var QBT_PASS "$QBT_PASS"
+  fi
 
   if [[ ! -f "$conf_file" ]]; then
-    cat >"$conf_file" <<'QBT'
+    cat >"$conf_file" <<EOF
 [AutoRun]
 enabled=false
 
 [BitTorrent]
-Session\Port=8080
+Session\AddTorrentStopped=false
+Session\DefaultSavePath=/completed/
+Session\TempPath=/downloads/incomplete/
+Session\TempPathEnabled=true
+
+[Meta]
+MigrationVersion=8
+
+[Network]
+PortForwardingEnabled=false
 
 [Preferences]
 General\UseRandomPort=false
-Connection\PortRangeMin=8080
 Connection\UPnP=false
-WebUI\Port=8080
+Connection\UseNAT-PMP=false
 WebUI\UseUPnP=false
+Downloads\SavePath=/completed/
+Downloads\TempPath=/downloads/incomplete/
+Downloads\TempPathEnabled=true
+WebUI\Address=0.0.0.0
+WebUI\Port=8080
+WebUI\Username=${QBT_USER}
 WebUI\LocalHostAuth=false
-WebUI\AuthSubnetWhitelist=127.0.0.1/32
-QBT
+WebUI\AuthSubnetWhitelistEnabled=true
+WebUI\AuthSubnetWhitelist=${auth_whitelist}
+WebUI\CSRFProtection=true
+WebUI\ClickjackingProtection=true
+WebUI\HostHeaderValidation=true
+WebUI\HTTPS\Enabled=false
+EOF
     chmod 600 "$conf_file"
   fi
 }
@@ -992,6 +1066,47 @@ show_summary() {
 
 SUMMARY
 
+  # Always show qBittorrent access information prominently
+  local qbt_pass_msg=""
+  if docker ps --format '{{.Names}}' | grep -q qbittorrent; then
+    local temp_pass
+    temp_pass=$(docker logs qbittorrent 2>&1 | grep "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}')
+
+    if [[ -n "$temp_pass" ]]; then
+      qbt_pass_msg="TEMPORARY PASSWORD: $temp_pass (change this immediately!)"
+    elif [[ -f "$ARR_ENV_FILE" ]]; then
+      local configured_pass
+      configured_pass=$(grep "^QBT_PASS=" "$ARR_ENV_FILE" | cut -d= -f2-)
+      if [[ -n "$configured_pass" && "$configured_pass" != "adminadmin" ]]; then
+        qbt_pass_msg="Password: (configured in .env)"
+      else
+        qbt_pass_msg="Password: Check docker logs qbittorrent"
+      fi
+    fi
+  fi
+
+  cat <<QBT_INFO
+================================================
+qBittorrent Access Information:
+================================================
+URL: http://${LAN_IP}:${QBT_HTTP_PORT_HOST}/
+Username: ${QBT_USER}
+${qbt_pass_msg}
+
+If you see "Unauthorized":
+1. Get the current password:
+   docker logs qbittorrent | grep "temporary password" | tail -1
+
+2. Login and set a permanent password in:
+   Tools → Options → Web UI
+
+3. Update .env with your new credentials:
+   QBT_USER=yournewusername
+   QBT_PASS=yournewpassword
+================================================
+
+QBT_INFO
+
   if [[ "${LAN_IP}" == "0.0.0.0" ]]; then
     cat <<'WARNING'
 ⚠️  SECURITY WARNING
@@ -1057,6 +1172,7 @@ main() {
   write_env
   write_compose
   write_port_sync_script
+  write_qbt_helper_script
   write_qbt_config
   if ! write_aliases_file; then
     warn "Helper aliases file could not be generated"

@@ -72,6 +72,42 @@ CFG
 ./arrstack.sh --yes
 ```
 
+## qBittorrent Authentication Issues
+
+### Getting Access Credentials
+
+qBittorrent generates a temporary password on first run or after a config reset:
+
+```bash
+# Method 1: Use the helper script
+${ARR_STACK_DIR}/scripts/qbt-helper.sh show
+
+# Method 2: Check logs directly
+docker logs qbittorrent 2>&1 | grep "temporary password" | tail -1
+```
+
+### Common Solutions
+
+1. **"Unauthorized" error**:
+   - You need the temporary password from logs
+   - URL must be `http://YOUR_IP:8081/` (external port)
+
+2. **Enable passwordless LAN access**:
+   ```bash
+   ${ARR_STACK_DIR}/scripts/qbt-helper.sh whitelist
+   ```
+
+3. **Reset authentication completely**:
+   ```bash
+   ${ARR_STACK_DIR}/scripts/qbt-helper.sh reset
+   ```
+
+### Important Notes
+- Port 8081 is the external port (use this in your browser)
+- Port 8080 is the internal port (inside the container)
+- Temporary passwords change with each restart
+- Always set a permanent password after first login and update `.env`
+
 ## Health and status
 ```bash
 # Container state
