@@ -5,8 +5,12 @@
 # Base paths
 ARR_BASE="${ARR_BASE:-$PWD}"
 ARR_STACK_DIR="${ARR_STACK_DIR:-${ARR_BASE}/arrstack}"
+ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
 ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"
 ARRCONF_DIR="${ARRCONF_DIR:-${PWD}/arrconf}"
+
+# File/dir permissions (strict keeps secrets 600/700, collaborative loosens group access)
+ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
 
 # Download paths
 DOWNLOADS_DIR="${DOWNLOADS_DIR:-${HOME}/Downloads}"
