@@ -138,37 +138,13 @@ persist_env_var() {
   fi
 }
 
-fetch_forwarded_port() {
-  local port_response port
-
-  if port_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/forwardedport" 2>/dev/null); then
-    port=$(printf '%s' "$port_response" | tr -d '[:space:]')
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$port"
-      return 0
-    fi
-  fi
-
-  if port_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
-    port=$(printf '%s' "$port_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$port"
-      return 0
-    fi
-  fi
-
-  if [[ -f /tmp/gluetun/forwarded_port ]]; then
-    port=$(tr -d '[:space:]' </tmp/gluetun/forwarded_port 2>/dev/null || echo "0")
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$port"
-      return 0
-    fi
-  fi
-
-  echo "0"
-}
+GLUETUN_LIB="${REPO_ROOT}/scripts/lib/gluetun.sh"
+if [[ -f "$GLUETUN_LIB" ]]; then
+  # shellcheck source=scripts/lib/gluetun.sh
+  . "$GLUETUN_LIB"
+else
+  warn "Gluetun helper library not found at $GLUETUN_LIB"
+fi
 
 preflight() {
   msg "🚀 Preflight checks"
@@ -471,6 +447,16 @@ services:
 YAML
 
   chmod 600 "$ARR_STACK_DIR/docker-compose.yml"
+}
+
+sync_gluetun_library() {
+  msg "📚 Syncing Gluetun helper library"
+
+  ensure_dir "$ARR_STACK_DIR/scripts"
+  ensure_dir "$ARR_STACK_DIR/scripts/lib"
+
+  cp "${REPO_ROOT}/scripts/lib/gluetun.sh" "$ARR_STACK_DIR/scripts/lib/gluetun.sh"
+  chmod 644 "$ARR_STACK_DIR/scripts/lib/gluetun.sh"
 }
 
 write_port_sync_script() {
@@ -898,12 +884,8 @@ start_stack() {
     fi
   done
 
-  local ip ip_response
-  ip=""
-  if ip_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" 2>/dev/null); then
-    ip=$(printf '%s' "$ip_response" | jq -r '.public_ip // empty' 2>/dev/null || echo "")
-  fi
+  local ip
+  ip=$(fetch_public_ip)
 
   if [[ -n "$ip" ]]; then
     msg "✅ VPN connected! Public IP: $ip"
@@ -984,38 +966,6 @@ set -euo pipefail
 msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 
-fetch_forwarded_port() {
-  local response port
-
-  if response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/forwardedport" 2>/dev/null); then
-    port=$(printf '%s' "$response" | tr -d '[:space:]')
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$port"
-      return 0
-    fi
-  fi
-
-  if response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
-    port=$(printf '%s' "$response" | jq -r '.port // 0' 2>/dev/null || echo "0")
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$port"
-      return 0
-    fi
-  fi
-
-  if [[ -f /tmp/gluetun/forwarded_port ]]; then
-    port=$(tr -d '[:space:]' </tmp/gluetun/forwarded_port 2>/dev/null || echo "0")
-    if [[ "$port" =~ ^[0-9]+$ ]]; then
-      echo "$port"
-      return 0
-    fi
-  fi
-
-  echo "0"
-}
-
 ARR_STACK_DIR="__ARR_STACK_DIR__"
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
 
@@ -1024,6 +974,16 @@ if [[ -f "$ARR_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   . "$ARR_ENV_FILE"
   set +a
+fi
+
+GLUETUN_LIB="${ARR_STACK_DIR}/scripts/lib/gluetun.sh"
+if [[ -f "$GLUETUN_LIB" ]]; then
+  # shellcheck source=/dev/null
+  . "$GLUETUN_LIB"
+else
+  warn "Gluetun helper library missing at $GLUETUN_LIB"
+  fetch_forwarded_port() { printf '0'; }
+  fetch_public_ip() { printf ''; }
 fi
 
 msg "🔍 VPN Diagnostics Starting..."
@@ -1044,11 +1004,7 @@ if [[ "$GLUETUN_STATUS" != "running" ]]; then
 fi
 
 msg "Checking VPN connection..."
-PUBLIC_IP=""
-if response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-  "http://localhost:${GLUETUN_CONTROL_PORT}/v1/publicip/ip" 2>/dev/null); then
-  PUBLIC_IP=$(printf '%s' "$response" | jq -r '.public_ip // empty' 2>/dev/null || echo "")
-fi
+PUBLIC_IP=$(fetch_public_ip)
 
 if [[ -n "$PUBLIC_IP" ]]; then
   msg "✅ VPN Connected: $PUBLIC_IP"
@@ -1265,6 +1221,7 @@ main() {
   generate_api_key
   write_env
   write_compose
+  sync_gluetun_library
   write_port_sync_script
   write_qbt_helper_script
   write_qbt_config
