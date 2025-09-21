@@ -85,7 +85,7 @@ case "${ARR_PERMISSION_PROFILE}" in
     NONSECRET_FILE_MODE=640
     DATA_DIR_MODE=750
     ;;
-  strict|"")
+  strict | "")
     umask 0077
     ARR_PERMISSION_PROFILE="strict"
     ;;
@@ -137,7 +137,10 @@ acquire_lock() {
 
   local lockfile="${lock_dir}/.arrstack.lock"
 
-  while ! ( set -C; printf '%s' "$$" >"$lockfile" ) 2>/dev/null; do
+  while ! (
+    set -C
+    printf '%s' "$$" >"$lockfile"
+  ) 2>/dev/null; do
     if [ "$elapsed" -ge "$timeout" ]; then
       die "Could not acquire lock after ${timeout}s. Another instance may be running."
     fi
@@ -250,7 +253,7 @@ verify_permissions() {
     ((errors++))
   fi
 
-  if (( errors > 0 )); then
+  if ((errors > 0)); then
     warn "Fixed $errors permission issues"
   else
     msg "  All permissions verified ✓"
@@ -317,7 +320,7 @@ wait_for_healthy() {
     msg "Waiting for $service (timeout: ${timeout}s)..."
   fi
 
-  while (( elapsed < timeout )); do
+  while ((elapsed < timeout)); do
     local health=""
     local state=""
 
@@ -352,7 +355,7 @@ wait_for_healthy() {
       fi
     fi
 
-    if [[ "$quiet" != "true" ]] && (( elapsed > 0 )) && (( elapsed % 15 == 0 )); then
+    if [[ "$quiet" != "true" ]] && ((elapsed > 0)) && ((elapsed % 15 == 0)); then
       msg "  ... still waiting (${elapsed}s elapsed)"
     fi
 
@@ -400,7 +403,7 @@ install_missing() {
   if docker compose version >/dev/null 2>&1; then
     compose_version="$(docker compose version --short 2>/dev/null | sed 's/^v//')"
     local compose_major="${compose_version%%.*}"
-    if [[ -n "$compose_major" ]] && (( compose_major >= 2 )); then
+    if [[ -n "$compose_major" ]] && ((compose_major >= 2)); then
       compose_cmd="docker compose"
       DOCKER_COMPOSE_CMD=(docker compose)
     fi
@@ -409,7 +412,7 @@ install_missing() {
   if [[ -z "$compose_cmd" ]] && command -v docker-compose >/dev/null 2>&1; then
     compose_version="$(docker-compose version --short 2>/dev/null | sed 's/^v//')"
     local compose_major="${compose_version%%.*}"
-    if [[ -n "$compose_major" ]] && (( compose_major >= 2 )); then
+    if [[ -n "$compose_major" ]] && ((compose_major >= 2)); then
       compose_cmd="docker-compose"
       DOCKER_COMPOSE_CMD=(docker-compose)
     fi
@@ -470,7 +473,7 @@ set_qbt_conf_value() {
         printf '%s\n' "$line" >>"$tmp"
       fi
     done <"$file"
-    if (( ! replaced )); then
+    if ((!replaced)); then
       printf '%s=%s\n' "$key" "$value" >>"$tmp"
     fi
   else
@@ -508,7 +511,7 @@ obfuscate_sensitive() {
 
   local length=${#value}
 
-  if (( length <= 4 )); then
+  if ((length <= 4)); then
     printf '%*s' "$length" '' | tr ' ' '*'
     return
   fi
@@ -623,7 +626,7 @@ Paths
   • Completed downloads: ${COMPLETED_DIR}
   • TV library: ${TV_DIR}
   • Movies library: ${MOVIES_DIR}
-$( [[ -n "${SUBS_DIR:-}" ]] && printf '  • Subtitles directory: %s\n' "${SUBS_DIR}" )
+$([[ -n "${SUBS_DIR:-}" ]] && printf '  • Subtitles directory: %s\n' "${SUBS_DIR}")
 
 Network & system
   • Timezone: ${TIMEZONE}
@@ -659,7 +662,6 @@ If anything looks incorrect, edit arrconf/userconf.sh before continuing.
 ------------------------------------------------------------
 CONFIG
 }
-
 
 GLUETUN_LIB="${REPO_ROOT}/scripts/lib/gluetun.sh"
 if [[ -f "$GLUETUN_LIB" ]]; then
@@ -786,7 +788,8 @@ write_env() {
   validate_config
 
   local env_content
-  env_content="$(cat <<ENV
+  env_content="$(
+    cat <<ENV
 # Core settings
 VPN_TYPE=openvpn
 PUID=${PUID}
@@ -834,7 +837,7 @@ PROWLARR_IMAGE=${PROWLARR_IMAGE}
 BAZARR_IMAGE=${BAZARR_IMAGE}
 FLARESOLVERR_IMAGE=${FLARESOLVERR_IMAGE}
 ENV
-)"
+  )"
 
   local subs_env_line=""
   if [[ -n "${SUBS_DIR:-}" ]]; then
@@ -852,7 +855,8 @@ write_compose() {
   local compose_path="${ARR_STACK_DIR}/docker-compose.yml"
   local compose_content
 
-  compose_content="$(cat <<'YAML'
+  compose_content="$(
+    cat <<'YAML'
 services:
   gluetun:
     image: ${GLUETUN_IMAGE}
@@ -1029,7 +1033,7 @@ __BAZARR_OPTIONAL_SUBS__
       - qbittorrent
     restart: unless-stopped
 YAML
-)"
+  )"
 
   local bazarr_subs_volume=""
   if [[ -n "${SUBS_DIR:-}" ]]; then
@@ -1491,8 +1495,8 @@ safe_cleanup() {
     rm -f "$file" 2>/dev/null || true
   done
 
-  docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" |
-    xargs -r docker rm -f 2>/dev/null || true
+  docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" \
+    | xargs -r docker rm -f 2>/dev/null || true
 }
 
 update_env_image_var() {
@@ -1615,7 +1619,7 @@ sync_qbt_password_from_logs() {
   local attempts=0
   local detected=""
 
-  while (( attempts < 60 )); do
+  while ((attempts < 60)); do
     detected="$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}' || true)"
     if [[ -n "$detected" ]]; then
       QBT_PASS="$detected"
@@ -1636,7 +1640,7 @@ wait_for_vpn_connection() {
   local check_interval=5
   local api_url="http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
 
-  while (( elapsed < max_wait )); do
+  while ((elapsed < max_wait)); do
     if [[ "$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "")" != "running" ]]; then
       sleep "$check_interval"
       elapsed=$((elapsed + check_interval))
@@ -1657,7 +1661,7 @@ wait_for_vpn_connection() {
       fi
     fi
 
-    if (( elapsed > 0 && elapsed % 20 == 0 )); then
+    if ((elapsed > 0 && elapsed % 20 == 0)); then
       msg "  Still waiting... (${elapsed}s elapsed)"
     fi
 
@@ -1694,7 +1698,7 @@ start_stack() {
   local gluetun_started=0
   local output=""
 
-  while (( gluetun_attempts < gluetun_max_attempts )); do
+  while ((gluetun_attempts < gluetun_max_attempts)); do
     local attempt=$((gluetun_attempts + 1))
     msg "Starting Gluetun VPN container (attempt ${attempt}/${gluetun_max_attempts})..."
 
@@ -1716,7 +1720,7 @@ start_stack() {
     fi
 
     gluetun_attempts=$((gluetun_attempts + 1))
-    if (( gluetun_attempts < gluetun_max_attempts )); then
+    if ((gluetun_attempts < gluetun_max_attempts)); then
       warn "Failed to start Gluetun, retrying in 10s..."
       sleep 10
     else
@@ -1724,7 +1728,7 @@ start_stack() {
     fi
   done
 
-  if (( gluetun_started == 0 )); then
+  if ((gluetun_started == 0)); then
     warn "Gluetun may not have started successfully"
   fi
 
@@ -1742,7 +1746,7 @@ start_stack() {
     warn "VPN not ready after ${max_wait}s, extending timeout..."
   done
 
-  if (( vpn_ready == 0 )); then
+  if ((vpn_ready == 0)); then
     warn "VPN connection not verified after extended wait"
     warn "Services will start anyway with potential connectivity issues"
   fi
@@ -1811,7 +1815,7 @@ start_stack() {
     sleep 3
   done
 
-  if (( qb_started )); then
+  if ((qb_started)); then
     sync_qbt_password_from_logs
   fi
 
@@ -1986,10 +1990,10 @@ write_aliases_file() {
   arrconf_dir_escaped=${arrconf_dir_escaped//|/\|}
 
   sed -e "s|__ARR_STACK_DIR__|${stack_dir_escaped}|g" \
-      -e "s|__ARR_ENV_FILE__|${env_file_escaped}|g" \
-      -e "s|__ARR_DOCKER_DIR__|${docker_dir_escaped}|g" \
-      -e "s|__ARRCONF_DIR__|${arrconf_dir_escaped}|g" \
-      "$template_file" >"$tmp_file"
+    -e "s|__ARR_ENV_FILE__|${env_file_escaped}|g" \
+    -e "s|__ARR_DOCKER_DIR__|${docker_dir_escaped}|g" \
+    -e "s|__ARRCONF_DIR__|${arrconf_dir_escaped}|g" \
+    "$template_file" >"$tmp_file"
 
   if grep -q "__ARR_" "$tmp_file"; then
     warn "Failed to replace all template placeholders in aliases file"
@@ -2097,7 +2101,7 @@ main() {
         FORCE_ROTATE_API_KEY=1
         shift
         ;;
-      --help|-h)
+      --help | -h)
         help
         exit 0
         ;;
