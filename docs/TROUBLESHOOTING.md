@@ -30,7 +30,7 @@ grep GLUETUN_API_KEY .env
 
 # Query public IP via control API
 curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
-  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/publicip/ip" | jq
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/publicip/ip" | jq
 ```
 
 If the API key query fails, regenerate credentials with:
@@ -53,16 +53,28 @@ If the API key query fails, regenerate credentials with:
 ```bash
 # Check Gluetun forwarded port (integer response on recent releases)
 curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
-  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/forwardedport"
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/forwardedport"
 
 # Fallback for older Gluetun versions that return JSON
 curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
-  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq '.port'
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq '.port'
 
 # Review port-sync logs inside the shared Gluetun namespace
 docker logs port-sync --tail 50
 ```
 If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials or enable "Bypass authentication for clients on localhost" in the WebUI.
+
+#### Port forwarding timeouts or RPC failures
+- Inspect Gluetun logs for NAT-PMP activity to spot slow or stalled negotiations:
+  ```bash
+  docker logs gluetun | grep -i 'portforward'
+  ```
+- Confirm `.env` still contains a Proton username with the `+pmp` suffix. The installer adds it automatically, but edits to `.env` can remove it and prevent Proton from enabling port forwarding.
+- Switch to another Proton exit in `arrconf/userconf.sh` by adjusting `SERVER_COUNTRIES`. Busy servers are more likely to drop the UDP 5351 NAT-PMP handshake.
+- Make sure nothing on the host blocks outbound UDP 5351 from the Gluetun namespace (Proton's NAT-PMP responder lives at 10.16.0.1:5351).
+- Give the tunnel time to settle. Port-sync uses exponential backoff (up to five minutes) and will automatically apply the forwarded port as soon as Gluetun reports it.
+- Keep the control API locked down: `GLUETUN_API_KEY` must be present and `LOCALHOST_IP` should stay on a loopback or other trusted address. Gluetun 3.40+ enforces authentication on `/v1/openvpn/portforwarded`, and the stack already ships with API-key protection—regenerate the key with `./arrstack.sh --rotate-api-key --yes` if required.
+
 
 ### Services exposed on all interfaces
 If the summary warns that `LAN_IP=0.0.0.0`, set a specific address:
