@@ -105,7 +105,8 @@ Defaults are defined in `arrconf/userconf.defaults.sh` and can be overridden in 
 
 Ensure to edit media and download directories before running, using paths with sufficient free storage space.
 
-All secrets and config directories are created with restrictive permissions (`0600`/`0700`).
+All secrets and config directories are created with restrictive permissions (`0600`/`0700`) when using the default permission profile.
+To allow read-only collaboration, set `ARR_PERMISSION_PROFILE=collaborative` in `arrconf/userconf.sh`. This relaxes non-secret files to group-readable (`0640`) and data directories to `0750` while keeping secrets locked to `0600`.
 
 ### Environment variables
 `arrstack.sh` writes `.env` during installation with values sourced from your overrides. You can edit `.env` or `arrconf/userconf.sh` and rerun the installer to regenerate settings. Key variables include:
@@ -169,7 +170,7 @@ curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
 ### Firewall and namespace
 - Gluetun exposes only the configured LAN service ports plus the control API on `${LOCALHOST_IP}`.
 - Health probes and forwarded port sync execute over the control API using the generated key.
-- Secrets are never echoed to stdout; files land with `0600` and directories with `0700` permissions.
+- Secrets are never echoed to stdout; the strict profile writes files with `0600` and directories with `0700`, while the collaborative profile keeps secrets at `0600` but allows non-secret files/dirs to land as `0640`/`0750`.
 
 ## Logging and diagnostics
 - Re-run the installer with `--rotate-api-key` to regenerate credentials if needed.
