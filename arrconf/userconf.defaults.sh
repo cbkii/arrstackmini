@@ -3,7 +3,7 @@
 # Override these in arrconf/userconf.sh (git-ignored)
 
 # Base paths
-ARR_BASE="${ARR_BASE:-$PWD}"
+ARR_BASE="${ARR_BASE:-${HOME}/srv}"
 ARR_STACK_DIR="${ARR_STACK_DIR:-${ARR_BASE}/arrstack}"
 ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
 ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"

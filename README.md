@@ -46,23 +46,28 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - Proton VPN OpenVPN credentials stored in `arrconf/proton.auth` (`PROTON_USER`, `PROTON_PASS`).
 
 ## Quick start
-1. **Clone and enter the repository.**
+1. **Create the default stack root (`~/srv`) and move into it.**
+   ```bash
+   mkdir -p ~/srv
+   cd ~/srv
+   ```
+2. **Clone arrstack-mini and enter the repository.**
    ```bash
    git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
-2. **Prepare configuration directories and Proton credentials.**
+3. **Prepare configuration directories and Proton credentials.**
    ```bash
-   mkdir -p arrconf docker-data
+   mkdir -p arrconf
    cat > arrconf/proton.auth <<'EOF_AUTH'
    PROTON_USER=your_proton_username
    PROTON_PASS=your_proton_password
    EOF_AUTH
    chmod 600 arrconf/proton.auth
    ```
-3. **(Optional) Pre-set overrides.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and adjust values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories or host port overrides before installation.
-4. **(Optional) Seed a `.env`.** `arrstack.sh` will generate `.env`, but you can copy `.env.example` for reference or to pin VPN countries in advance.
-5. **Run the installer.**
+4. **(Optional) Pre-set overrides.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and adjust values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories or host port overrides before installation.
+5. **(Optional) Seed a `.env`.** `arrstack.sh` will generate `.env`, but you can copy `.env.example` for reference or to pin VPN countries in advance.
+6. **Run the installer.**
    ```bash
    ./arrstack.sh --yes
    ```
@@ -94,8 +99,8 @@ Defaults are defined in `arrconf/userconf.defaults.sh` and can be overridden in 
 
 | Purpose             | Default path |
 | ------------------- | ------------ |
-| Stack root          | `${PWD}/arrstack` (`${ARR_BASE}/arrstack`)
-| Docker volumes      | `${ARR_DOCKER_DIR}` (`${ARR_BASE}/docker-data`)
+| Stack root          | `~/srv/arrstack` (`${ARR_BASE}/arrstack`)
+| Docker volumes      | `${ARR_DOCKER_DIR}` (`${ARR_BASE}/docker-data` → `~/srv/docker-data` by default)
 | Proton auth/env     | `${ARRCONF_DIR}` (`<repo>/arrconf`)
 | Downloads           | `${DOWNLOADS_DIR}` (`${HOME}/Downloads`)
 | Completed downloads | `${COMPLETED_DIR}` (`${HOME}/Downloads/completed`)
@@ -116,7 +121,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 #### Paths and storage
 | Variable | Default | Why change it? |
 | -------- | ------- | --------------- |
-| `ARR_BASE` | Current repository directory | Move the entire stack to a different root without editing every path individually. `ARR_STACK_DIR` and `ARR_DOCKER_DIR` inherit from this value. |
+| `ARR_BASE` | `~/srv` | Move the entire stack to a different root without editing every path individually. `ARR_STACK_DIR` and `ARR_DOCKER_DIR` inherit from this value. |
 | `ARR_STACK_DIR` | `${ARR_BASE}/arrstack` | Relocate the generated `docker-compose.yml`, scripts, and `.arraliases`. Useful when storing the stack on another disk. |
 | `ARR_ENV_FILE` | `${ARR_STACK_DIR}/.env` | Keep the generated `.env` in a separate secrets vault or version-controlled directory. |
 | `ARR_DOCKER_DIR` | `${ARR_BASE}/docker-data` | Choose where Docker volumes live (e.g. move to a large external drive). |
@@ -127,7 +132,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `TV_DIR` | `${MEDIA_DIR}/Shows` | Tell Sonarr where your TV library lives. |
 | `MOVIES_DIR` | `${MEDIA_DIR}/Movies` | Tell Radarr where your movie library lives. |
 
-> Tip: set `ARR_BASE` once (for example to `/srv/arrstack`) and the defaults for `ARR_STACK_DIR` and `ARR_DOCKER_DIR` will follow that path automatically.
+> Tip: The defaults already place the stack under `~/srv`, but you can set `ARR_BASE` to another path (for example `/mnt/fastdisk`) and the inherited values for `ARR_STACK_DIR` and `ARR_DOCKER_DIR` will follow automatically.
 
 #### Identity and networking
 | Variable | Default | Why change it? |
