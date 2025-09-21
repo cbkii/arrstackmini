@@ -2,9 +2,14 @@
 # Common helpers for interacting with the Gluetun control server.
 
 _gluetun_control_base() {
-  local port
+  local port host
   port="${GLUETUN_CONTROL_PORT:-8000}"
-  printf 'http://localhost:%s' "$port"
+  host="${LOCALHOST_IP:-localhost}"
+  if [[ $host == *:* && $host != [* ]]; then
+    printf 'http://[%s]:%s' "$host" "$port"
+  else
+    printf 'http://%s:%s' "$host" "$port"
+  fi
 }
 
 gluetun_control_get() {
