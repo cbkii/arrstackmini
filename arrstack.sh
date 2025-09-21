@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck enable=require-variable-braces
+# shellcheck enable=quote-safe-variables
 set -Euo pipefail
 IFS=$'\n\t'
 
@@ -69,12 +71,294 @@ die() {
   exit 1
 }
 
+ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
+SECRET_FILE_MODE=600
+LOCK_FILE_MODE=644
+NONSECRET_FILE_MODE=600
+DATA_DIR_MODE=700
+
+case "${ARR_PERMISSION_PROFILE}" in
+  collaborative)
+    umask 0027
+    NONSECRET_FILE_MODE=640
+    DATA_DIR_MODE=750
+    ;;
+  strict|"")
+    umask 0077
+    ARR_PERMISSION_PROFILE="strict"
+    ;;
+  *)
+    warn "Unknown ARR_PERMISSION_PROFILE='${ARR_PERMISSION_PROFILE}' - defaulting to strict"
+    ARR_PERMISSION_PROFILE="strict"
+    umask 0077
+    ;;
+esac
+
+readonly ARR_PERMISSION_PROFILE SECRET_FILE_MODE LOCK_FILE_MODE NONSECRET_FILE_MODE DATA_DIR_MODE
+ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+readonly -a ARR_DOCKER_SERVICES
+
+atomic_write() {
+  local target="$1"
+  local content="$2"
+  local mode="${3:-600}"
+  local tmp
+
+  tmp="$(mktemp "${target}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${target}"
+
+  if ! printf '%s\n' "$content" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    die "Failed to write to temporary file for ${target}"
+  fi
+
+  if ! chmod "$mode" "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    die "Failed to set permissions on ${target}"
+  fi
+
+  if ! mv -f "$tmp" "$target" 2>/dev/null; then
+    rm -f "$tmp"
+    die "Failed to atomically write ${target}"
+  fi
+}
+
+acquire_lock() {
+  local lock_dir="${ARR_STACK_DIR:-/tmp}"
+  local timeout=30
+  local elapsed=0
+
+  if [ ! -d "$lock_dir" ]; then
+    if ! mkdir -p "$lock_dir" 2>/dev/null; then
+      lock_dir="/tmp"
+    fi
+  fi
+
+  local lockfile="${lock_dir}/.arrstack.lock"
+
+  while ! ( set -C; printf '%s' "$$" >"$lockfile" ) 2>/dev/null; do
+    if [ $elapsed -ge $timeout ]; then
+      die "Could not acquire lock after ${timeout}s. Another instance may be running."
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  chmod "$LOCK_FILE_MODE" "$lockfile" 2>/dev/null || true
+
+  trap "rm -f -- '$lockfile'" EXIT INT TERM
+}
+
+portable_sed() {
+  local expr="$1"
+  local file="$2"
+  local tmp
+
+  tmp="$(mktemp "${file}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for sed"
+  chmod 600 "$tmp" 2>/dev/null || true
+
+  local perms=""
+  if [ -e "$file" ]; then
+    perms="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo '')"
+  fi
+
+  if sed -e "$expr" "$file" >"$tmp" 2>/dev/null; then
+    if [ -f "$file" ] && cmp -s "$file" "$tmp" 2>/dev/null; then
+      rm -f "$tmp"
+      return 0
+    fi
+
+    if ! mv -f "$tmp" "$file" 2>/dev/null; then
+      rm -f "$tmp"
+      die "Failed to update $file"
+    fi
+
+    if [ -n "$perms" ]; then
+      chmod "$perms" "$file" 2>/dev/null || true
+    fi
+  else
+    rm -f "$tmp"
+    die "sed operation failed on $file"
+  fi
+}
+
+check_and_fix_mode() {
+  local target="$1"
+  local desired="$2"
+  local issue_label="$3"
+
+  [[ -e "$target" ]] || return 0
+
+  local perms
+  perms="$(stat -c '%a' "$target" 2>/dev/null || stat -f '%OLp' "$target" 2>/dev/null || echo 'unknown')"
+
+  if [[ "$perms" != "$desired" ]]; then
+    warn "  ${issue_label} on $target: $perms (should be $desired)"
+    chmod "$desired" "$target" 2>/dev/null || warn "  Could not fix permissions on $target"
+    return 1
+  fi
+
+  return 0
+}
+
+verify_permissions() {
+  local errors=0
+
+  msg "🔒 Verifying file permissions"
+
+  local -a secret_files=(
+    "${ARR_ENV_FILE}"
+    "${ARRCONF_DIR}/proton.auth"
+    "${ARR_DOCKER_DIR}/qbittorrent/qBittorrent.conf"
+    "${ARR_STACK_DIR}/.arraliases"
+  )
+
+  local file
+  for file in "${secret_files[@]}"; do
+    if [[ -f "$file" ]] && check_and_fix_mode "$file" "$SECRET_FILE_MODE" "Insecure permissions"; then
+      ((errors++))
+    fi
+  done
+
+  local -a nonsecret_files=(
+    "${ARR_STACK_DIR}/docker-compose.yml"
+    "${REPO_ROOT}/.arraliases.configured"
+  )
+
+  for file in "${nonsecret_files[@]}"; do
+    if [[ -f "$file" ]] && check_and_fix_mode "$file" "$NONSECRET_FILE_MODE" "Unexpected permissions"; then
+      ((errors++))
+    fi
+  done
+
+  local -a data_dirs=("${ARR_DOCKER_DIR}")
+  local service
+  for service in "${ARR_DOCKER_SERVICES[@]}"; do
+    data_dirs+=("${ARR_DOCKER_DIR}/${service}")
+  done
+
+  local dir
+  for dir in "${data_dirs[@]}"; do
+    if [[ -d "$dir" ]] && check_and_fix_mode "$dir" "$DATA_DIR_MODE" "Loose permissions"; then
+      ((errors++))
+    fi
+  done
+
+  if [[ -d "$ARRCONF_DIR" ]] && check_and_fix_mode "$ARRCONF_DIR" 700 "Loose permissions"; then
+    ((errors++))
+  fi
+
+  if (( errors > 0 )); then
+    warn "Fixed $errors permission issues"
+  else
+    msg "  All permissions verified ✓"
+  fi
+}
+
+validate_ipv4() {
+  local ip="$1"
+  local regex='^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
+  [[ "$ip" =~ $regex ]]
+}
+
+validate_port() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
+}
+
+validate_proton_creds() {
+  local user="$1"
+  local pass="$2"
+
+  if [ ${#user} -lt 3 ] || [ ${#pass} -lt 6 ]; then
+    return 1
+  fi
+
+  if [[ "$user" =~ [[:space:]] ]] || [[ "$pass" =~ [[:space:]] ]]; then
+    return 1
+  fi
+
+  return 0
+}
+
+validate_config() {
+  if [ -n "${LAN_IP:-}" ] && [ "${LAN_IP}" != "0.0.0.0" ]; then
+    validate_ipv4 "$LAN_IP" || die "Invalid LAN_IP: $LAN_IP"
+  fi
+
+  validate_port "$GLUETUN_CONTROL_PORT" || die "Invalid GLUETUN_CONTROL_PORT: $GLUETUN_CONTROL_PORT"
+  validate_port "$QBT_HTTP_PORT_HOST" || die "Invalid QBT_HTTP_PORT_HOST: $QBT_HTTP_PORT_HOST"
+  validate_port "$SONARR_PORT" || die "Invalid SONARR_PORT: $SONARR_PORT"
+  validate_port "$RADARR_PORT" || die "Invalid RADARR_PORT: $RADARR_PORT"
+  validate_port "$PROWLARR_PORT" || die "Invalid PROWLARR_PORT: $PROWLARR_PORT"
+  validate_port "$BAZARR_PORT" || die "Invalid BAZARR_PORT: $BAZARR_PORT"
+  validate_port "$FLARESOLVERR_PORT" || die "Invalid FLARESOLVERR_PORT: $FLARESOLVERR_PORT"
+
+  validate_proton_creds "$PU" "$PW" || die "Invalid ProtonVPN credentials format"
+}
+
+docker_retry() {
+  local max_attempts=3
+  local delay=2
+  local attempt=1
+  local cmd=("$@")
+
+  while [ $attempt -le $max_attempts ]; do
+    if "${cmd[@]}" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    if [ $attempt -lt $max_attempts ]; then
+      warn "Command failed (attempt $attempt/$max_attempts): ${cmd[*]}"
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  return 1
+}
+
+wait_for_healthy() {
+  local service="$1"
+  local timeout="${2:-300}"
+  local interval=5
+  local elapsed=0
+
+  msg "Waiting for $service to be healthy (timeout: ${timeout}s)..."
+
+  while [ $elapsed -lt $timeout ]; do
+    local health
+    health="$(docker inspect "$service" --format '{{.State.Health.Status}}' 2>/dev/null || echo unknown)"
+
+    case "$health" in
+      healthy)
+        msg "  ✅ $service is healthy"
+        return 0
+        ;;
+      unhealthy)
+        warn "  $service reported unhealthy"
+        return 1
+        ;;
+    esac
+
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+
+    if [ $((elapsed % 30)) -eq 0 ]; then
+      msg "  Still waiting for $service... (${elapsed}s elapsed)"
+    fi
+  done
+
+  warn "  Timeout waiting for $service to be healthy"
+  return 1
+}
+
 detect_lan_ip() {
   local candidate
   if command -v ip >/dev/null 2>&1; then
-    candidate=$(ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1 | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)
+    candidate="$(ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1 | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)"
   else
-    candidate=$(hostname -I 2>/dev/null | awk '{for (i=1;i<=NF;i++) print $i}' | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)
+    candidate="$(hostname -I 2>/dev/null | awk '{for (i=1;i<=NF;i++) print $i}' | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)"
   fi
 
   if [[ -z "$candidate" ]]; then
@@ -91,7 +375,37 @@ detect_lan_ip() {
 
 install_missing() {
   msg "🔧 Checking dependencies"
-  local required=(docker curl jq openssl)
+
+  if ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+    die "Docker daemon is not running or not accessible"
+  fi
+
+  local compose_cmd=""
+  local compose_version=""
+
+  if docker compose version >/dev/null 2>&1; then
+    compose_version="$(docker compose version --short 2>/dev/null | sed 's/^v//')"
+    local compose_major="${compose_version%%.*}"
+    if [[ -n "$compose_major" ]] && (( compose_major >= 2 )); then
+      compose_cmd="docker compose"
+      DOCKER_COMPOSE_CMD=(docker compose)
+    fi
+  fi
+
+  if [[ -z "$compose_cmd" ]] && command -v docker-compose >/dev/null 2>&1; then
+    compose_version="$(docker-compose version --short 2>/dev/null | sed 's/^v//')"
+    local compose_major="${compose_version%%.*}"
+    if [[ -n "$compose_major" ]] && (( compose_major >= 2 )); then
+      compose_cmd="docker-compose"
+      DOCKER_COMPOSE_CMD=(docker-compose)
+    fi
+  fi
+
+  if [[ -z "$compose_cmd" ]]; then
+    die "Docker Compose v2+ is required but not found"
+  fi
+
+  local required=(curl jq openssl)
   local missing=()
 
   for cmd in "${required[@]}"; do
@@ -100,17 +414,12 @@ install_missing() {
     fi
   done
 
-  if docker compose version >/dev/null 2>&1; then
-    DOCKER_COMPOSE_CMD=(docker compose)
-  elif command -v docker-compose >/dev/null 2>&1; then
-    DOCKER_COMPOSE_CMD=(docker-compose)
-  else
-    missing+=("docker compose")
-  fi
-
   if ((${#missing[@]} > 0)); then
     die "Missing required tools: ${missing[*]}. Please install them and re-run."
   fi
+
+  msg "  Docker: $(docker version --format '{{.Server.Version}}')"
+  msg "  Compose: ${compose_cmd} $(${DOCKER_COMPOSE_CMD[@]} version --short 2>/dev/null)"
 }
 
 ensure_dir() {
@@ -129,6 +438,7 @@ set_qbt_conf_value() {
   local tmp
 
   tmp="$(mktemp)"
+  chmod 600 "$tmp" 2>/dev/null || true
 
   if [[ -f "$file" ]]; then
     local replaced=0
@@ -161,8 +471,8 @@ persist_env_var() {
   if [[ -f "$ARR_ENV_FILE" ]]; then
     if grep -q "^${key}=" "$ARR_ENV_FILE"; then
       local escaped
-      escaped=$(escape_sed_replacement "$value")
-      sed -i "s/^${key}=.*/${key}=${escaped}/" "$ARR_ENV_FILE"
+      escaped="$(escape_sed_replacement "$value")"
+      portable_sed "s/^${key}=.*/${key}=${escaped}/" "$ARR_ENV_FILE"
     else
       printf '%s=%s\n' "$key" "$value" >>"$ARR_ENV_FILE"
     fi
@@ -188,7 +498,7 @@ obfuscate_sensitive() {
   local suffix="${value: -visible}"
   local hidden_len=$((length - visible * 2))
   local mask
-  mask=$(printf '%*s' "$hidden_len" '' | tr ' ' '*')
+  mask="$(printf '%*s' "$hidden_len" '' | tr ' ' '*')"
 
   printf '%s%s%s' "$prefix" "$mask" "$suffix"
 }
@@ -341,6 +651,10 @@ fi
 preflight() {
   msg "🚀 Preflight checks"
 
+  acquire_lock
+
+  msg "  Permission profile: ${ARR_PERMISSION_PROFILE} (umask $(umask))"
+
   if [[ ! -f "${ARRCONF_DIR}/proton.auth" ]]; then
     die "Missing ${ARRCONF_DIR}/proton.auth - create it with PROTON_USER and PROTON_PASS"
   fi
@@ -359,16 +673,29 @@ preflight() {
 mkdirs() {
   msg "📁 Creating directories"
   ensure_dir "$ARR_STACK_DIR"
-  ensure_dir "$ARR_DOCKER_DIR/gluetun"
-  ensure_dir "$ARR_DOCKER_DIR/qbittorrent"
-  ensure_dir "$ARR_DOCKER_DIR/sonarr"
-  ensure_dir "$ARR_DOCKER_DIR/radarr"
-  ensure_dir "$ARR_DOCKER_DIR/prowlarr"
-  ensure_dir "$ARR_DOCKER_DIR/bazarr"
-  ensure_dir "$ARR_DOCKER_DIR/flaresolverr"
+  chmod 755 "$ARR_STACK_DIR" 2>/dev/null || true
+
+  ensure_dir "$ARR_DOCKER_DIR"
+  chmod "$DATA_DIR_MODE" "$ARR_DOCKER_DIR" 2>/dev/null || true
+
+  local service
+  for service in "${ARR_DOCKER_SERVICES[@]}"; do
+    ensure_dir "${ARR_DOCKER_DIR}/${service}"
+    chmod "$DATA_DIR_MODE" "${ARR_DOCKER_DIR}/${service}" 2>/dev/null || true
+  done
+
   ensure_dir "$DOWNLOADS_DIR"
   ensure_dir "$COMPLETED_DIR"
+
   ensure_dir "$ARR_STACK_DIR/scripts"
+  chmod 755 "$ARR_STACK_DIR/scripts" 2>/dev/null || true
+
+  if [[ -d "$ARRCONF_DIR" ]]; then
+    chmod 700 "$ARRCONF_DIR" 2>/dev/null || true
+    if [[ -f "${ARRCONF_DIR}/proton.auth" ]]; then
+      chmod 600 "${ARRCONF_DIR}/proton.auth" 2>/dev/null || true
+    fi
+  fi
 
   if [[ ! -d "$TV_DIR" ]]; then
     warn "TV directory does not exist: $TV_DIR"
@@ -404,7 +731,7 @@ write_env() {
   msg "📝 Writing .env file"
 
   if [[ -z "${LAN_IP:-}" ]]; then
-    LAN_IP=$(detect_lan_ip)
+    LAN_IP="$(detect_lan_ip)"
     if [[ "$LAN_IP" != "0.0.0.0" ]]; then
       msg "Detected LAN IP: $LAN_IP"
     else
@@ -415,15 +742,17 @@ write_env() {
     warn "Consider using a specific RFC1918 address to limit exposure"
   fi
 
-  local PU PW
-  PU=$(grep '^PROTON_USER=' "$ARRCONF_DIR/proton.auth" | cut -d= -f2-)
-  PW=$(grep '^PROTON_PASS=' "$ARRCONF_DIR/proton.auth" | cut -d= -f2-)
+  PU="$(grep '^PROTON_USER=' "${ARRCONF_DIR}/proton.auth" | cut -d= -f2- || true)"
+  PW="$(grep '^PROTON_PASS=' "${ARRCONF_DIR}/proton.auth" | cut -d= -f2- || true)"
 
   [[ -n "$PU" && -n "$PW" ]] || die "Empty PROTON_USER/PROTON_PASS in proton.auth"
 
   [[ "$PU" == *"+pmp" ]] || PU="${PU}+pmp"
 
-  cat >"$ARR_ENV_FILE" <<ENV
+  validate_config
+
+  local env_content
+  env_content="$(cat <<ENV
 # Core settings
 VPN_TYPE=openvpn
 PUID=${PUID}
@@ -470,14 +799,19 @@ PROWLARR_IMAGE=${PROWLARR_IMAGE}
 BAZARR_IMAGE=${BAZARR_IMAGE}
 FLARESOLVERR_IMAGE=${FLARESOLVERR_IMAGE}
 ENV
+)"
 
-  chmod 600 "$ARR_ENV_FILE"
+  atomic_write "$ARR_ENV_FILE" "$env_content" 600
+
 }
 
 write_compose() {
   msg "🐳 Writing docker-compose.yml"
 
-  cat >"$ARR_STACK_DIR/docker-compose.yml" <<'YAML'
+  local compose_path="${ARR_STACK_DIR}/docker-compose.yml"
+  local compose_content
+
+  compose_content="$(cat <<'YAML'
 services:
   gluetun:
     image: ${GLUETUN_IMAGE}
@@ -666,8 +1000,9 @@ services:
       - qbittorrent
     restart: unless-stopped
 YAML
+)"
 
-  chmod 600 "$ARR_STACK_DIR/docker-compose.yml"
+  atomic_write "$compose_path" "$compose_content" "$NONSECRET_FILE_MODE"
 }
 
 sync_gluetun_library() {
@@ -675,6 +1010,8 @@ sync_gluetun_library() {
 
   ensure_dir "$ARR_STACK_DIR/scripts"
   ensure_dir "$ARR_STACK_DIR/scripts/lib"
+  chmod 755 "$ARR_STACK_DIR/scripts" 2>/dev/null || true
+  chmod 755 "$ARR_STACK_DIR/scripts/lib" 2>/dev/null || true
 
   cp "${REPO_ROOT}/scripts/lib/gluetun.sh" "$ARR_STACK_DIR/scripts/lib/gluetun.sh"
   chmod 644 "$ARR_STACK_DIR/scripts/lib/gluetun.sh"
@@ -687,16 +1024,19 @@ write_port_sync_script() {
 
   cat >"$ARR_STACK_DIR/scripts/port-sync.sh" <<'SCRIPT'
 #!/bin/sh
+# POSIX-compliant port synchronization script
 set -e
 
 log() {
-    printf '[%s] [port-sync] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" >&2
+    printf '[%s] [port-sync] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >&2
 }
 
 ensure_curl() {
     if ! command -v curl >/dev/null 2>&1; then
         if command -v apk >/dev/null 2>&1; then
-            apk add --no-cache curl >/dev/null 2>&1 || log 'warn: unable to install curl via apk'
+            if ! apk add --no-cache curl >/dev/null 2>&1; then
+                log 'warn: unable to install curl via apk'
+            fi
         else
             log 'warn: curl is required but not available'
         fi
@@ -712,19 +1052,25 @@ QBT_PASS="${QBT_PASS:-}"
 STATUS_FILE="${VPN_PORT_FORWARDING_STATUS_FILE:-}"
 COOKIE_JAR="/tmp/qbt.cookies"
 
+if [ ! -f "$COOKIE_JAR" ]; then
+    if ! touch "$COOKIE_JAR" 2>/dev/null; then
+        log 'warn: unable to create cookie jar; continuing without persistence'
+    fi
+fi
+chmod 600 "$COOKIE_JAR" 2>/dev/null || true
+
 ensure_curl
 
 api_get() {
-    local path="$1"
+    path="$1"
     if [ -n "$GLUETUN_API_KEY" ]; then
-        curl -fsSL -H "X-Api-Key: ${GLUETUN_API_KEY}" "${GLUETUN_ADDR}${path}" 2>/dev/null || true
+        curl -fsSL -H "X-Api-Key: $GLUETUN_API_KEY" "${GLUETUN_ADDR}${path}" 2>/dev/null || true
     else
         curl -fsSL "${GLUETUN_ADDR}${path}" 2>/dev/null || true
     fi
 }
 
 login_qbt() {
-    # Use provided credentials when available; otherwise rely on localhost bypass
     if [ -z "$QBT_USER" ] || [ -z "$QBT_PASS" ]; then
         return 0
     fi
@@ -741,14 +1087,17 @@ login_qbt() {
     return 0
 }
 
-ensure_qbt_session() { [ -s "$COOKIE_JAR" ] || login_qbt; }
+ensure_qbt_session() {
+    if [ -s "$COOKIE_JAR" ]; then
+        return 0
+    fi
+    login_qbt
+}
 
 get_pf_port() {
-    local response port
-
     response="$(api_get '/v1/openvpn/portforwarded')"
     if [ -n "$response" ]; then
-        port=$(printf '%s' "$response" | sed -n 's/.*"port":\([0-9]\+\).*/\1/p')
+        port="$(printf '%s\n' "$response" | awk -F'"port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}')"
         if [ -n "$port" ]; then
             printf '%s' "$port"
             return 0
@@ -763,7 +1112,7 @@ get_pf_port() {
 
     response="$(api_get '/v1/portforwarded' | tr -d '[:space:]')"
     if [ "$response" = 'true' ] && [ -n "$STATUS_FILE" ] && [ -f "$STATUS_FILE" ]; then
-        port=$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || true)
+        port="$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || printf '')"
         if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
             printf '%s' "$port"
             return 0
@@ -771,7 +1120,7 @@ get_pf_port() {
     fi
 
     if [ -n "$STATUS_FILE" ] && [ -f "$STATUS_FILE" ]; then
-        port=$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || true)
+        port="$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || printf '')"
         if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
             printf '%s' "$port"
             return 0
@@ -782,18 +1131,20 @@ get_pf_port() {
 }
 
 get_qbt_listen_port() {
-    local response
-    response=$(curl -fsSL -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null \
-        || curl -fsSL "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)
+    response="$(curl -fsSL -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
+    if [ -z "$response" ]; then
+        response="$(curl -fsSL "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
+    fi
     if [ -z "$response" ]; then
         rm -f "$COOKIE_JAR"
         return 1
     fi
-    printf '%s' "$response" | tr -d ' \n\r' | sed -n 's/.*"listen_port":\([0-9]\+\).*/\1/p'
+    printf '%s\n' "$response" | tr -d ' \n\r' | awk -F'"listen_port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
+    return 0
 }
 
 set_qbt_listen_port() {
-    local port="$1" payload
+    port="$1"
     payload="json={\"listen_port\":${port},\"random_port\":false}"
     if curl -fsSL -b "$COOKIE_JAR" --data "$payload" \
         "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
@@ -811,7 +1162,7 @@ cleanup() {
     rm -f "$COOKIE_JAR"
 }
 
-trap cleanup EXIT HUP INT TERM
+trap 'cleanup' EXIT INT TERM
 
 log "starting port-sync against ${GLUETUN_ADDR} -> ${QBITTORRENT_ADDR}"
 if ! ensure_qbt_session; then
@@ -819,45 +1170,66 @@ if ! ensure_qbt_session; then
 fi
 
 last_reported=""
+retry_delay=5
+max_retry_delay=300
 
 while :; do
-    if pf_port=$(get_pf_port); then
-        if [ -n "$pf_port" ]; then
+    if pf_port="$(get_pf_port)"; then
+        if [ -z "$pf_port" ]; then
+            log "forwarded port not reported yet (retry in ${retry_delay}s)"
+            sleep "$retry_delay"
+            retry_delay=$((retry_delay * 2))
+            if [ "$retry_delay" -gt "$max_retry_delay" ]; then
+                retry_delay="$max_retry_delay"
+            fi
+            continue
+        fi
+
+        retry_delay=5
+
+        if ! ensure_qbt_session; then
+            log 'warn: unable to authenticate with qBittorrent; retrying'
+            sleep "$UPDATE_INTERVAL"
+            continue
+        fi
+
+        current_port=""
+        if ! current_port="$(get_qbt_listen_port 2>/dev/null)"; then
             if ! ensure_qbt_session; then
                 log 'warn: unable to authenticate with qBittorrent; retrying'
                 sleep "$UPDATE_INTERVAL"
                 continue
             fi
-            current_port=$(get_qbt_listen_port || true)
-            if [ -z "$current_port" ]; then
-                if ! ensure_qbt_session; then
-                    log 'warn: unable to authenticate with qBittorrent; retrying'
-                    sleep "$UPDATE_INTERVAL"
-                    continue
-                fi
-                current_port=$(get_qbt_listen_port || true)
-            fi
-            if [ "$current_port" != "$pf_port" ]; then
-                log "applying forwarded port ${pf_port} (current: ${current_port:-unset})"
-                if set_qbt_listen_port "$pf_port"; then
-                    log "updated qBittorrent listen_port to ${pf_port}"
-                    last_reported="$pf_port"
-                else
-                    log "warn: failed to set qBittorrent listen_port to ${pf_port}"
-                fi
-            elif [ "$last_reported" != "$pf_port" ]; then
-                log "qBittorrent already listening on forwarded port ${pf_port}"
-                last_reported="$pf_port"
-            fi
+            current_port="$(get_qbt_listen_port 2>/dev/null || printf '')"
         fi
+
+        if [ "$current_port" != "$pf_port" ]; then
+            log "applying forwarded port ${pf_port} (current: ${current_port:-unset})"
+            if set_qbt_listen_port "$pf_port"; then
+                log "updated qBittorrent listen_port to ${pf_port}"
+                last_reported="$pf_port"
+            else
+                log "warn: failed to set qBittorrent listen_port to ${pf_port}"
+            fi
+        elif [ "$last_reported" != "$pf_port" ]; then
+            log "qBittorrent already listening on forwarded port ${pf_port}"
+            last_reported="$pf_port"
+        fi
+
+        sleep "$UPDATE_INTERVAL"
     else
-        log 'forwarded port not reported yet'
+        log "forwarded port not reported yet (retry in ${retry_delay}s)"
+        sleep "$retry_delay"
+        retry_delay=$((retry_delay * 2))
+        if [ "$retry_delay" -gt "$max_retry_delay" ]; then
+            retry_delay="$max_retry_delay"
+        fi
     fi
-    sleep "$UPDATE_INTERVAL"
-done
+
+  done
 SCRIPT
 
-  chmod +x "$ARR_STACK_DIR/scripts/port-sync.sh"
+  chmod 755 "$ARR_STACK_DIR/scripts/port-sync.sh"
 
   msg "🆘 Writing version recovery script"
 
@@ -872,6 +1244,22 @@ die() { warn "$1"; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${STACK_DIR}/.env"
+
+update_env_entry() {
+  local key="$1"
+  local value="$2"
+  local tmp
+
+  tmp="$(mktemp "${ENV_FILE}.XXXXXX.tmp")" || die "Failed to create temp file for ${key}"
+  chmod 600 "$tmp" 2>/dev/null || true
+
+  if sed "s|^${key}=.*|${key}=${value}|" "$ENV_FILE" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$ENV_FILE"
+  else
+    rm -f "$tmp"
+    die "Failed to update ${key} in $ENV_FILE"
+  fi
+}
 
 if [[ ! -f "$ENV_FILE" ]]; then
   die ".env file not found at $ENV_FILE"
@@ -901,7 +1289,7 @@ for base_image in "${USE_LATEST[@]}"; do
     *) continue ;;
   esac
 
-  current_image=$(grep "^${var_name}=" "$ENV_FILE" | cut -d= -f2- || true)
+  current_image="$(grep "^${var_name}=" "$ENV_FILE" | cut -d= -f2- || true)"
 
   if [[ -z "$current_image" ]]; then
     warn "  No ${var_name} entry found in .env; skipping"
@@ -912,7 +1300,7 @@ for base_image in "${USE_LATEST[@]}"; do
     warn "  Current tag doesn't exist: $current_image"
     latest_image="${base_image}:latest"
     msg "  Updating to: $latest_image"
-    sed -i "s|^${var_name}=.*|${var_name}=${latest_image}|" "$ENV_FILE"
+    update_env_entry "$var_name" "$latest_image"
   else
     msg "  ✅ Current tag is valid: $current_image"
   fi
@@ -922,7 +1310,7 @@ msg "✅ Version fixes complete"
 msg "Run './arrstack.sh --yes' to apply changes"
 FIXVER
 
-  chmod +x "$ARR_STACK_DIR/scripts/fix-versions.sh"
+  chmod 755 "$ARR_STACK_DIR/scripts/fix-versions.sh"
 
 }
 
@@ -932,7 +1320,7 @@ write_qbt_helper_script() {
   ensure_dir "$ARR_STACK_DIR/scripts"
 
   cp "${REPO_ROOT}/scripts/qbt-helper.sh" "$ARR_STACK_DIR/scripts/qbt-helper.sh"
-  chmod +x "$ARR_STACK_DIR/scripts/qbt-helper.sh"
+  chmod 755 "$ARR_STACK_DIR/scripts/qbt-helper.sh"
 
   msg "  qBittorrent helper: ${ARR_STACK_DIR}/scripts/qbt-helper.sh"
 }
@@ -1029,7 +1417,7 @@ update_env_image_var() {
   printf -v "$var_name" '%s' "$new_value"
 
   if [[ -f "$ARR_ENV_FILE" ]] && grep -q "^${var_name}=" "$ARR_ENV_FILE"; then
-    sed -i "s|^${var_name}=.*|${var_name}=${new_value}|" "$ARR_ENV_FILE"
+    portable_sed "s|^${var_name}=.*|${var_name}=${new_value}|" "$ARR_ENV_FILE"
   fi
 }
 
@@ -1054,8 +1442,8 @@ validate_images() {
 
     msg "  Checking $image..."
 
-    if ! docker manifest inspect "$image" >/dev/null 2>&1; then
-      if ! docker pull "$image" >/dev/null 2>&1; then
+    if ! docker_retry docker manifest inspect "$image"; then
+      if ! docker_retry docker pull "$image"; then
         local base_image="$image"
         local tag=""
         if [[ "$image" == *:* ]]; then
@@ -1067,7 +1455,7 @@ validate_images() {
           warn "    Version $tag not found, trying :latest..."
           local latest_image="${base_image}:latest"
 
-          if docker pull "$latest_image" >/dev/null 2>&1; then
+          if docker_retry docker pull "$latest_image"; then
             msg "    ✅ Using fallback: $latest_image"
 
             case "$base_image" in
@@ -1110,7 +1498,7 @@ compose_up_service() {
   local output=""
 
   msg "  Starting $service..."
-  if output=$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1); then
+  if output="$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1)"; then
     if [[ "$output" == *"is up-to-date"* ]]; then
       msg "  $service is up-to-date"
     elif [[ -n "$output" ]]; then
@@ -1139,7 +1527,7 @@ sync_qbt_password_from_logs() {
   local detected=""
 
   while (( attempts < 60 )); do
-    detected=$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}')
+    detected="$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}')"
     if [[ -n "$detected" ]]; then
       QBT_PASS="$detected"
       persist_env_var QBT_PASS "$QBT_PASS"
@@ -1167,7 +1555,7 @@ start_stack() {
 
   sleep 2
   local gluetun_status
-  gluetun_status=$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+  gluetun_status="$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
   if [[ "$gluetun_status" != "running" && "$gluetun_status" != "restarting" && "$gluetun_status" != "starting" && "$gluetun_status" != "created" ]]; then
     warn "Gluetun container failed to start (status: $gluetun_status)"
     warn "Check logs with: docker logs gluetun"
@@ -1175,23 +1563,12 @@ start_stack() {
     die "Cannot continue without a running VPN container"
   fi
 
-  msg "Waiting for VPN connection (up to 5 minutes)..."
-  local tries=0
-  while ! docker inspect gluetun --format '{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; do
-    sleep 5
-    ((tries++))
-    if ((tries % 12 == 0)); then
-      msg "   Still waiting for Gluetun... (${tries}/60)"
-    fi
-    if ((tries > 60)); then
-      warn "Gluetun is taking longer than expected to report healthy"
-      warn "Continuing startup; inspect logs with: docker logs gluetun"
-      break
-    fi
-  done
+  if ! wait_for_healthy "gluetun" 300; then
+    warn "Gluetun health check failed but continuing..."
+  fi
 
   local ip
-  ip=$(fetch_public_ip)
+  ip="$(fetch_public_ip)"
 
   if [[ -n "$ip" ]]; then
     msg "✅ VPN connected! Public IP: $ip"
@@ -1202,7 +1579,7 @@ start_stack() {
 
   msg "Checking port forwarding status..."
   local pf_port
-  pf_port=$(fetch_forwarded_port)
+  pf_port="$(fetch_forwarded_port)"
 
   if [[ "$pf_port" == "0" ]]; then
     warn "================================================"
@@ -1231,7 +1608,7 @@ start_stack() {
   msg "Service status summary:"
   for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
     local status
-    status=$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+    status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
     printf '  %-15s: %s\n' "$service" "$status"
   done
 }
@@ -1283,7 +1660,7 @@ fi
 
 msg "🔍 VPN Diagnostics Starting..."
 
-GLUETUN_STATUS=$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+GLUETUN_STATUS="$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
 msg "Gluetun container: $GLUETUN_STATUS"
 
 if [[ "$GLUETUN_STATUS" != "running" ]]; then
@@ -1299,7 +1676,7 @@ if [[ "$GLUETUN_STATUS" != "running" ]]; then
 fi
 
 msg "Checking VPN connection..."
-PUBLIC_IP=$(fetch_public_ip)
+PUBLIC_IP="$(fetch_public_ip)"
 
 if [[ -n "$PUBLIC_IP" ]]; then
   msg "✅ VPN Connected: $PUBLIC_IP"
@@ -1308,7 +1685,7 @@ else
 fi
 
 msg "Checking port forwarding..."
-PF_PORT=$(fetch_forwarded_port)
+PF_PORT="$(fetch_forwarded_port)"
 
 if [[ "$PF_PORT" != "0" ]]; then
   msg "✅ Port forwarding active: Port $PF_PORT"
@@ -1317,7 +1694,7 @@ else
   warn "Attempting fix: Restarting Gluetun..."
   if docker restart gluetun >/dev/null 2>&1; then
     sleep 60
-    PF_PORT=$(fetch_forwarded_port)
+    PF_PORT="$(fetch_forwarded_port)"
     if [[ "$PF_PORT" != "0" ]]; then
       msg "✅ Port forwarding recovered: Port $PF_PORT"
     else
@@ -1331,7 +1708,7 @@ fi
 
 msg "Checking service health..."
 for service in qbittorrent sonarr radarr prowlarr bazarr; do
-  STATUS=$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")
+  STATUS="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
   if [[ "$STATUS" == "running" ]]; then
     msg "  $service: ✅ running"
   else
@@ -1344,13 +1721,14 @@ DIAG
 
   local diag_tmp
   diag_tmp="$(mktemp "${diag_script}.XXXX")"
+  chmod 600 "$diag_tmp" 2>/dev/null || true
   local diag_dir_escaped
   diag_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
   diag_dir_escaped=${diag_dir_escaped//&/\&}
   diag_dir_escaped=${diag_dir_escaped//|/\|}
   sed -e "s|__ARR_STACK_DIR__|${diag_dir_escaped}|g" "$diag_script" >"$diag_tmp"
   mv "$diag_tmp" "$diag_script"
-  chmod +x "$diag_script"
+  chmod 755 "$diag_script"
   msg "Diagnostic script: ${diag_script}"
 }
 
@@ -1368,6 +1746,7 @@ write_aliases_file() {
 
   local tmp_file
   tmp_file="$(mktemp "${aliases_file}.XXXX")"
+  chmod 600 "$tmp_file" 2>/dev/null || true
 
   local stack_dir_escaped env_file_escaped docker_dir_escaped arrconf_dir_escaped
   stack_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
@@ -1397,8 +1776,9 @@ write_aliases_file() {
 
   mv "$tmp_file" "$aliases_file"
 
-  chmod 600 "$aliases_file"
+  chmod "$SECRET_FILE_MODE" "$aliases_file"
   cp "$aliases_file" "$configured_template"
+  chmod "$NONSECRET_FILE_MODE" "$configured_template" 2>/dev/null || true
   msg "✅ Helper aliases written to: $aliases_file"
   msg "   Source them with: source $aliases_file"
   msg "   Repo copy updated: $configured_template"
@@ -1415,7 +1795,7 @@ SUMMARY
   local qbt_pass_msg=""
   if [[ -f "$ARR_ENV_FILE" ]]; then
     local configured_pass
-    configured_pass=$(grep "^QBT_PASS=" "$ARR_ENV_FILE" | cut -d= -f2-)
+    configured_pass="$(grep "^QBT_PASS=" "$ARR_ENV_FILE" | cut -d= -f2- || true)"
     if [[ -n "$configured_pass" && "$configured_pass" != "adminadmin" ]]; then
       qbt_pass_msg="Password: ${configured_pass} (from .env)"
     else
@@ -1516,6 +1896,7 @@ main() {
   if ! write_aliases_file; then
     warn "Helper aliases file could not be generated"
   fi
+  verify_permissions
   install_aliases
   start_stack
   show_summary
