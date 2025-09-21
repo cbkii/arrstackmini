@@ -15,6 +15,8 @@ if [[ -z "${ARR_DOCKER_DIR}" && -d "${HOME}/srv/docker-data" ]]; then
 fi
 
 ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
+ARR_LOG_DIR="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
+ARR_INSTALL_LOG="${ARR_INSTALL_LOG:-${ARR_LOG_DIR}/arrstack-install.log}"
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
@@ -75,6 +77,69 @@ die() {
 
 have_command() {
   command -v "$1" >/dev/null 2>&1
+}
+
+setup_install_logging() {
+  local log_dir="${ARR_LOG_DIR:-}"
+  local log_file="${ARR_INSTALL_LOG:-}"
+  local timestamp=""
+  local archive=""
+  local suffix=0
+  local truncate_log=1
+
+  if [[ -z "$log_dir" || -z "$log_file" ]]; then
+    return 0
+  fi
+
+  if ! mkdir -p "$log_dir" 2>/dev/null; then
+    warn "logging: unable to create log directory at ${log_dir}"
+    return 1
+  fi
+
+  if [[ -e "$log_file" ]]; then
+    truncate_log=0
+    if timestamp="$(date +%Y%m%d-%H%M%S 2>/dev/null)"; then
+      archive="${log_dir}/arrstack-install-${timestamp}.log"
+      while [[ -e "$archive" ]]; do
+        suffix=$((suffix + 1))
+        archive="${log_dir}/arrstack-install-${timestamp}-${suffix}.log"
+      done
+      if mv "$log_file" "$archive" 2>/dev/null; then
+        chmod "$NONSECRET_FILE_MODE" "$archive" 2>/dev/null || true
+        truncate_log=1
+      else
+        warn "logging: unable to archive previous install log at ${log_file}"
+      fi
+    else
+      warn "logging: unable to determine archive timestamp"
+    fi
+  fi
+
+  if ((truncate_log)); then
+    if ! : >"$log_file" 2>/dev/null; then
+      warn "logging: unable to write to ${log_file}"
+      return 1
+    fi
+  else
+    if ! : >>"$log_file" 2>/dev/null; then
+      warn "logging: unable to append to ${log_file}"
+      return 1
+    fi
+  fi
+
+  chmod "$NONSECRET_FILE_MODE" "$log_file" 2>/dev/null || true
+
+  if have_command tee; then
+    exec > >(tee -a "$log_file")
+    exec 2>&1
+  else
+    warn "logging: tee not available; installation output redirected to ${log_file}"
+    exec >>"$log_file"
+    exec 2>&1
+  fi
+
+  msg "Installation log: ${log_file}"
+  return 0
 }
 
 iptables_chain_exists() {
@@ -2452,6 +2517,10 @@ SUMMARY
 }
 
 main() {
+  if ! setup_install_logging; then
+    warn "logging: continuing without persistent install log"
+  fi
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --yes)
