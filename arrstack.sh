@@ -297,59 +297,71 @@ validate_config() {
 }
 
 docker_retry() {
-  local max_attempts=3
-  local delay=2
-  local attempt=1
   local cmd=("$@")
-
-  while [ $attempt -le $max_attempts ]; do
-    if "${cmd[@]}" >/dev/null 2>&1; then
-      return 0
-    fi
-
-    if [ $attempt -lt $max_attempts ]; then
-      warn "Command failed (attempt $attempt/$max_attempts): ${cmd[*]}"
-      sleep "$delay"
-      delay=$((delay * 2))
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  return 1
+  # Simple single attempt - let Docker handle its own retries
+  "${cmd[@]}" >/dev/null 2>&1
+  return $?
 }
 
 wait_for_healthy() {
   local service="$1"
   local timeout="${2:-300}"
+  local quiet="${3:-false}"
   local interval=5
   local elapsed=0
+  local unhealthy_logged=false
 
-  msg "Waiting for $service to be healthy (timeout: ${timeout}s)..."
+  if [[ "$quiet" != "true" ]]; then
+    msg "Waiting for $service (timeout: ${timeout}s)..."
+  fi
 
-  while [ $elapsed -lt $timeout ]; do
-    local health
-    health="$(docker inspect "$service" --format '{{.State.Health.Status}}' 2>/dev/null || echo unknown)"
+  while (( elapsed < timeout )); do
+    local health=""
+    local state=""
 
-    case "$health" in
-      healthy)
-        msg "  ✅ $service is healthy"
+    health="$(docker inspect "$service" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
+    state="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")"
+
+    if [[ "$state" == "exited" || "$state" == "dead" ]]; then
+      warn "  $service is $state"
+      return 1
+    fi
+
+    if [[ -n "$health" ]]; then
+      case "$health" in
+        healthy)
+          msg "  ✅ $service is healthy"
+          return 0
+          ;;
+        unhealthy)
+          if [[ "$unhealthy_logged" != "true" ]]; then
+            warn "  $service reports unhealthy; will keep retrying"
+            unhealthy_logged=true
+          fi
+          ;;
+        *)
+          :
+          ;;
+      esac
+    else
+      if [[ "$state" == "running" ]]; then
+        msg "  ✅ $service is running"
         return 0
-        ;;
-      unhealthy)
-        warn "  $service reported unhealthy"
-        return 1
-        ;;
-    esac
+      fi
+    fi
+
+    if [[ "$quiet" != "true" ]] && (( elapsed > 0 )) && (( elapsed % 15 == 0 )); then
+      msg "  ... still waiting (${elapsed}s elapsed)"
+    fi
 
     sleep "$interval"
     elapsed=$((elapsed + interval))
-
-    if [ $((elapsed % 30)) -eq 0 ]; then
-      msg "  Still waiting for $service... (${elapsed}s elapsed)"
-    fi
   done
 
-  warn "  Timeout waiting for $service to be healthy"
+  if [[ "$quiet" != "true" ]]; then
+    warn "  Timeout waiting for $service"
+  fi
+
   return 1
 }
 
@@ -836,6 +848,7 @@ services:
       FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
       FIREWALL_INPUT_PORTS: "${QBT_HTTP_PORT_HOST},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}"
       DOT: "off"
+      DNS_PLAINTEXT_ADDRESS: "1.1.1.1"
       UPDATER_PERIOD: "24h"
       PUID: ${PUID}
       PGID: ${PGID}
@@ -852,10 +865,10 @@ services:
       - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
     healthcheck:
       test: /gluetun-entrypoint healthcheck
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      interval: 120s
+      timeout: 30s
+      retries: 2
+      start_period: 240s
     restart: unless-stopped
 
   qbittorrent:
@@ -866,6 +879,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      LANG: en_US.UTF-8
       DOCKER_MODS: ${QBT_DOCKER_MODS}
     volumes:
       - ${ARR_DOCKER_DIR}/qbittorrent:/config
@@ -876,31 +890,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  vuetorrent-monthly-update:
-    image: alpine:3.20.3
-    container_name: vuetorrent-monthly-update
-    network_mode: none
-    entrypoint: ["/bin/sh","-c"]
-    command: |
-      set -e
-      if ! command -v docker >/dev/null 2>&1; then
-        apk add --no-cache docker-cli docker-cli-compose >/dev/null
-      fi
-      cat >/usr/local/bin/runner.sh <<'EOF'
-      #!/bin/sh
-      set -e
-      while :; do
-        docker compose -f /stack/docker-compose.yml up -d qbittorrent || true
-        sleep $((30*24*60*60))
-      done
-      EOF
-      chmod +x /usr/local/bin/runner.sh
-      exec /usr/local/bin/runner.sh
-    volumes:
-      - ${ARR_STACK_DIR}:/stack:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    restart: unless-stopped
-
   sonarr:
     image: ${SONARR_IMAGE}
     container_name: sonarr
@@ -909,6 +898,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      LANG: en_US.UTF-8
     volumes:
       - ${ARR_DOCKER_DIR}/sonarr:/config
       - ${DOWNLOADS_DIR}:/downloads
@@ -927,6 +917,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      LANG: en_US.UTF-8
     volumes:
       - ${ARR_DOCKER_DIR}/radarr:/config
       - ${DOWNLOADS_DIR}:/downloads
@@ -945,6 +936,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      LANG: en_US.UTF-8
     volumes:
       - ${ARR_DOCKER_DIR}/prowlarr:/config
     depends_on:
@@ -960,6 +952,7 @@ services:
       PUID: ${PUID}
       PGID: ${PGID}
       TZ: ${TIMEZONE}
+      LANG: en_US.UTF-8
     volumes:
       - ${ARR_DOCKER_DIR}/bazarr:/config
       - ${TV_DIR}:/tv
@@ -989,6 +982,7 @@ services:
       GLUETUN_ADDR: "http://localhost:${GLUETUN_CONTROL_PORT}"
       QBITTORRENT_ADDR: "http://localhost:8080"
       UPDATE_INTERVAL: 300
+      BACKOFF_MAX: 900
       QBT_USER: ${QBT_USER}
       QBT_PASS: ${QBT_PASS}
       VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
@@ -1024,32 +1018,35 @@ write_port_sync_script() {
 
   cat >"$ARR_STACK_DIR/scripts/port-sync.sh" <<'SCRIPT'
 #!/bin/sh
-# POSIX-compliant port synchronization script
-set -e
+set -eu
 
 log() {
     printf '[%s] [port-sync] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >&2
 }
 
 ensure_curl() {
-    if ! command -v curl >/dev/null 2>&1; then
-        if command -v apk >/dev/null 2>&1; then
-            if ! apk add --no-cache curl >/dev/null 2>&1; then
-                log 'warn: unable to install curl via apk'
-            fi
-        else
-            log 'warn: curl is required but not available'
+    if command -v curl >/dev/null 2>&1; then
+        return
+    fi
+
+    if command -v apk >/dev/null 2>&1; then
+        if ! apk add --no-cache curl >/dev/null 2>&1; then
+            log 'warn: unable to install curl via apk'
         fi
+    else
+        log 'warn: curl is required but not available'
     fi
 }
 
-GLUETUN_ADDR="${GLUETUN_ADDR:-http://localhost:8000}"
-GLUETUN_API_KEY="${GLUETUN_API_KEY:-}"
-QBITTORRENT_ADDR="${QBITTORRENT_ADDR:-http://localhost:8080}"
-UPDATE_INTERVAL="${UPDATE_INTERVAL:-300}"
-QBT_USER="${QBT_USER:-}"
-QBT_PASS="${QBT_PASS:-}"
-STATUS_FILE="${VPN_PORT_FORWARDING_STATUS_FILE:-}"
+: "${GLUETUN_ADDR:=http://localhost:8000}"
+: "${GLUETUN_API_KEY:=}"
+: "${QBITTORRENT_ADDR:=http://localhost:8080}"
+: "${UPDATE_INTERVAL:=300}"
+: "${BACKOFF_MAX:=900}"
+: "${QBT_USER:=}"
+: "${QBT_PASS:=}"
+: "${VPN_PORT_FORWARDING_STATUS_FILE:=}"
+
 COOKIE_JAR="/tmp/qbt.cookies"
 
 if [ ! -f "$COOKIE_JAR" ]; then
@@ -1062,12 +1059,37 @@ chmod 600 "$COOKIE_JAR" 2>/dev/null || true
 ensure_curl
 
 api_get() {
-    path="$1"
+    local path="$1"
+
     if [ -n "$GLUETUN_API_KEY" ]; then
-        curl -fsSL -H "X-Api-Key: $GLUETUN_API_KEY" "${GLUETUN_ADDR}${path}" 2>/dev/null || true
+        curl -fsS --max-time 5 -H "X-Api-Key: $GLUETUN_API_KEY" "${GLUETUN_ADDR}${path}" 2>/dev/null || return 1
     else
-        curl -fsSL "${GLUETUN_ADDR}${path}" 2>/dev/null || true
+        curl -fsS --max-time 5 "${GLUETUN_ADDR}${path}" 2>/dev/null || return 1
     fi
+}
+
+get_pf() {
+    local port=""
+
+    if [ -n "$VPN_PORT_FORWARDING_STATUS_FILE" ] && [ -r "$VPN_PORT_FORWARDING_STATUS_FILE" ]; then
+        port="$(awk 'NF {print $1; exit}' "$VPN_PORT_FORWARDING_STATUS_FILE" 2>/dev/null || printf '')"
+        if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
+            printf '%s' "$port"
+            return 0
+        fi
+    fi
+
+    local response=""
+    response="$(api_get '/v1/openvpn/portforwarded' || true)"
+    if [ -n "$response" ]; then
+        port="$(printf '%s\n' "$response" | awk -F'"port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}')"
+        if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
+            printf '%s' "$port"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 login_qbt() {
@@ -1075,7 +1097,7 @@ login_qbt() {
         return 0
     fi
 
-    if curl -fsSL -c "$COOKIE_JAR" \
+    if curl -fsS --max-time 5 -c "$COOKIE_JAR" \
         --data-urlencode "username=${QBT_USER}" \
         --data-urlencode "password=${QBT_PASS}" \
         "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
@@ -1091,69 +1113,41 @@ ensure_qbt_session() {
     if [ -s "$COOKIE_JAR" ]; then
         return 0
     fi
+
     login_qbt
 }
 
-get_pf_port() {
-    response="$(api_get '/v1/openvpn/portforwarded')"
-    if [ -n "$response" ]; then
-        port="$(printf '%s\n' "$response" | awk -F'"port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}')"
-        if [ -n "$port" ]; then
-            printf '%s' "$port"
-            return 0
-        fi
-    fi
-
-    port="$(api_get '/v1/forwardedport' | tr -d '[:space:]')"
-    if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
-        printf '%s' "$port"
-        return 0
-    fi
-
-    response="$(api_get '/v1/portforwarded' | tr -d '[:space:]')"
-    if [ "$response" = 'true' ] && [ -n "$STATUS_FILE" ] && [ -f "$STATUS_FILE" ]; then
-        port="$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || printf '')"
-        if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
-            printf '%s' "$port"
-            return 0
-        fi
-    fi
-
-    if [ -n "$STATUS_FILE" ] && [ -f "$STATUS_FILE" ]; then
-        port="$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || printf '')"
-        if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
-            printf '%s' "$port"
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
 get_qbt_listen_port() {
-    response="$(curl -fsSL -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
+    local response=""
+
+    response="$(curl -fsS --max-time 5 -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
     if [ -z "$response" ]; then
-        response="$(curl -fsSL "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
+        response="$(curl -fsS --max-time 5 "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
     fi
+
     if [ -z "$response" ]; then
         rm -f "$COOKIE_JAR"
         return 1
     fi
+
     printf '%s\n' "$response" | tr -d ' \n\r' | awk -F'"listen_port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
     return 0
 }
 
 set_qbt_listen_port() {
-    port="$1"
-    payload="json={\"listen_port\":${port},\"random_port\":false}"
-    if curl -fsSL -b "$COOKIE_JAR" --data "$payload" \
+    local port="$1"
+    local payload="json={\"listen_port\":${port},\"random_port\":false}"
+
+    if curl -fsS --max-time 5 -b "$COOKIE_JAR" --data "$payload" \
         "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
         return 0
     fi
-    if curl -fsSL --data "$payload" \
+
+    if curl -fsS --max-time 5 --data "$payload" \
         "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
         return 0
     fi
+
     rm -f "$COOKIE_JAR"
     return 1
 }
@@ -1165,68 +1159,51 @@ cleanup() {
 trap 'cleanup' EXIT INT TERM
 
 log "starting port-sync against ${GLUETUN_ADDR} -> ${QBITTORRENT_ADDR}"
-if ! ensure_qbt_session; then
-    log 'warn: waiting for valid qBittorrent credentials'
-fi
+ensure_qbt_session || true
 
 last_reported=""
-retry_delay=5
-max_retry_delay=300
+backoff=30
 
 while :; do
-    if pf_port="$(get_pf_port)"; then
-        if [ -z "$pf_port" ]; then
-            log "forwarded port not reported yet (retry in ${retry_delay}s)"
-            sleep "$retry_delay"
-            retry_delay=$((retry_delay * 2))
-            if [ "$retry_delay" -gt "$max_retry_delay" ]; then
-                retry_delay="$max_retry_delay"
+    pf="$(get_pf || echo 0)"
+
+    if [ -z "$pf" ] || [ "$pf" = "0" ]; then
+        log "Port forward not assigned yet; retrying in ${backoff}s"
+        sleep "$backoff"
+        if [ "$backoff" -lt "$BACKOFF_MAX" ]; then
+            backoff=$((backoff * 2))
+            if [ "$backoff" -gt "$BACKOFF_MAX" ]; then
+                backoff="$BACKOFF_MAX"
             fi
-            continue
         fi
-
-        retry_delay=5
-
-        if ! ensure_qbt_session; then
-            log 'warn: unable to authenticate with qBittorrent; retrying'
-            sleep "$UPDATE_INTERVAL"
-            continue
-        fi
-
-        current_port=""
-        if ! current_port="$(get_qbt_listen_port 2>/dev/null)"; then
-            if ! ensure_qbt_session; then
-                log 'warn: unable to authenticate with qBittorrent; retrying'
-                sleep "$UPDATE_INTERVAL"
-                continue
-            fi
-            current_port="$(get_qbt_listen_port 2>/dev/null || printf '')"
-        fi
-
-        if [ "$current_port" != "$pf_port" ]; then
-            log "applying forwarded port ${pf_port} (current: ${current_port:-unset})"
-            if set_qbt_listen_port "$pf_port"; then
-                log "updated qBittorrent listen_port to ${pf_port}"
-                last_reported="$pf_port"
-            else
-                log "warn: failed to set qBittorrent listen_port to ${pf_port}"
-            fi
-        elif [ "$last_reported" != "$pf_port" ]; then
-            log "qBittorrent already listening on forwarded port ${pf_port}"
-            last_reported="$pf_port"
-        fi
-
-        sleep "$UPDATE_INTERVAL"
-    else
-        log "forwarded port not reported yet (retry in ${retry_delay}s)"
-        sleep "$retry_delay"
-        retry_delay=$((retry_delay * 2))
-        if [ "$retry_delay" -gt "$max_retry_delay" ]; then
-            retry_delay="$max_retry_delay"
-        fi
+        continue
     fi
 
-  done
+    backoff="$UPDATE_INTERVAL"
+
+    if ! ensure_qbt_session; then
+        log 'warn: unable to authenticate with qBittorrent; retrying'
+        sleep "$UPDATE_INTERVAL"
+        continue
+    fi
+
+    current_port="$(get_qbt_listen_port 2>/dev/null || printf '')"
+
+    if [ "$current_port" != "$pf" ]; then
+        log "Applying forwarded port ${pf} (current: ${current_port:-unset})"
+        if set_qbt_listen_port "$pf"; then
+            log "Updated qBittorrent listen_port to ${pf}"
+            last_reported="$pf"
+        else
+            log "warn: failed to set qBittorrent listen_port to ${pf}"
+        fi
+    elif [ "$last_reported" != "$pf" ]; then
+        log "qBittorrent already listening on forwarded port ${pf}"
+        last_reported="$pf"
+    fi
+
+    sleep "$UPDATE_INTERVAL"
+done
 SCRIPT
 
   chmod 755 "$ARR_STACK_DIR/scripts/port-sync.sh"
@@ -1442,43 +1419,43 @@ validate_images() {
 
     msg "  Checking $image..."
 
-    if ! docker_retry docker manifest inspect "$image"; then
-      if ! docker_retry docker pull "$image"; then
-        local base_image="$image"
-        local tag=""
-        if [[ "$image" == *:* ]]; then
-          base_image="${image%:*}"
-          tag="${image##*:}"
-        fi
+    # Just try to pull - simpler and more reliable
+    if docker pull "$image" >/dev/null 2>&1; then
+      msg "  ✅ Valid: $image"
+      continue
+    fi
 
-        if [[ "$tag" != "latest" && "$base_image" == lscr.io/linuxserver/* ]]; then
-          warn "    Version $tag not found, trying :latest..."
-          local latest_image="${base_image}:latest"
+    # If failed, try fallback for LinuxServer images only
+    local base_image="$image"
+    local tag=""
+    if [[ "$image" == *:* ]]; then
+      base_image="${image%:*}"
+      tag="${image##*:}"
+    fi
 
-          if docker_retry docker pull "$latest_image"; then
-            msg "    ✅ Using fallback: $latest_image"
+    if [[ "$tag" != "latest" && "$base_image" == lscr.io/linuxserver/* ]]; then
+      local latest_image="${base_image}:latest"
+      msg "    Trying fallback: $latest_image"
 
-            case "$base_image" in
-              *qbittorrent) update_env_image_var QBITTORRENT_IMAGE "$latest_image" ;;
-              *sonarr) update_env_image_var SONARR_IMAGE "$latest_image" ;;
-              *radarr) update_env_image_var RADARR_IMAGE "$latest_image" ;;
-              *prowlarr) update_env_image_var PROWLARR_IMAGE "$latest_image" ;;
-              *bazarr) update_env_image_var BAZARR_IMAGE "$latest_image" ;;
-            esac
-            continue
-          else
-            warn "  ❌ Failed to validate: $image (and :latest fallback)"
-            failed_images+=("$image")
-          fi
-        else
-          warn "  ❌ Failed to validate: $image"
-          failed_images+=("$image")
-        fi
+      if docker pull "$latest_image" >/dev/null 2>&1; then
+        msg "    ✅ Using fallback: $latest_image"
+
+        case "$base_image" in
+          *qbittorrent) update_env_image_var QBITTORRENT_IMAGE "$latest_image" ;;
+          *sonarr) update_env_image_var SONARR_IMAGE "$latest_image" ;;
+          *radarr) update_env_image_var RADARR_IMAGE "$latest_image" ;;
+          *prowlarr) update_env_image_var PROWLARR_IMAGE "$latest_image" ;;
+          *bazarr) update_env_image_var BAZARR_IMAGE "$latest_image" ;;
+        esac
+
+        continue
       else
-        msg "  ✅ Pulled: $image"
+        warn "  ⚠️ Could not validate: $image"
+        failed_images+=("$image")
       fi
     else
-      msg "  ✅ Valid: $image"
+      warn "  ⚠️ Could not validate: $image"
+      failed_images+=("$image")
     fi
   done
 
@@ -1527,7 +1504,7 @@ sync_qbt_password_from_logs() {
   local detected=""
 
   while (( attempts < 60 )); do
-    detected="$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}')"
+    detected="$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}' || true)"
     if [[ -n "$detected" ]]; then
       QBT_PASS="$detected"
       persist_env_var QBT_PASS "$QBT_PASS"
@@ -1553,18 +1530,38 @@ start_stack() {
   msg "Starting Gluetun..."
   "${DOCKER_COMPOSE_CMD[@]}" up -d gluetun
 
-  sleep 2
-  local gluetun_status
-  gluetun_status="$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
-  if [[ "$gluetun_status" != "running" && "$gluetun_status" != "restarting" && "$gluetun_status" != "starting" && "$gluetun_status" != "created" ]]; then
-    warn "Gluetun container failed to start (status: $gluetun_status)"
-    warn "Check logs with: docker logs gluetun"
-    warn "Common issues: invalid ProtonVPN credentials or network conflicts"
-    die "Cannot continue without a running VPN container"
+  local gluetun_control_port="${GLUETUN_CONTROL_PORT:-8000}"
+  local gluetun_control_url="http://localhost:${gluetun_control_port}/v1/openvpn/portforwarded"
+  local -a gluetun_curl=(curl -fsS --max-time 5)
+  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+    gluetun_curl+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
   fi
 
-  if ! wait_for_healthy "gluetun" 300; then
-    warn "Gluetun health check failed but continuing..."
+  msg "Waiting for Gluetun to be usable (up to 180s)..."
+  local gluetun_usable=0
+  local gluetun_deadline=$((SECONDS + 180))
+
+  while (( SECONDS < gluetun_deadline )); do
+    if wait_for_healthy "gluetun" 10 true; then
+      gluetun_usable=1
+      break
+    fi
+
+    if "${gluetun_curl[@]}" "$gluetun_control_url" >/dev/null 2>&1; then
+      msg "  Gluetun control server is responding"
+      gluetun_usable=1
+      break
+    fi
+
+    if (( SECONDS >= gluetun_deadline )); then
+      break
+    fi
+
+    sleep 10
+  done
+
+  if (( gluetun_usable == 0 )); then
+    warn "Gluetun not confirmed usable within 180s; continuing best-effort bring-up."
   fi
 
   local ip
@@ -1583,8 +1580,8 @@ start_stack() {
 
   if [[ "$pf_port" == "0" ]]; then
     warn "================================================"
-    warn "Port forwarding is not active yet. Services will still start."
-    warn "Monitor 'docker logs gluetun' and 'docker logs port-sync' for updates"
+    warn "Port forwarding is not active yet."
+    warn "This is normal - it can take a few minutes."
     warn "================================================"
   else
     msg "✅ Port forwarding active: Port $pf_port"
@@ -1595,15 +1592,64 @@ start_stack() {
   sync_qbt_password_from_logs
 
   msg "Starting supporting services..."
-  for service in sonarr radarr prowlarr bazarr flaresolverr vuetorrent-monthly-update; do
+  for service in sonarr radarr prowlarr bazarr flaresolverr; do
     compose_up_service "$service"
   done
+
+  local -a critical_services=(qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  local -a pending_services=("${critical_services[@]}")
+  local fallback_deadline=$((SECONDS + 90))
+  local fallback_interval=5
+
+  while (( ${#pending_services[@]} > 0 )) && (( SECONDS < fallback_deadline )); do
+    local -a still_pending=()
+    local svc
+    for svc in "${pending_services[@]}"; do
+      local status
+      status="$(docker inspect "$svc" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")"
+      if [[ "$status" != "running" ]]; then
+        still_pending+=("$svc")
+      fi
+    done
+
+    if (( ${#still_pending[@]} == 0 )); then
+      pending_services=()
+      break
+    fi
+
+    pending_services=("${still_pending[@]}")
+    sleep "$fallback_interval"
+  done
+
+  if (( ${#pending_services[@]} > 0 )); then
+    warn "Bypassing Gluetun health gating for: ${pending_services[*]}"
+    warn "Gluetun may still be initialising; forcing services to start without dependency checks."
+    for svc in "${pending_services[@]}"; do
+      warn "  Forcing start of $svc (--no-deps)"
+      local fallback_output=""
+      if fallback_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d "$svc" --no-deps 2>&1)"; then
+        if [[ -n "$fallback_output" ]]; then
+          while IFS= read -r line; do
+            printf '    %s\n' "$line"
+          done <<<"$fallback_output"
+        fi
+      else
+        warn "  Failed to start $svc with --no-deps"
+        if [[ -n "$fallback_output" ]]; then
+          while IFS= read -r line; do
+            printf '    %s\n' "$line"
+          done <<<"$fallback_output"
+        fi
+      fi
+      sleep 2
+    done
+  fi
 
   msg "Starting port-sync..."
   compose_up_service port-sync
 
-  msg "Waiting for services to initialize..."
-  sleep 20
+  msg "Services started - they may take a minute to be fully ready"
+  sleep 10
 
   msg "Service status summary:"
   for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
@@ -1902,4 +1948,6 @@ main() {
   show_summary
 }
 
-main "$@"
+if [[ "${ARRSTACK_NO_MAIN:-0}" != "1" ]]; then
+  main "$@"
+fi
