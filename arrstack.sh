@@ -30,8 +30,8 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${QBITTORRENT_IMAGE:=lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
 : "${SONARR_IMAGE:=lscr.io/linuxserver/sonarr:4.0.15.2941-ls291}"
 : "${RADARR_IMAGE:=lscr.io/linuxserver/radarr:5.27.5.10198-ls283}"
-: "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:1.28.2-ls207}"
-: "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:1.5.1-ls288}"
+: "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
+: "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
 : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
 
 DOCKER_COMPOSE_CMD=()
@@ -522,6 +522,71 @@ done
 SCRIPT
 
   chmod +x "$ARR_STACK_DIR/scripts/port-sync.sh"
+
+  msg "🆘 Writing version recovery script"
+
+  cat >"$ARR_STACK_DIR/scripts/fix-versions.sh" <<'FIXVER'
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
+warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
+die() { warn "$1"; exit 1; }
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${STACK_DIR}/.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  die ".env file not found at $ENV_FILE"
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  die "Docker CLI not found on PATH"
+fi
+
+msg "🔧 Fixing Docker image versions..."
+
+USE_LATEST=(
+  "lscr.io/linuxserver/prowlarr"
+  "lscr.io/linuxserver/bazarr"
+)
+
+backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+cp "$ENV_FILE" "$backup"
+msg "Backed up .env to $backup"
+
+for base_image in "${USE_LATEST[@]}"; do
+  msg "Checking $base_image..."
+
+  case "$base_image" in
+    *prowlarr) var_name="PROWLARR_IMAGE" ;;
+    *bazarr) var_name="BAZARR_IMAGE" ;;
+    *) continue ;;
+  esac
+
+  current_image=$(grep "^${var_name}=" "$ENV_FILE" | cut -d= -f2- || true)
+
+  if [[ -z "$current_image" ]]; then
+    warn "  No ${var_name} entry found in .env; skipping"
+    continue
+  fi
+
+  if ! docker manifest inspect "$current_image" >/dev/null 2>&1; then
+    warn "  Current tag doesn't exist: $current_image"
+    latest_image="${base_image}:latest"
+    msg "  Updating to: $latest_image"
+    sed -i "s|^${var_name}=.*|${var_name}=${latest_image}|" "$ENV_FILE"
+  else
+    msg "  ✅ Current tag is valid: $current_image"
+  fi
+done
+
+msg "✅ Version fixes complete"
+msg "Run './arrstack.sh --yes' to apply changes"
+FIXVER
+
+  chmod +x "$ARR_STACK_DIR/scripts/fix-versions.sh"
 }
 
 write_qbt_config() {
@@ -560,12 +625,101 @@ cleanup_existing() {
   rm -f "$ARR_DOCKER_DIR/gluetun/forwarded_port" "$ARR_DOCKER_DIR/gluetun/forwarded_port.json" 2>/dev/null || true
 }
 
+update_env_image_var() {
+  local var_name="$1"
+  local new_value="$2"
+
+  if [[ -z "$var_name" || -z "$new_value" ]]; then
+    return
+  fi
+
+  printf -v "$var_name" '%s' "$new_value"
+
+  if [[ -f "$ARR_ENV_FILE" ]] && grep -q "^${var_name}=" "$ARR_ENV_FILE"; then
+    sed -i "s|^${var_name}=.*|${var_name}=${new_value}|" "$ARR_ENV_FILE"
+  fi
+}
+
+validate_images() {
+  msg "🔍 Validating Docker images..."
+
+  local image_vars=(
+    GLUETUN_IMAGE
+    QBITTORRENT_IMAGE
+    SONARR_IMAGE
+    RADARR_IMAGE
+    PROWLARR_IMAGE
+    BAZARR_IMAGE
+    FLARESOLVERR_IMAGE
+  )
+
+  local failed_images=()
+
+  for var_name in "${image_vars[@]}"; do
+    local image="${!var_name:-}"
+    [[ -z "$image" ]] && continue
+
+    msg "  Checking $image..."
+
+    if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+      if ! docker pull "$image" >/dev/null 2>&1; then
+        local base_image="$image"
+        local tag=""
+        if [[ "$image" == *:* ]]; then
+          base_image="${image%:*}"
+          tag="${image##*:}"
+        fi
+
+        if [[ "$tag" != "latest" && "$base_image" == lscr.io/linuxserver/* ]]; then
+          warn "    Version $tag not found, trying :latest..."
+          local latest_image="${base_image}:latest"
+
+          if docker pull "$latest_image" >/dev/null 2>&1; then
+            msg "    ✅ Using fallback: $latest_image"
+
+            case "$base_image" in
+              *qbittorrent) update_env_image_var QBITTORRENT_IMAGE "$latest_image" ;;
+              *sonarr) update_env_image_var SONARR_IMAGE "$latest_image" ;;
+              *radarr) update_env_image_var RADARR_IMAGE "$latest_image" ;;
+              *prowlarr) update_env_image_var PROWLARR_IMAGE "$latest_image" ;;
+              *bazarr) update_env_image_var BAZARR_IMAGE "$latest_image" ;;
+            esac
+            continue
+          else
+            warn "  ❌ Failed to validate: $image (and :latest fallback)"
+            failed_images+=("$image")
+          fi
+        else
+          warn "  ❌ Failed to validate: $image"
+          failed_images+=("$image")
+        fi
+      else
+        msg "  ✅ Pulled: $image"
+      fi
+    else
+      msg "  ✅ Valid: $image"
+    fi
+  done
+
+  if ((${#failed_images[@]} > 0)); then
+    warn "================================================"
+    warn "Some images could not be validated:"
+    for img in "${failed_images[@]}"; do
+      warn "  - $img"
+    done
+    warn "Check the image names and tags in .env or arrconf/userconf.sh"
+    warn "================================================"
+  fi
+}
+
 start_stack() {
   msg "🚀 Starting services"
 
   cd "$ARR_STACK_DIR" || die "Failed to change to $ARR_STACK_DIR"
 
   cleanup_existing
+
+  validate_images
 
   msg "Starting Gluetun..."
   "${DOCKER_COMPOSE_CMD[@]}" up -d gluetun
