@@ -172,9 +172,24 @@ obfuscate_sensitive() {
   local value="${1-}"
   if [[ -z "$value" ]]; then
     printf '(not set)'
-  else
-    printf 'ob......ed'
+    return
   fi
+
+  local length=${#value}
+
+  if (( length <= 4 )); then
+    printf '%*s' "$length" '' | tr ' ' '*'
+    return
+  fi
+
+  local visible=2
+  local prefix="${value:0:visible}"
+  local suffix="${value: -visible}"
+  local hidden_len=$((length - visible * 2))
+  local mask
+  mask=$(printf '%*s' "$hidden_len" '' | tr ' ' '*')
+
+  printf '%s%s%s' "$prefix" "$mask" "$suffix"
 }
 
 show_configuration_preview() {
