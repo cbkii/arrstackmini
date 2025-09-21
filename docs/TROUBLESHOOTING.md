@@ -51,14 +51,18 @@ If the API key query fails, regenerate credentials with:
 
 ### Port forwarding not updating
 ```bash
-# Check Gluetun forwarded port
+# Check Gluetun forwarded port (integer response on recent releases)
 curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
-  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq
+  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/forwardedport"
 
-# Review port-sync logs
+# Fallback for older Gluetun versions that return JSON
+curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
+  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq '.port'
+
+# Review port-sync logs inside the shared Gluetun namespace
 docker logs port-sync --tail 50
 ```
-If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials.
+If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials or enable "Bypass authentication for clients on localhost" in the WebUI.
 
 ### Services exposed on all interfaces
 If the summary warns that `LAN_IP=0.0.0.0`, set a specific address:
@@ -90,7 +94,7 @@ docker logs qbittorrent 2>&1 | grep "temporary password" | tail -1
 
 1. **"Unauthorized" error**:
    - You need the temporary password from logs
-   - URL must be `http://YOUR_IP:8081/` (external port)
+   - URL must be `http://YOUR_IP:8080/`
 
 2. **Enable passwordless LAN access**:
    ```bash
@@ -103,8 +107,7 @@ docker logs qbittorrent 2>&1 | grep "temporary password" | tail -1
    ```
 
 ### Important Notes
-- Port 8081 is the external port (use this in your browser)
-- Port 8080 is the internal port (inside the container)
+- Port 8080 is exposed on Gluetun for qBittorrent's WebUI
 - Temporary passwords change with each restart
 - Always set a permanent password after first login and update `.env`
 
@@ -119,7 +122,7 @@ docker compose ps
 
 ```bash
 # Port currently used by qBittorrent
-curl -fsS "http://localhost:${QBT_HTTP_PORT_HOST:-8081}/api/v2/app/preferences" | jq '.listen_port'
+curl -fsS "http://localhost:${QBT_HTTP_PORT_HOST:-8080}/api/v2/app/preferences" | jq '.listen_port'
 ```
 
 ## Resetting everything

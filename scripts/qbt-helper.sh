@@ -66,7 +66,7 @@ webui_host() {
 }
 
 webui_port() {
-  printf '%s' "${QBT_HTTP_PORT_HOST:-8081}"
+  printf '%s' "${QBT_HTTP_PORT_HOST:-8080}"
 }
 
 config_file_path() {
