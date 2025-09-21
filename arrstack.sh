@@ -31,6 +31,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PROWLARR_PORT:=9696}"
 : "${BAZARR_PORT:=6767}"
 : "${FLARESOLVERR_PORT:=8191}"
+: "${SUBS_DIR:=}"
 
 : "${QBT_USER:=admin}"
 : "${QBT_PASS:=adminadmin}"
@@ -46,6 +47,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
 
 DOCKER_COMPOSE_CMD=()
+ARRSTACK_LOCKFILE=""
 
 help() {
   cat <<'USAGE'
@@ -136,7 +138,7 @@ acquire_lock() {
   local lockfile="${lock_dir}/.arrstack.lock"
 
   while ! ( set -C; printf '%s' "$$" >"$lockfile" ) 2>/dev/null; do
-    if [ $elapsed -ge $timeout ]; then
+    if [ "$elapsed" -ge "$timeout" ]; then
       die "Could not acquire lock after ${timeout}s. Another instance may be running."
     fi
     sleep 1
@@ -145,7 +147,8 @@ acquire_lock() {
 
   chmod "$LOCK_FILE_MODE" "$lockfile" 2>/dev/null || true
 
-  trap "rm -f -- '$lockfile'" EXIT INT TERM
+  ARRSTACK_LOCKFILE="$lockfile"
+  trap 'rm -f -- "$ARRSTACK_LOCKFILE"' EXIT INT TERM
 }
 
 portable_sed() {
@@ -169,7 +172,7 @@ portable_sed() {
 
     if ! mv -f "$tmp" "$file" 2>/dev/null; then
       rm -f "$tmp"
-      die "Failed to update $file"
+      die "Failed to update ${file}"
     fi
 
     if [ -n "$perms" ]; then
@@ -177,7 +180,7 @@ portable_sed() {
     fi
   else
     rm -f "$tmp"
-    die "sed operation failed on $file"
+    die "sed operation failed on ${file}"
   fi
 }
 
@@ -282,16 +285,15 @@ validate_proton_creds() {
 
 validate_config() {
   if [ -n "${LAN_IP:-}" ] && [ "${LAN_IP}" != "0.0.0.0" ]; then
-    validate_ipv4 "$LAN_IP" || die "Invalid LAN_IP: $LAN_IP"
+    validate_ipv4 "$LAN_IP" || die "Invalid LAN_IP: ${LAN_IP}"
   fi
-
-  validate_port "$GLUETUN_CONTROL_PORT" || die "Invalid GLUETUN_CONTROL_PORT: $GLUETUN_CONTROL_PORT"
-  validate_port "$QBT_HTTP_PORT_HOST" || die "Invalid QBT_HTTP_PORT_HOST: $QBT_HTTP_PORT_HOST"
-  validate_port "$SONARR_PORT" || die "Invalid SONARR_PORT: $SONARR_PORT"
-  validate_port "$RADARR_PORT" || die "Invalid RADARR_PORT: $RADARR_PORT"
-  validate_port "$PROWLARR_PORT" || die "Invalid PROWLARR_PORT: $PROWLARR_PORT"
-  validate_port "$BAZARR_PORT" || die "Invalid BAZARR_PORT: $BAZARR_PORT"
-  validate_port "$FLARESOLVERR_PORT" || die "Invalid FLARESOLVERR_PORT: $FLARESOLVERR_PORT"
+  validate_port "$GLUETUN_CONTROL_PORT" || die "Invalid GLUETUN_CONTROL_PORT: ${GLUETUN_CONTROL_PORT}"
+  validate_port "$QBT_HTTP_PORT_HOST" || die "Invalid QBT_HTTP_PORT_HOST: ${QBT_HTTP_PORT_HOST}"
+  validate_port "$SONARR_PORT" || die "Invalid SONARR_PORT: ${SONARR_PORT}"
+  validate_port "$RADARR_PORT" || die "Invalid RADARR_PORT: ${RADARR_PORT}"
+  validate_port "$PROWLARR_PORT" || die "Invalid PROWLARR_PORT: ${PROWLARR_PORT}"
+  validate_port "$BAZARR_PORT" || die "Invalid BAZARR_PORT: ${BAZARR_PORT}"
+  validate_port "$FLARESOLVERR_PORT" || die "Invalid FLARESOLVERR_PORT: ${FLARESOLVERR_PORT}"
 
   validate_proton_creds "$PU" "$PW" || die "Invalid ProtonVPN credentials format"
 }
@@ -431,7 +433,13 @@ install_missing() {
   fi
 
   msg "  Docker: $(docker version --format '{{.Server.Version}}')"
-  msg "  Compose: ${compose_cmd} $(${DOCKER_COMPOSE_CMD[@]} version --short 2>/dev/null)"
+  local compose_version_display=""
+  if ((${#DOCKER_COMPOSE_CMD[@]} > 0)); then
+    if ! compose_version_display="$("${DOCKER_COMPOSE_CMD[@]}" version --short 2>/dev/null)"; then
+      compose_version_display="(unknown)"
+    fi
+  fi
+  msg "  Compose: ${compose_cmd} ${compose_version_display}"
 }
 
 ensure_dir() {
@@ -615,6 +623,7 @@ Paths
   • Completed downloads: ${COMPLETED_DIR}
   • TV library: ${TV_DIR}
   • Movies library: ${MOVIES_DIR}
+$( [[ -n "${SUBS_DIR:-}" ]] && printf '  • Subtitles directory: %s\n' "${SUBS_DIR}" )
 
 Network & system
   • Timezone: ${TIMEZONE}
@@ -676,9 +685,16 @@ preflight() {
   show_configuration_preview
 
   if [[ "$ASSUME_YES" != 1 ]]; then
+    local response=""
+
     printf 'Continue with ProtonVPN OpenVPN setup? [y/N]: '
-    read -r a
-    [[ "$a" =~ ^[Yy]$ ]] || die "Aborted"
+    if ! IFS= read -r response; then
+      response=""
+    fi
+
+    if ! [[ ${response,,} =~ ^[[:space:]]*(y|yes)[[:space:]]*$ ]]; then
+      die "Aborted"
+    fi
   fi
 }
 
@@ -719,6 +735,12 @@ mkdirs() {
     warn "Movies directory does not exist: $MOVIES_DIR"
     warn "Creating it now (may fail if parent directory is missing)"
     mkdir -p "$MOVIES_DIR" 2>/dev/null || warn "Could not create Movies directory"
+  fi
+
+  if [[ -n "${SUBS_DIR:-}" && ! -d "$SUBS_DIR" ]]; then
+    warn "Subtitles directory does not exist: ${SUBS_DIR}"
+    warn "Creating it now (may fail if parent directory is missing)"
+    mkdir -p "$SUBS_DIR" 2>/dev/null || warn "Could not create subtitles directory"
   fi
 }
 
@@ -801,6 +823,7 @@ DOWNLOADS_DIR=${DOWNLOADS_DIR}
 COMPLETED_DIR=${COMPLETED_DIR}
 TV_DIR=${TV_DIR}
 MOVIES_DIR=${MOVIES_DIR}
+__SUBS_DIR_LINE__
 
 # Images
 GLUETUN_IMAGE=${GLUETUN_IMAGE}
@@ -812,6 +835,12 @@ BAZARR_IMAGE=${BAZARR_IMAGE}
 FLARESOLVERR_IMAGE=${FLARESOLVERR_IMAGE}
 ENV
 )"
+
+  local subs_env_line=""
+  if [[ -n "${SUBS_DIR:-}" ]]; then
+    printf -v subs_env_line 'SUBS_DIR=%s\n' "$SUBS_DIR"
+  fi
+  env_content="${env_content/__SUBS_DIR_LINE__/${subs_env_line}}"
 
   atomic_write "$ARR_ENV_FILE" "$env_content" 600
 
@@ -962,6 +991,7 @@ services:
       - ${ARR_DOCKER_DIR}/bazarr:/config
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
+__BAZARR_OPTIONAL_SUBS__
     depends_on:
       gluetun:
         condition: service_healthy
@@ -1000,6 +1030,12 @@ services:
     restart: unless-stopped
 YAML
 )"
+
+  local bazarr_subs_volume=""
+  if [[ -n "${SUBS_DIR:-}" ]]; then
+    printf -v bazarr_subs_volume $'      - ${SUBS_DIR}:/subs\n'
+  fi
+  compose_content="${compose_content/__BAZARR_OPTIONAL_SUBS__/${bazarr_subs_volume}}"
 
   atomic_write "$compose_path" "$compose_content" "$NONSECRET_FILE_MODE"
 }
@@ -1253,12 +1289,12 @@ update_env_entry() {
     mv "$tmp" "$ENV_FILE"
   else
     rm -f "$tmp"
-    die "Failed to update ${key} in $ENV_FILE"
+    die "Failed to update ${key} in ${ENV_FILE}"
   fi
 }
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  die ".env file not found at $ENV_FILE"
+  die ".env file not found at ${ENV_FILE}"
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -1645,7 +1681,7 @@ show_service_status() {
 start_stack() {
   msg "🚀 Starting services"
 
-  cd "$ARR_STACK_DIR" || die "Failed to change to $ARR_STACK_DIR"
+  cd "$ARR_STACK_DIR" || die "Failed to change to ${ARR_STACK_DIR}"
 
   safe_cleanup
 
