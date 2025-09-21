@@ -41,7 +41,7 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - 64-bit Debian Bookworm host with at least 4 CPU cores, 4 GB RAM, and fast storage for downloads.
 - Example device: Raspberry Pi 5 (8 GB) running Debian Bookworm (64-bit) has been validated end-to-end.
 - Docker Engine and Compose v2. The installer will `apt-get install docker.io docker-compose-plugin` if they are missing.
-- Command-line dependencies available on the host: `curl`, `jq`, `openssl`, and `python3`. Install them on Debian with `sudo apt-get install curl jq openssl python3`.
+- Command-line dependencies available on the host: `curl`, `jq`, and `openssl`. Install them on Debian with `sudo apt-get install curl jq openssl`.
 - ProtonVPN Plus or Unlimited subscription for port forwarding support.
 - Proton VPN OpenVPN credentials stored in `arrconf/proton.auth` (`PROTON_USER`, `PROTON_PASS`).
 
@@ -69,7 +69,7 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
    - Use `--yes` to skip the interactive confirmation prompt.
    - Run `./arrstack.sh --help` for available flags such as `--rotate-api-key`.
 
-   The script checks for Docker, Compose, curl, jq, openssl, and Python 3, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings where safe fallbacks exist (e.g. unknown LAN IP, default credentials) so first-time installs should always complete.
+    The script checks for Docker, Compose, curl, jq, and openssl, builds the directory structure under `${ARR_STACK_DIR}`, generates a Gluetun API key, writes `.env`, waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings where safe fallbacks exist (e.g. unknown LAN IP, default credentials) so first-time installs should always complete.
 
 ## Important notes
 
@@ -77,12 +77,12 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - 🆘 **Recovery helper** – `${ARR_STACK_DIR}/scripts/fix-versions.sh` repairs `.env` if an old LinuxServer tag is removed. It creates a timestamped backup and replaces missing images with the safe fallback before rerunning the installer.
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
-- ⚠️🔐 **Credentials** – qBittorrent starts with `admin/adminadmin` so the port sync helper can authenticate. Change this immediately after the first login and mirror the values in `.env`.
+- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. Port-sync will use those credentials when available but otherwise relies on the localhost/LAN auth bypass. Log in with the recorded value, update it in the WebUI, then mirror the new password in `.env` for continued convenience.
 
 ### First-time checklist
 After `./arrstack.sh --yes` finishes:
 
-1. **Change the qBittorrent password.** Settings → WebUI. Update `QBT_USER`/`QBT_PASS` in `.env` afterwards.
+1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
 2. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
 3. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
 4. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
