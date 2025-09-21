@@ -51,14 +51,18 @@ If the API key query fails, regenerate credentials with:
 
 ### Port forwarding not updating
 ```bash
-# Check Gluetun forwarded port
+# Check Gluetun forwarded port (integer response on recent releases)
 curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
-  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq
+  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/forwardedport"
 
-# Review port-sync logs
+# Fallback for older Gluetun versions that return JSON
+curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
+  "http://localhost:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq '.port'
+
+# Review port-sync logs inside the shared Gluetun namespace
 docker logs port-sync --tail 50
 ```
-If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials.
+If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials or enable "Bypass authentication for clients on localhost" in the WebUI.
 
 ### Services exposed on all interfaces
 If the summary warns that `LAN_IP=0.0.0.0`, set a specific address:

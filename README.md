@@ -111,7 +111,7 @@ All secrets and config directories are created with restrictive permissions (`06
 `arrstack.sh` writes `.env` during installation with values sourced from your overrides. You can edit `.env` or `arrconf/userconf.sh` and rerun the installer to regenerate settings. Key variables include:
 
 - `LAN_IP` – bind services to a specific RFC1918 address (auto-detected when empty).
-- `SERVER_COUNTRIES` – comma-separated Proton country list handed to Gluetun (defaults to `Netherlands,Switzerland` so ProtonVPN stays on port-forwardable regions).
+- `SERVER_COUNTRIES` – comma-separated Proton country list handed to Gluetun (defaults to `Switzerland,Iceland,Romania,Czech Republic,Netherlands` so ProtonVPN stays on port-forwardable regions).
 - `LOCALHOST_IP`, `GLUETUN_CONTROL_PORT` – host exposure for the Gluetun control API.
 - `QBT_HTTP_PORT_HOST`, `SONARR_PORT`, etc. – LAN-facing ports; mirrored into firewall allow-lists.
 
@@ -159,7 +159,11 @@ curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
   "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/publicip/ip"
 
 curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
-  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded"
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/forwardedport"
+
+# Fallback for older Gluetun releases that expose JSON only:
+curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
+  "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq '.port'
 ```
 
 ### Firewall and namespace

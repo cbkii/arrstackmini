@@ -138,6 +138,38 @@ persist_env_var() {
   fi
 }
 
+fetch_forwarded_port() {
+  local port_response port
+
+  if port_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/forwardedport" 2>/dev/null); then
+    port=$(printf '%s' "$port_response" | tr -d '[:space:]')
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "$port"
+      return 0
+    fi
+  fi
+
+  if port_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
+    port=$(printf '%s' "$port_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "$port"
+      return 0
+    fi
+  fi
+
+  if [[ -f /tmp/gluetun/forwarded_port ]]; then
+    port=$(tr -d '[:space:]' </tmp/gluetun/forwarded_port 2>/dev/null || echo "0")
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "$port"
+      return 0
+    fi
+  fi
+
+  echo "0"
+}
+
 preflight() {
   msg "🚀 Preflight checks"
 
@@ -428,6 +460,7 @@ services:
       UPDATE_INTERVAL: 300
       QBT_USER: ${QBT_USER}
       QBT_PASS: ${QBT_PASS}
+      VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
     volumes:
       - ./scripts/port-sync.sh:/port-sync.sh:ro
     command: /port-sync.sh
@@ -449,103 +482,145 @@ write_port_sync_script() {
 #!/bin/sh
 set -e
 
-# Install required packages
-apk add --no-cache curl jq >/dev/null 2>&1 || true
+log() {
+    printf '[%s] [port-sync] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" >&2
+}
+
+ensure_curl() {
+    if ! command -v curl >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache curl >/dev/null 2>&1 || log 'warn: unable to install curl via apk'
+        else
+            log 'warn: curl is required but not available'
+        fi
+    fi
+}
 
 GLUETUN_ADDR="${GLUETUN_ADDR:-http://localhost:8000}"
+GLUETUN_API_KEY="${GLUETUN_API_KEY:-}"
 QBITTORRENT_ADDR="${QBITTORRENT_ADDR:-http://localhost:8080}"
 UPDATE_INTERVAL="${UPDATE_INTERVAL:-300}"
 QBT_USER="${QBT_USER:-}"
 QBT_PASS="${QBT_PASS:-}"
-NO_PORT_RETRIES=0
-MAX_NO_PORT_RETRIES=10
+STATUS_FILE="${VPN_PORT_FORWARDING_STATUS_FILE:-}"
+COOKIE_JAR="/tmp/qbt.cookies"
 
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [PORT-SYNC] $1"
-}
+ensure_curl
 
-get_gluetun_port() {
-    local port_json
-    port_json=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-        "${GLUETUN_ADDR}/v1/openvpn/portforwarded" || echo '{}')
-    echo "$port_json" | sed -n 's/.*"port":\s*\([0-9]\+\).*/\1/p'
-}
-
-restart_gluetun_if_needed() {
-    log "No port after $NO_PORT_RETRIES attempts, restarting Gluetun..."
-    if command -v docker >/dev/null 2>&1; then
-        docker restart gluetun >/dev/null 2>&1 || log "Unable to restart Gluetun automatically"
+api_get() {
+    local path="$1"
+    if [ -n "$GLUETUN_API_KEY" ]; then
+        curl -fsSL -H "X-Api-Key: ${GLUETUN_API_KEY}" "${GLUETUN_ADDR}${path}" 2>/dev/null || true
     else
-        log "Docker CLI unavailable in port-sync container; please restart Gluetun manually"
+        curl -fsSL "${GLUETUN_ADDR}${path}" 2>/dev/null || true
     fi
-    sleep 60
-    NO_PORT_RETRIES=0
 }
 
-set_preferences_payload() {
-    local port="$1"
-    printf 'json={"listen_port":%s,"upnp":false}' "$port"
+login_qbt() {
+    if [ -n "$QBT_USER" ] && [ -n "$QBT_PASS" ]; then
+        if curl -fsSL -c "$COOKIE_JAR" \
+            --data-urlencode "username=${QBT_USER}" \
+            --data-urlencode "password=${QBT_PASS}" \
+            "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
+            return 0
+        fi
+        rm -f "$COOKIE_JAR"
+        log 'warn: failed to authenticate with qBittorrent, relying on localhost bypass'
+    fi
 }
 
-update_qbittorrent_port() {
-    local port="$1"
-    local payload
-    payload=$(set_preferences_payload "$port")
+get_pf_port() {
+    local response port
 
-    # Try without authentication first (allowed when localhost auth bypass is enabled)
-    if curl -fsS \
-        "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" \
-        -d "$payload" >/dev/null 2>&1; then
+    response="$(api_get '/v1/openvpn/portforwarded')"
+    if [ -n "$response" ]; then
+        port=$(printf '%s' "$response" | sed -n 's/.*"port":\([0-9]\+\).*/\1/p')
+        if [ -n "$port" ]; then
+            printf '%s' "$port"
+            return 0
+        fi
+    fi
+
+    port="$(api_get '/v1/forwardedport' | tr -d '[:space:]')"
+    if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
+        printf '%s' "$port"
         return 0
     fi
 
-    # Fallback to cookie-based auth if credentials are available
-    if [ -n "$QBT_USER" ] && [ -n "$QBT_PASS" ]; then
-        local cookie_file="/tmp/.qbt_cookies.$$"
-        if curl -fsS -c "$cookie_file" \
-            "${QBITTORRENT_ADDR}/api/v2/auth/login" \
-            -d "username=${QBT_USER}&password=${QBT_PASS}" >/dev/null 2>&1; then
-            if curl -fsS -b "$cookie_file" \
-                "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" \
-                -d "$payload" >/dev/null 2>&1; then
-                rm -f "$cookie_file"
-                return 0
-            fi
+    response="$(api_get '/v1/portforwarded' | tr -d '[:space:]')"
+    if [ "$response" = 'true' ] && [ -n "$STATUS_FILE" ] && [ -f "$STATUS_FILE" ]; then
+        port=$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || true)
+        if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
+            printf '%s' "$port"
+            return 0
         fi
-        rm -f "$cookie_file"
     fi
 
-    log "Warning: Failed to update qBittorrent port via API"
-    log "         Verify WebUI credentials and permissions"
+    if [ -n "$STATUS_FILE" ] && [ -f "$STATUS_FILE" ]; then
+        port=$(tr -d '[:space:]' <"$STATUS_FILE" 2>/dev/null || true)
+        if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
+            printf '%s' "$port"
+            return 0
+        fi
+    fi
+
     return 1
 }
 
-log "Waiting for services to start..."
-sleep 30
+get_qbt_listen_port() {
+    local response
+    if [ -f "$COOKIE_JAR" ]; then
+        response=$(curl -fsSL -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)
+    else
+        response=$(curl -fsSL "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)
+    fi
+    [ -z "$response" ] && return 1
+    printf '%s' "$response" | tr -d ' \n\r' | sed -n 's/.*"listen_port":\([0-9]\+\).*/\1/p'
+}
 
-while true; do
-    port=$(get_gluetun_port)
+set_qbt_listen_port() {
+    local port="$1" payload
+    payload="json={\"listen_port\":${port},\"random_port\":false}"
+    if [ -f "$COOKIE_JAR" ]; then
+        curl -fsSL -b "$COOKIE_JAR" --data "$payload" \
+            "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1
+    else
+        curl -fsSL --data "$payload" \
+            "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1
+    fi
+}
 
-    if [ -n "$port" ] && [ "$port" != "0" ]; then
-        log "Forwarded port: $port"
-        if update_qbittorrent_port "$port"; then
-            log "Successfully updated qBittorrent port to $port"
-            NO_PORT_RETRIES=0
-        else
-            log "Failed to update qBittorrent port"
+cleanup() {
+    rm -f "$COOKIE_JAR"
+}
+
+trap cleanup EXIT HUP INT TERM
+
+log "starting port-sync against ${GLUETUN_ADDR} -> ${QBITTORRENT_ADDR}"
+login_qbt || true
+
+last_reported=""
+
+while :; do
+    if pf_port=$(get_pf_port); then
+        if [ -n "$pf_port" ]; then
+            current_port=$(get_qbt_listen_port || true)
+            if [ "$current_port" != "$pf_port" ]; then
+                log "applying forwarded port ${pf_port} (current: ${current_port:-unset})"
+                if set_qbt_listen_port "$pf_port"; then
+                    log "updated qBittorrent listen_port to ${pf_port}"
+                    last_reported="$pf_port"
+                else
+                    log "warn: failed to set qBittorrent listen_port to ${pf_port}"
+                fi
+            elif [ "$last_reported" != "$pf_port" ]; then
+                log "qBittorrent already listening on forwarded port ${pf_port}"
+                last_reported="$pf_port"
+            fi
         fi
     else
-        NO_PORT_RETRIES=$((NO_PORT_RETRIES + 1))
-        log "No forwarded port available (attempt ${NO_PORT_RETRIES}/${MAX_NO_PORT_RETRIES})"
-
-        if [ "$NO_PORT_RETRIES" -ge "$MAX_NO_PORT_RETRIES" ]; then
-            restart_gluetun_if_needed
-        elif [ "$NO_PORT_RETRIES" -eq 5 ]; then
-            log "Hint: Port forwarding may require a different ProtonVPN server"
-            log "      Consider changing SERVER_COUNTRIES in .env"
-        fi
+        log 'forwarded port not reported yet'
     fi
-
     sleep "$UPDATE_INTERVAL"
 done
 SCRIPT
@@ -838,18 +913,13 @@ start_stack() {
   fi
 
   msg "Checking port forwarding status..."
-  local pf_port_response pf_port
-  if pf_port_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
-    pf_port=$(printf '%s' "$pf_port_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
-  else
-    pf_port="0"
-  fi
+  local pf_port
+  pf_port=$(fetch_forwarded_port)
 
   if [[ "$pf_port" == "0" ]]; then
     warn "================================================"
     warn "Port forwarding is not active yet. Services will still start."
-    warn "If torrenting fails, try restarting Gluetun or adjusting SERVER_COUNTRIES"
+    warn "Monitor 'docker logs gluetun' and 'docker logs port-sync' for updates"
     warn "================================================"
   else
     msg "✅ Port forwarding active: Port $pf_port"
@@ -914,6 +984,38 @@ set -euo pipefail
 msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 
+fetch_forwarded_port() {
+  local response port
+
+  if response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/forwardedport" 2>/dev/null); then
+    port=$(printf '%s' "$response" | tr -d '[:space:]')
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "$port"
+      return 0
+    fi
+  fi
+
+  if response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
+    "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
+    port=$(printf '%s' "$response" | jq -r '.port // 0' 2>/dev/null || echo "0")
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "$port"
+      return 0
+    fi
+  fi
+
+  if [[ -f /tmp/gluetun/forwarded_port ]]; then
+    port=$(tr -d '[:space:]' </tmp/gluetun/forwarded_port 2>/dev/null || echo "0")
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+      echo "$port"
+      return 0
+    fi
+  fi
+
+  echo "0"
+}
+
 ARR_STACK_DIR="__ARR_STACK_DIR__"
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
 
@@ -955,11 +1057,7 @@ else
 fi
 
 msg "Checking port forwarding..."
-PF_PORT="0"
-if pf_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-  "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
-  PF_PORT=$(printf '%s' "$pf_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
-fi
+PF_PORT=$(fetch_forwarded_port)
 
 if [[ "$PF_PORT" != "0" ]]; then
   msg "✅ Port forwarding active: Port $PF_PORT"
@@ -968,16 +1066,12 @@ else
   warn "Attempting fix: Restarting Gluetun..."
   if docker restart gluetun >/dev/null 2>&1; then
     sleep 60
-    if pf_response=$(curl -fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" \
-      "http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/portforwarded" 2>/dev/null); then
-      PF_PORT=$(printf '%s' "$pf_response" | jq -r '.port // 0' 2>/dev/null || echo "0")
-    fi
+    PF_PORT=$(fetch_forwarded_port)
     if [[ "$PF_PORT" != "0" ]]; then
       msg "✅ Port forwarding recovered: Port $PF_PORT"
     else
       warn "Port forwarding still not working"
-      warn "Try changing SERVER_COUNTRIES in .env to: Romania,Czech Republic,Iceland"
-      warn "Then rerun ./arrstack.sh --yes"
+      warn "Review 'docker logs gluetun' and 'docker logs port-sync' for details"
     fi
   else
     warn "Docker restart command failed; restart Gluetun manually."
