@@ -15,8 +15,6 @@ if [[ -z "${ARR_DOCKER_DIR}" && -d "${HOME}/srv/docker-data" ]]; then
 fi
 
 ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
-ARR_LOG_DIR="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
-ARR_INSTALL_LOG="${ARR_INSTALL_LOG:-${ARR_LOG_DIR}/arrstack-install.log}"
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
@@ -50,6 +48,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 
 DOCKER_COMPOSE_CMD=()
 ARRSTACK_LOCKFILE=""
+LOG_FILE=""
 
 help() {
   cat <<'USAGE'
@@ -62,340 +61,225 @@ Options:
 USAGE
 }
 
-msg() {
-  printf '%s\n' "$*"
-}
-
-warn() {
-  printf 'WARN: %s\n' "$*" >&2
-}
-
-die() {
-  warn "$1"
-  exit 1
-}
-
 have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
-setup_install_logging() {
-  local log_dir="${ARR_LOG_DIR:-}"
-  local log_file="${ARR_INSTALL_LOG:-}"
-  local timestamp=""
-  local archive=""
-  local suffix=0
-  local truncate_log=1
+init_logging() {
+  local log_dir="${ARR_STACK_DIR}/logs"
+  mkdir -p "$log_dir"
 
-  if [[ -z "$log_dir" || -z "$log_file" ]]; then
+  LOG_FILE="${log_dir}/arrstack-$(date +%Y%m%d-%H%M%S).log"
+  ln -sf "$LOG_FILE" "${log_dir}/latest.log"
+
+  exec > >(tee -a "$LOG_FILE")
+  exec 2>&1
+
+  msg "Installation started at $(date)"
+  msg "Log file: $LOG_FILE"
+}
+
+msg() {
+  printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
+}
+
+warn() {
+  printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" >&2
+}
+
+die() {
+  printf '[%s] ERROR: %s\n' "$(date '+%H:%M:%S')" "$*" >&2
+  exit 1
+}
+
+check_network_requirements() {
+  msg "🔍 Checking network requirements"
+
+  local needs_fix=0
+  local nc_output=""
+  local nc_status=0
+
+  if have_command nc; then
+    if nc_output="$(nc -u -w1 -z 10.16.0.1 5351 2>&1)"; then
+      nc_status=0
+    else
+      nc_status=$?
+    fi
+
+    if grep -qi "unreachable" <<<"$nc_output"; then
+      needs_fix=1
+      warn "UDP/5351 to 10.16.0.1 appears unreachable; ProtonVPN port forwarding may fail."
+    elif ((nc_status != 0)); then
+      needs_fix=1
+      warn "UDP/5351 probe exited with status ${nc_status}; ProtonVPN port forwarding may fail."
+    fi
+  else
+    warn "nc not installed; skipping UDP/5351 probe"
+  fi
+
+  if ((needs_fix)); then
+    cat <<'FIREWALL_INFO'
+
+⚠️  ProtonVPN Port Forwarding Requirements
+==========================================
+Port forwarding requires UDP port 5351 outbound to 10.16.0.1.
+
+Manual remediation steps (requires sudo privileges):
+
+1. Inspect Docker's iptables rules:
+   sudo iptables -L DOCKER-USER -n | grep 5351 || echo "Rule missing in DOCKER-USER"
+   sudo iptables -L OUTPUT -n | grep 5351      || echo "Rule missing in OUTPUT"
+   sudo iptables -L FORWARD -n | grep 5351     || echo "Rule missing in FORWARD"
+
+2. Allow outbound UDP 5351 when rules are missing:
+   sudo iptables -I DOCKER-USER 1 -p udp --dport 5351 -j ACCEPT
+   sudo iptables -I OUTPUT -p udp --dport 5351 -j ACCEPT
+   sudo iptables -I FORWARD -p udp --dport 5351 -j ACCEPT
+
+3. Persist the rules on Debian/Ubuntu (installs packages if absent):
+   sudo apt-get install -y iptables-persistent netfilter-persistent
+   sudo netfilter-persistent save
+
+The installer can attempt these steps automatically when sudo is available.
+See: https://github.com/qdm12/gluetun/wiki/ProtonVPN#port-forwarding
+==========================================
+
+FIREWALL_INFO
+
+    if have_command sudo; then
+      local proceed=0
+
+      if [[ "$ASSUME_YES" == 1 ]]; then
+        if sudo -n true >/dev/null 2>&1; then
+          proceed=1
+        else
+          warn "Skipping automated sudo remediation because passwordless sudo is unavailable (ASSUME_YES=1)."
+        fi
+      else
+        printf 'Attempt automated firewall remediation with sudo? [y/N]: '
+        local response=""
+        if IFS= read -r response && [[ ${response,,} =~ ^[[:space:]]*(y|yes)[[:space:]]*$ ]]; then
+          proceed=1
+        fi
+      fi
+
+      if ((proceed)); then
+        if ! setup_network_requirements; then
+          warn "Automated firewall remediation failed; follow the manual steps above."
+        fi
+      else
+        msg "  Skipping automated firewall remediation; follow the manual steps above if needed."
+      fi
+    else
+      warn "sudo not available; follow the manual steps above to adjust iptables manually."
+    fi
+  fi
+
+  msg "  Network check complete ✓"
+}
+
+setup_network_requirements() {
+  msg "🛠️ Applying UDP/5351 firewall configuration via sudo"
+
+  if ! have_command sudo; then
+    warn "sudo command not found; cannot adjust iptables automatically"
+    return 1
+  fi
+
+  if ! have_command iptables; then
+    warn "iptables command not found; cannot adjust firewall rules"
+    return 1
+  fi
+
+  local ok=true
+  local -a sudo_cmd=(sudo)
+  local -a chains=(OUTPUT FORWARD)
+
+  if "${sudo_cmd[@]}" iptables -L DOCKER-USER -n >/dev/null 2>&1; then
+    chains+=(DOCKER-USER)
+  else
+    warn "  DOCKER-USER chain not found; Docker may not have created it yet"
+  fi
+
+  local chain=""
+  for chain in "${chains[@]}"; do
+    if "${sudo_cmd[@]}" iptables -C "$chain" -p udp --dport 5351 -j ACCEPT >/dev/null 2>&1; then
+      msg "  Rule already present in $chain"
+      continue
+    fi
+
+    if "${sudo_cmd[@]}" iptables -I "$chain" 1 -p udp --dport 5351 -j ACCEPT >/dev/null 2>&1; then
+      msg "  Added UDP/5351 rule to $chain"
+    else
+      warn "  Failed to add UDP/5351 rule to $chain"
+      ok=false
+    fi
+  done
+
+  local -a missing_packages=()
+  if have_command dpkg-query; then
+    local pkg=""
+    for pkg in iptables-persistent netfilter-persistent; do
+      if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then
+        missing_packages+=("$pkg")
+      fi
+    done
+  else
+    warn "  dpkg-query not available; skipping persistence package detection"
+  fi
+
+  if ((${#missing_packages[@]} > 0)); then
+    if have_command apt-get; then
+      msg "  Installing persistence packages: ${missing_packages[*]}"
+      if ! "${sudo_cmd[@]}" apt-get update; then
+        warn "  apt-get update failed; skipping package installation"
+        ok=false
+      elif ! "${sudo_cmd[@]}" DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_packages[@]}"; then
+        warn "  Failed to install: ${missing_packages[*]}"
+        ok=false
+      fi
+    else
+      warn "  apt-get not available; cannot install persistence packages automatically"
+      ok=false
+    fi
+  else
+    msg "  Persistence packages already installed"
+  fi
+
+  if have_command netfilter-persistent; then
+    if "${sudo_cmd[@]}" netfilter-persistent save; then
+      msg "  Saved iptables rules via netfilter-persistent"
+    else
+      warn "  netfilter-persistent save failed"
+      ok=false
+    fi
+  else
+    warn "  netfilter-persistent command not available; skipping save"
+  fi
+
+  if have_command nc; then
+    local verify_output=""
+    local verify_status=0
+    if verify_output="$(nc -u -w1 -z 10.16.0.1 5351 2>&1)"; then
+      verify_status=0
+    else
+      verify_status=$?
+    fi
+
+    if grep -qi "unreachable" <<<"$verify_output" || ((verify_status != 0)); then
+      warn "  UDP/5351 probe still failing; manual inspection required"
+      ok=false
+    else
+      msg "  UDP/5351 probe succeeded after remediation"
+    fi
+  fi
+
+  if [[ "$ok" == true ]]; then
+    msg "  Firewall remediation complete"
     return 0
   fi
 
-  if ! mkdir -p "$log_dir" 2>/dev/null; then
-    warn "logging: unable to create log directory at ${log_dir}"
-    return 1
-  fi
-
-  if [[ -e "$log_file" ]]; then
-    truncate_log=0
-    if timestamp="$(date +%Y%m%d-%H%M%S 2>/dev/null)"; then
-      archive="${log_dir}/arrstack-install-${timestamp}.log"
-      while [[ -e "$archive" ]]; do
-        suffix=$((suffix + 1))
-        archive="${log_dir}/arrstack-install-${timestamp}-${suffix}.log"
-      done
-      if mv "$log_file" "$archive" 2>/dev/null; then
-        chmod "$NONSECRET_FILE_MODE" "$archive" 2>/dev/null || true
-        truncate_log=1
-      else
-        warn "logging: unable to archive previous install log at ${log_file}"
-      fi
-    else
-      warn "logging: unable to determine archive timestamp"
-    fi
-  fi
-
-  if ((truncate_log)); then
-    if ! : >"$log_file" 2>/dev/null; then
-      warn "logging: unable to write to ${log_file}"
-      return 1
-    fi
-  else
-    if ! : >>"$log_file" 2>/dev/null; then
-      warn "logging: unable to append to ${log_file}"
-      return 1
-    fi
-  fi
-
-  chmod "$NONSECRET_FILE_MODE" "$log_file" 2>/dev/null || true
-
-  if have_command tee; then
-    exec > >(tee -a "$log_file")
-    exec 2>&1
-  else
-    warn "logging: tee not available; installation output redirected to ${log_file}"
-    exec >>"$log_file"
-    exec 2>&1
-  fi
-
-  msg "Installation log: ${log_file}"
-  return 0
-}
-
-iptables_chain_exists() {
-  have_command iptables && iptables -w 3 -nL "$1" >/dev/null 2>&1
-}
-
-iptables_chain_summary() {
-  local chain="$1"
-  local output header policy count
-
-  if ! have_command iptables; then
-    return 1
-  fi
-
-  if ! output="$(iptables -w 3 -L "$chain" --line-numbers 2>/dev/null)"; then
-    printf '%s: unavailable' "$chain"
-    return 1
-  fi
-
-  header="$(printf '%s\n' "$output" | head -n1)"
-  policy="$(printf '%s\n' "$header" | sed -n 's/.*(policy[[:space:]]\([^)]*\)).*/\1/p')"
-  policy="${policy:-unknown}"
-  policy="${policy#policy }"
-  count="$(printf '%s\n' "$output" | awk 'NR>2 && NF {count++} END {print count+0}')"
-
-  printf '%s: policy %s (%s rules)' "$chain" "$policy" "$count"
-  return 0
-}
-
-ensure_udp5351_rule() {
-  local chain="$1"
-
-  if ! have_command iptables; then
-    return 1
-  fi
-
-  if ! iptables -w 3 -C "$chain" -p udp --dport 5351 -j ACCEPT >/dev/null 2>&1; then
-    if ! iptables -w 3 -I "$chain" 1 -p udp --dport 5351 -j ACCEPT >/dev/null 2>&1; then
-      warn "WARNING: could not update iptables—continuing."
-      return 1
-    fi
-  fi
-
-  return 0
-}
-
-ensure_netfilter_persistence() {
-  local packages=(iptables-persistent netfilter-persistent)
-  local missing=()
-  local pkg
-
-  for pkg in "${packages[@]}"; do
-    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then
-      missing+=("$pkg")
-    fi
-  done
-
-  if ((${#missing[@]} > 0)); then
-    if have_command apt-get; then
-      msg "  Installing persistence packages: ${missing[*]}"
-      if ! DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1; then
-        warn "persistence: apt-get update failed; skipping package installation"
-        missing=()
-      elif ! DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}" >/dev/null 2>&1; then
-        warn "persistence: unable to install ${missing[*]}; continuing without persistence"
-      fi
-    else
-      warn "persistence: apt-get not available; skipping package installation"
-    fi
-  fi
-
-  mkdir -p /etc/iptables 2>/dev/null || true
-
-  if have_command iptables-save; then
-    if ! iptables-save >/etc/iptables/rules.v4 2>/dev/null; then
-      warn "persistence: failed to write /etc/iptables/rules.v4"
-    fi
-  else
-    warn "persistence: iptables-save not available"
-  fi
-
-  if have_command ip6tables-save; then
-    if ! ip6tables-save >/etc/iptables/rules.v6 2>/dev/null; then
-      warn "persistence: failed to write /etc/iptables/rules.v6"
-    fi
-  else
-    warn "persistence: ip6tables-save not available"
-  fi
-
-  if have_command systemctl; then
-    local service_ok=true
-    if ! systemctl enable netfilter-persistent >/dev/null 2>&1; then
-      warn "persistence: failed to enable netfilter-persistent"
-      service_ok=false
-    fi
-    if ! systemctl restart netfilter-persistent >/dev/null 2>&1; then
-      warn "persistence: failed to restart netfilter-persistent"
-      service_ok=false
-    fi
-    if systemctl is-active netfilter-persistent >/dev/null 2>&1; then
-      msg "persistence: netfilter-persistent active"
-    elif [[ "$service_ok" == true ]]; then
-      warn "persistence: netfilter-persistent inactive (check service status)"
-    else
-      warn "persistence: netfilter-persistent not active"
-    fi
-  else
-    warn "persistence: systemctl not available; ensure rules load on boot manually"
-  fi
-
-  return 0
-}
-
-test_udp_5351() {
-  local target="${VPN_NATPMP_GATEWAY:-10.16.0.1}"
-  local packet_seen="SKIPPED"
-  local send_status="SKIPPED"
-  local have_nc=0
-  local have_tcpdump=0
-
-  if have_command nc; then
-    have_nc=1
-  else
-    warn "  udp/5351 probe skipped: nc not installed"
-  fi
-
-  if have_command tcpdump; then
-    have_tcpdump=1
-  else
-    warn "  udp/5351 capture skipped: tcpdump not installed"
-  fi
-
-  if ((have_tcpdump)) && ! have_command timeout; then
-    warn "  udp/5351 capture skipped: timeout not available"
-    have_tcpdump=0
-  fi
-
-  if ((have_nc && have_tcpdump)); then
-    local iface=""
-    if have_command ip; then
-      iface="$(ip route get "$target" 2>/dev/null | awk '/ dev / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
-      if [[ -z "$iface" ]]; then
-        iface="$(ip route get 1.1.1.1 2>/dev/null | awk '/ dev / {for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
-      fi
-    fi
-
-    if [[ -z "$iface" ]]; then
-      warn "  udp/5351 capture skipped: unable to determine egress interface"
-      have_tcpdump=0
-    else
-      local capture_file
-      capture_file="$(mktemp /tmp/udp5351.tcpdump.XXXXXX 2>/dev/null || printf '/tmp/udp5351.tcpdump')"
-      timeout 5 tcpdump -n -i "$iface" udp and port 5351 >"$capture_file" 2>&1 &
-      local tcpdump_pid=$!
-      sleep 1
-      if echo ping | nc -u -w2 "$target" 5351 >/dev/null 2>&1; then
-        send_status="PASS"
-      else
-        send_status="FAIL"
-      fi
-      wait "$tcpdump_pid" 2>/dev/null || true
-      if grep -qi 'udp' "$capture_file"; then
-        packet_seen="YES"
-      else
-        packet_seen="NO"
-      fi
-      rm -f "$capture_file" 2>/dev/null || true
-    fi
-  fi
-
-  if [[ "$send_status" == "SKIPPED" ]] && ((have_nc)); then
-    if echo ping | nc -u -w2 "$target" 5351 >/dev/null 2>&1; then
-      send_status="PASS"
-    else
-      send_status="FAIL"
-    fi
-  fi
-
-  if [[ "$packet_seen" == "SKIPPED" ]]; then
-    if [[ "$send_status" == "PASS" ]]; then
-      packet_seen="SKIPPED"
-    elif [[ "$send_status" == "FAIL" ]]; then
-      packet_seen="NO"
-    fi
-  fi
-
-  if [[ "$send_status" == "PASS" ]]; then
-    msg "  nc udp probe: PASS (no response expected)"
-  elif [[ "$send_status" == "FAIL" ]]; then
-    warn "  nc udp probe: FAIL (send error)"
-  else
-    msg "  nc udp probe: SKIPPED"
-  fi
-
-  if [[ "$packet_seen" == "YES" ]]; then
-    msg "  tcpdump capture: PASS (packet observed)"
-  elif [[ "$packet_seen" == "NO" ]]; then
-    warn "  tcpdump capture: FAIL (no packet observed)"
-  else
-    msg "  tcpdump capture: SKIPPED"
-  fi
-
-  msg "udp/5351 test: sent probe; packet seen on wire: ${packet_seen}"
-}
-
-ensure_udp_5351_firewall() {
-  msg "🛡️ Ensuring UDP/5351 egress"
-
-  if ! have_command iptables; then
-    warn "iptables command not found; skipping firewall adjustments"
-    test_udp_5351
-    return
-  fi
-
-  local chain
-  for chain in OUTPUT FORWARD DOCKER-USER; do
-    if iptables_chain_exists "$chain"; then
-      msg "  $(iptables_chain_summary "$chain")"
-    else
-      if [[ "$chain" == "DOCKER-USER" ]]; then
-        warn "DOCKER-USER chain not found; Docker may not have created it yet"
-      else
-        warn "${chain} chain not found"
-      fi
-    fi
-  done
-
-  local -a ensured=()
-
-  if ensure_udp5351_rule OUTPUT; then
-    ensured+=(OUTPUT)
-  fi
-
-  if ensure_udp5351_rule FORWARD; then
-    ensured+=(FORWARD)
-  fi
-
-  if iptables_chain_exists DOCKER-USER; then
-    if ensure_udp5351_rule DOCKER-USER; then
-      ensured+=(DOCKER-USER)
-    fi
-  fi
-
-  if ((${#ensured[@]} > 0)); then
-    local ensured_text
-    ensured_text="$(
-      IFS=', '
-      printf '%s' "${ensured[*]}"
-    )"
-    msg "iptables: ensured outbound UDP/5351 allowed in ${ensured_text}"
-  else
-    msg "iptables: ensured outbound UDP/5351 allowed in none"
-  fi
-
-  ensure_netfilter_persistence
-  test_udp_5351
+  return 1
 }
 
 ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
@@ -1123,11 +1007,12 @@ TIMEZONE=${TIMEZONE}
 LAN_IP=${LAN_IP}
 LOCALHOST_IP=${LOCALHOST_IP}
 
-# ProtonVPN credentials
+# ProtonVPN OpenVPN credentials
 OPENVPN_USER=${PU}
-OPENVPN_PASS=${PW}
+OPENVPN_PASSWORD=${PW}
 
 # Gluetun settings
+VPN_SERVICE_PROVIDER=protonvpn
 GLUETUN_API_KEY=${GLUETUN_API_KEY}
 GLUETUN_CONTROL_PORT=${GLUETUN_CONTROL_PORT}
 SERVER_COUNTRIES=${SERVER_COUNTRIES}
@@ -1191,10 +1076,10 @@ services:
     devices:
       - /dev/net/tun
     environment:
-      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_SERVICE_PROVIDER: ${VPN_SERVICE_PROVIDER}
       VPN_TYPE: openvpn
       OPENVPN_USER: ${OPENVPN_USER}
-      OPENVPN_PASSWORD: ${OPENVPN_PASS}
+      OPENVPN_PASSWORD: ${OPENVPN_PASSWORD}
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
       VPN_PORT_FORWARDING: "on"
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
@@ -1256,6 +1141,12 @@ services:
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/app/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
     logging:
       driver: json-file
@@ -1389,9 +1280,12 @@ __BAZARR_OPTIONAL_SUBS__
       - ./scripts/port-sync.sh:/port-sync.sh:ro
     command: /port-sync.sh
     depends_on:
-      - gluetun
-      - qbittorrent
+      gluetun:
+        condition: service_healthy
+      qbittorrent:
+        condition: service_started
     restart: unless-stopped
+    init: true
     logging:
       driver: json-file
       options:
@@ -1449,6 +1343,29 @@ ensure_curl() {
     fi
 }
 
+wait_for_gluetun() {
+    local attempts=0
+    local max_attempts=30
+
+    log "Waiting for Gluetun API to be ready..."
+
+    while [ $attempts -lt $max_attempts ]; do
+        if curl -fsS --max-time 2 "${GLUETUN_ADDR}/health" >/dev/null 2>&1; then
+            log "Gluetun API is ready"
+            return 0
+        fi
+
+        attempts=$((attempts + 1))
+        if [ $((attempts % 10)) -eq 0 ]; then
+            log "Still waiting for Gluetun API (attempt $attempts/$max_attempts)"
+        fi
+        sleep 2
+    done
+
+    log "ERROR: Gluetun API not available after ${max_attempts} attempts"
+    return 1
+}
+
 : "${GLUETUN_ADDR:=http://localhost:8000}"
 : "${GLUETUN_API_KEY:=}"
 : "${QBITTORRENT_ADDR:=http://localhost:8080}"
@@ -1471,11 +1388,19 @@ ensure_curl
 
 api_get() {
     local path="$1"
+    local url="${GLUETUN_ADDR}${path}"
 
     if [ -n "$GLUETUN_API_KEY" ]; then
-        curl -fsS --max-time 5 -H "X-Api-Key: $GLUETUN_API_KEY" "${GLUETUN_ADDR}${path}" 2>/dev/null || return 1
+        if ! curl -fsS --max-time 5 -H "X-Api-Key: $GLUETUN_API_KEY" "$url"; then
+            log "ERROR: API call failed to $url (with API key)"
+            return 1
+        fi
     else
-        curl -fsS --max-time 5 "${GLUETUN_ADDR}${path}" 2>/dev/null || return 1
+        log "WARNING: No API key provided, trying without authentication"
+        if ! curl -fsS --max-time 5 "$url"; then
+            log "ERROR: API call failed to $url (without API key)"
+            return 1
+        fi
     fi
 }
 
@@ -1502,7 +1427,8 @@ get_pf() {
 
     response="$(api_get '/v1/openvpn/portforwarded' || true)"
     if [ -n "$response" ]; then
-        port="$(printf '%s\n' "$response" | awk -F'\"port\":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}')"
+        port="$(printf '%s
+' "$response" | awk -F'"port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}')"
         if printf '%s' "$port" | grep -Eq '^[0-9]+$'; then
             printf '%s' "$port"
             return 0
@@ -1517,10 +1443,7 @@ login_qbt() {
         return 0
     fi
 
-    if curl -fsS --max-time 5 -c "$COOKIE_JAR" \
-        --data-urlencode "username=${QBT_USER}" \
-        --data-urlencode "password=${QBT_PASS}" \
-        "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 -c "$COOKIE_JAR"         --data-urlencode "username=${QBT_USER}"         --data-urlencode "password=${QBT_PASS}"         "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
         return 0
     fi
 
@@ -1550,21 +1473,21 @@ get_qbt_listen_port() {
         return 1
     fi
 
-    printf '%s\n' "$response" | tr -d ' \n\r' | awk -F'\"listen_port\":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
+    printf '%s
+' "$response" | tr -d ' 
+' | awk -F'"listen_port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
     return 0
 }
 
 set_qbt_listen_port() {
     local port="$1"
-    local payload="json={\"listen_port\":${port},\"random_port\":false}"
+    local payload="json={"listen_port":${port},"random_port":false}"
 
-    if curl -fsS --max-time 5 -b "$COOKIE_JAR" \
-        --data-raw "$payload" "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 -b "$COOKIE_JAR"         --data-raw "$payload" "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
         return 0
     fi
 
-    if curl -fsS --max-time 5 \
-        --data-raw "$payload" "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5         --data-raw "$payload" "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
         return 0
     fi
 
@@ -1577,6 +1500,12 @@ cleanup() {
 }
 
 trap 'cleanup' EXIT INT TERM
+
+# Wait for Gluetun to be ready
+if ! wait_for_gluetun; then
+    log "FATAL: Cannot proceed without Gluetun API"
+    exit 1
+fi
 
 log "starting port-sync against ${GLUETUN_ADDR} -> ${QBITTORRENT_ADDR}"
 ensure_qbt_session || true
@@ -1598,42 +1527,26 @@ while :; do
             sleep "$extended_backoff"
             consecutive_failures=0
             backoff=30
-            continue
-        fi
-
-        log "Port forward not available (attempt $consecutive_failures)"
-        sleep "$backoff"
-        if [ "$backoff" -lt "$BACKOFF_MAX" ]; then
+        else
+            sleep "$backoff"
             backoff=$((backoff * 2))
-            if [ "$backoff" -gt "$BACKOFF_MAX" ]; then
+            if [ $backoff -gt "$BACKOFF_MAX" ]; then
                 backoff="$BACKOFF_MAX"
             fi
         fi
+
         continue
     fi
 
     consecutive_failures=0
-    backoff="$UPDATE_INTERVAL"
-
-    if ! ensure_qbt_session; then
-        log 'warn: unable to authenticate with qBittorrent; retrying'
-        sleep "$UPDATE_INTERVAL"
-        continue
-    fi
-
-    current_port="$(get_qbt_listen_port 2>/dev/null || printf '')"
-
-    if [ "$current_port" != "$pf" ]; then
-        log "Applying forwarded port ${pf} (current: ${current_port:-unset})"
+    if [ "$pf" != "$last_reported" ]; then
+        log "Updating qBittorrent listen port to $pf"
         if set_qbt_listen_port "$pf"; then
-            log "Updated qBittorrent listen_port to ${pf}"
             last_reported="$pf"
+            backoff=30
         else
-            log "warn: failed to set qBittorrent listen_port to ${pf}"
+            log "warn: failed to update qBittorrent port"
         fi
-    elif [ "$last_reported" != "$pf" ]; then
-        log "qBittorrent already listening on forwarded port ${pf}"
-        last_reported="$pf"
     fi
 
     sleep "$UPDATE_INTERVAL"
@@ -2054,23 +1967,30 @@ sync_qbt_password_from_logs() {
 }
 
 wait_for_vpn_connection() {
-  local max_wait="${1:-180}"
+  local max_wait="${1:-60}"
   local elapsed=0
-  local check_interval=5
+  local check_interval=2
   local host="${LOCALHOST_IP:-localhost}"
-  local api_url
+  local vpn_status_url
+  local public_ip_url
 
   if [[ $host == *:* && $host != [* ]]; then
-    api_url="http://[$host]:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
+    vpn_status_url="http://[$host]:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
+    public_ip_url="http://[$host]:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"
   else
-    api_url="http://${host}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
+    vpn_status_url="http://${host}:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
+    public_ip_url="http://${host}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"
   fi
 
+  msg "Waiting for VPN connection (max ${max_wait}s)..."
+
   while ((elapsed < max_wait)); do
-    if [[ "$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "")" != "running" ]]; then
-      sleep "$check_interval"
-      elapsed=$((elapsed + check_interval))
-      continue
+    local health
+    health="$(docker inspect gluetun --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
+
+    if [[ "$health" == "healthy" ]]; then
+      msg "  ✅ Gluetun is healthy"
+      return 0
     fi
 
     local -a curl_cmd=(curl -fsS --max-time 5)
@@ -2078,23 +1998,21 @@ wait_for_vpn_connection() {
       curl_cmd+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
     fi
 
-    if "${curl_cmd[@]}" "$api_url" >/dev/null 2>&1; then
+    if "${curl_cmd[@]}" "$vpn_status_url" >/dev/null 2>&1; then
+      msg "  ✅ VPN API responding"
       local ip=""
-      ip="$(fetch_public_ip 2>/dev/null || true)"
+      ip="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
       if [[ -n "$ip" ]]; then
-        msg "✅ VPN connected! Public IP: $ip"
-        return 0
+        msg "  🌐 Public IP: $ip"
       fi
-    fi
-
-    if ((elapsed > 0 && elapsed % 20 == 0)); then
-      msg "  Still waiting... (${elapsed}s elapsed)"
+      return 0
     fi
 
     sleep "$check_interval"
     elapsed=$((elapsed + check_interval))
   done
 
+  warn "VPN connection timeout after ${max_wait}s"
   return 1
 }
 
@@ -2517,10 +2435,6 @@ SUMMARY
 }
 
 main() {
-  if ! setup_install_logging; then
-    warn "logging: continuing without persistent install log"
-  fi
-
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --yes)
@@ -2541,8 +2455,12 @@ main() {
     esac
   done
 
+  # Initialize logging first
+  init_logging
+
   preflight
-  ensure_udp_5351_firewall
+  # Check network requirements without blocking
+  check_network_requirements
   mkdirs
   safe_cleanup
   generate_api_key
@@ -2558,6 +2476,8 @@ main() {
   verify_permissions
   install_aliases
   start_stack
+  
+  msg "Installation completed at $(date)"
   show_summary
 }
 

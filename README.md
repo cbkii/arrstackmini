@@ -136,6 +136,8 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `TIMEZONE` | `Australia/Sydney` | Align container logs and cron tasks with your local timezone. |
 | `LAN_IP` | Auto-detected (falls back to `0.0.0.0`) | Bind services to a specific RFC1918 address instead of all interfaces. |
 | `LOCALHOST_IP` | `127.0.0.1` | Change where the Gluetun control API binds on the host (advanced). |
+| `VPN_SERVICE_PROVIDER` | `protonvpn` | Keep Gluetun pinned to ProtonVPN. Change only when migrating to a different supported provider. |
+| `VPN_TYPE` | `openvpn` | Force Gluetun to use Proton's OpenVPN stack (required for port forwarding). |
 | `SERVER_COUNTRIES` | `Switzerland,Iceland,Romania,Czech Republic,Netherlands` | Limit ProtonVPN exits to countries that support port forwarding or suit your latency. |
 | `GLUETUN_CONTROL_PORT` | `8000` | Adjust the host port for the Gluetun control API when 8000 is taken. |
 
