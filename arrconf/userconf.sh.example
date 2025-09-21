@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Beginner-friendly overrides. Copy to arrconf/userconf.sh and edit as needed.
+# Copy to arrconf/userconf.sh and edit as needed, overrides defaults.
 
 # --- Stack paths ---
 ARR_BASE="${HOME}/srv"                 # Root directory for generated stack files
