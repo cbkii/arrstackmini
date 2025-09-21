@@ -138,6 +138,7 @@ persist_env_var() {
   fi
 }
 
+
 GLUETUN_LIB="${REPO_ROOT}/scripts/lib/gluetun.sh"
 if [[ -f "$GLUETUN_LIB" ]]; then
   # shellcheck source=scripts/lib/gluetun.sh
@@ -695,9 +696,7 @@ write_qbt_config() {
   msg "🧩 Writing qBittorrent config"
   local config_dir="${ARR_DOCKER_DIR}/qbittorrent/qBittorrent"
   local conf_file="${config_dir}/qBittorrent.conf"
-
   ensure_dir "$config_dir"
-
   local auth_whitelist="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
   if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" ]]; then
     local subnet_base
