@@ -1166,6 +1166,11 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   qbittorrent:
     image: ${QBITTORRENT_IMAGE}
@@ -1184,6 +1189,11 @@ services:
       gluetun:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   sonarr:
     image: ${SONARR_IMAGE}
@@ -1203,6 +1213,11 @@ services:
       gluetun:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   radarr:
     image: ${RADARR_IMAGE}
@@ -1222,6 +1237,11 @@ services:
       gluetun:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   prowlarr:
     image: ${PROWLARR_IMAGE}
@@ -1238,6 +1258,11 @@ services:
       gluetun:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   bazarr:
     image: ${BAZARR_IMAGE}
@@ -1257,6 +1282,11 @@ __BAZARR_OPTIONAL_SUBS__
       gluetun:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   flaresolverr:
     image: ${FLARESOLVERR_IMAGE}
@@ -1268,6 +1298,11 @@ __BAZARR_OPTIONAL_SUBS__
       gluetun:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
 
   port-sync:
     image: alpine:3.20.3
@@ -1289,6 +1324,12 @@ __BAZARR_OPTIONAL_SUBS__
       - gluetun
       - qbittorrent
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"
+
 YAML
   )"
 
