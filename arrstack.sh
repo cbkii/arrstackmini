@@ -939,9 +939,24 @@ write_qbt_helper_script() {
 
 write_qbt_config() {
   msg "🧩 Writing qBittorrent config"
-  local config_dir="${ARR_DOCKER_DIR}/qbittorrent/qBittorrent"
+  local config_dir="${ARR_DOCKER_DIR}/qbittorrent"
+  local runtime_dir="${config_dir}/qBittorrent"
   local conf_file="${config_dir}/qBittorrent.conf"
+  local legacy_conf="${runtime_dir}/qBittorrent.conf"
+
   ensure_dir "$config_dir"
+  ensure_dir "$runtime_dir"
+
+  if [[ -f "$legacy_conf" && ! -f "$conf_file" ]]; then
+    msg "  Migrating legacy config from ${legacy_conf}"
+    mv "$legacy_conf" "$conf_file"
+    chmod 600 "$conf_file"
+  fi
+
+  if [[ -f "$legacy_conf" ]]; then
+    msg "  Removing unused legacy config at ${legacy_conf}"
+    rm -f "$legacy_conf"
+  fi
   local auth_whitelist
   auth_whitelist="$(calculate_qbt_auth_whitelist)"
   msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
