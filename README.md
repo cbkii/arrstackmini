@@ -120,7 +120,7 @@ The defaults below are published on your LAN IP and configurable via `.env`/`arr
 
 | Service      | LAN URL                                         |
 | ------------ | ----------------------------------------------- |
-| qBittorrent  | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8081}` |
+| qBittorrent  | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8080}` |
 | Sonarr       | `http://${LAN_IP:-0.0.0.0}:${SONARR_PORT:-8989}`        |
 | Radarr       | `http://${LAN_IP:-0.0.0.0}:${RADARR_PORT:-7878}`        |
 | Prowlarr     | `http://${LAN_IP:-0.0.0.0}:${PROWLARR_PORT:-9696}`      |
