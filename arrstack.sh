@@ -29,6 +29,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PROWLARR_PORT:=9696}"
 : "${BAZARR_PORT:=6767}"
 : "${FLARESOLVERR_PORT:=8191}"
+
 : "${QBT_USER:=admin}"
 : "${QBT_PASS:=adminadmin}"
 : "${QBT_DOCKER_MODS:=ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
@@ -274,7 +275,6 @@ show_configuration_preview() {
 
   local qbt_auth_whitelist_preview
   qbt_auth_whitelist_preview="$(calculate_qbt_auth_whitelist)"
-
   local lan_ip_display
   if [[ -n "${LAN_IP:-}" ]]; then
     lan_ip_display="$LAN_IP"
@@ -309,6 +309,7 @@ Credentials & secrets
   • qBittorrent username: ${QBT_USER}
   • qBittorrent password: ${qbt_pass_display}
   • qBittorrent auth whitelist (final): ${qbt_auth_whitelist_preview}
+  • qBittorrent auth whitelist: ${QBT_AUTH_WHITELIST}
 
 Ports
   • Gluetun control: ${GLUETUN_CONTROL_PORT}
