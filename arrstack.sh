@@ -8,6 +8,10 @@ REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ] && . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
 [ -f "${REPO_ROOT}/arrconf/userconf.sh" ] && . "${REPO_ROOT}/arrconf/userconf.sh"
 
+# Ensure arrconf defaults resolve relative to the repository even when the
+# installer is invoked via an absolute path (for example `~/arrstack/arrstack.sh`).
+ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT}/arrconf}"
+
 # Handle case where docker-data is in ~/srv instead of repo
 if [[ -z "${ARR_DOCKER_DIR}" && -d "${HOME}/srv/docker-data" ]]; then
   ARR_DOCKER_DIR="${HOME}/srv/docker-data"
@@ -416,7 +420,7 @@ check_and_fix_mode() {
 }
 
 verify_permissions() {
-  local errors=0
+  local issues=0
 
   msg "🔒 Verifying file permissions"
 
@@ -429,8 +433,10 @@ verify_permissions() {
 
   local file
   for file in "${secret_files[@]}"; do
-    if [[ -f "$file" ]] && check_and_fix_mode "$file" "$SECRET_FILE_MODE" "Insecure permissions"; then
-      ((errors++))
+    if [[ -f "$file" ]]; then
+      if ! check_and_fix_mode "$file" "$SECRET_FILE_MODE" "Insecure permissions"; then
+        ((issues++))
+      fi
     fi
   done
 
@@ -440,8 +446,10 @@ verify_permissions() {
   )
 
   for file in "${nonsecret_files[@]}"; do
-    if [[ -f "$file" ]] && check_and_fix_mode "$file" "$NONSECRET_FILE_MODE" "Unexpected permissions"; then
-      ((errors++))
+    if [[ -f "$file" ]]; then
+      if ! check_and_fix_mode "$file" "$NONSECRET_FILE_MODE" "Unexpected permissions"; then
+        ((issues++))
+      fi
     fi
   done
 
@@ -453,17 +461,21 @@ verify_permissions() {
 
   local dir
   for dir in "${data_dirs[@]}"; do
-    if [[ -d "$dir" ]] && check_and_fix_mode "$dir" "$DATA_DIR_MODE" "Loose permissions"; then
-      ((errors++))
+    if [[ -d "$dir" ]]; then
+      if ! check_and_fix_mode "$dir" "$DATA_DIR_MODE" "Loose permissions"; then
+        ((issues++))
+      fi
     fi
   done
 
-  if [[ -d "$ARRCONF_DIR" ]] && check_and_fix_mode "$ARRCONF_DIR" 700 "Loose permissions"; then
-    ((errors++))
+  if [[ -d "$ARRCONF_DIR" ]]; then
+    if ! check_and_fix_mode "$ARRCONF_DIR" 700 "Loose permissions"; then
+      ((issues++))
+    fi
   fi
 
-  if ((errors > 0)); then
-    warn "Fixed $errors permission issues"
+  if ((issues > 0)); then
+    warn "$issues permission issues detected (corrected where possible)"
   else
     msg "  All permissions verified ✓"
   fi
@@ -1801,8 +1813,17 @@ install_vuetorrent() {
   fi
 
   chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
-  chmod -R 755 "$vuetorrent_dir" 2>/dev/null || true
+  # macOS ships BSD xargs which lacks -r (see POSIX spec); use a shell loop for
+  # portability across GNU/BSD implementations.
+  # Ref: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/xargs.html
+  local -a stale_containers=()
+  while IFS= read -r container_id; do
+    stale_containers+=("$container_id")
+  done < <(docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" 2>/dev/null)
 
+  if ((${#stale_containers[@]} > 0)); then
+    docker rm -f "${stale_containers[@]}" >/dev/null 2>&1 || true
+  fi
   msg "  ✅ VueTorrent installed successfully"
 }
 
