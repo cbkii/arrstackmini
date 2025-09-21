@@ -845,6 +845,12 @@ services:
       HTTP_CONTROL_SERVER_APIKEY: ${GLUETUN_API_KEY}
       VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
       PORT_FORWARD_ONLY: "yes"
+      HEALTH_TARGET_ADDRESS: "1.1.1.1:443"
+      HEALTH_VPN_DURATION_INITIAL: "30s"
+      HEALTH_VPN_DURATION_ADDITION: "10s"
+      HEALTH_SUCCESS_WAIT_DURATION: "10s"
+      DNS_KEEP_NAMESERVER: "off"
+      PORT_FORWARDING_STATUS_FILE_CLEANUP: "off"
       FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
       FIREWALL_INPUT_PORTS: "${QBT_HTTP_PORT_HOST},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}"
       DOT: "off"
@@ -865,10 +871,10 @@ services:
       - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
     healthcheck:
       test: /gluetun-entrypoint healthcheck
-      interval: 120s
-      timeout: 30s
-      retries: 2
-      start_period: 240s
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   qbittorrent:
@@ -880,7 +886,6 @@ services:
       PGID: ${PGID}
       TZ: ${TIMEZONE}
       LANG: en_US.UTF-8
-      DOCKER_MODS: ${QBT_DOCKER_MODS}
     volumes:
       - ${ARR_DOCKER_DIR}/qbittorrent:/config
       - ${DOWNLOADS_DIR}:/downloads
@@ -1163,12 +1168,25 @@ ensure_qbt_session || true
 
 last_reported=""
 backoff=30
+consecutive_failures=0
+max_consecutive_failures=5
+extended_backoff=300  # 5 minutes
 
 while :; do
     pf="$(get_pf || echo 0)"
 
     if [ -z "$pf" ] || [ "$pf" = "0" ]; then
-        log "Port forward not assigned yet; retrying in ${backoff}s"
+        consecutive_failures=$((consecutive_failures + 1))
+
+        if [ $consecutive_failures -ge $max_consecutive_failures ]; then
+            log "Multiple failures detected, using extended backoff (${extended_backoff}s)"
+            sleep "$extended_backoff"
+            consecutive_failures=0
+            backoff=30
+            continue
+        fi
+
+        log "Port forward not available (attempt $consecutive_failures)"
         sleep "$backoff"
         if [ "$backoff" -lt "$BACKOFF_MAX" ]; then
             backoff=$((backoff * 2))
@@ -1179,6 +1197,7 @@ while :; do
         continue
     fi
 
+    consecutive_failures=0
     backoff="$UPDATE_INTERVAL"
 
     if ! ensure_qbt_session; then
@@ -1375,12 +1394,69 @@ EOF
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
 }
 
-cleanup_existing() {
-  msg "🧹 Cleaning up old services"
-  if [[ -f "$ARR_STACK_DIR/docker-compose.yml" ]]; then
-    "${DOCKER_COMPOSE_CMD[@]}" down --remove-orphans >/dev/null 2>&1 || true
+install_vuetorrent() {
+  msg "🎨 Installing VueTorrent WebUI..."
+
+  local vuetorrent_dir="${ARR_DOCKER_DIR}/qbittorrent/vuetorrent"
+  local releases_url="https://api.github.com/repos/VueTorrent/VueTorrent/releases/latest"
+
+  ensure_dir "$vuetorrent_dir"
+
+  local download_url=""
+  download_url=$(curl -sL "$releases_url" | jq -r '.assets[] | select(.name == "vuetorrent.zip") | .browser_download_url' 2>/dev/null || printf '')
+
+  if [[ -z "$download_url" ]]; then
+    warn "Could not find VueTorrent download URL, skipping..."
+    return 0
   fi
-  rm -f "$ARR_DOCKER_DIR/gluetun/forwarded_port" "$ARR_DOCKER_DIR/gluetun/forwarded_port.json" 2>/dev/null || true
+
+  if ! command -v unzip >/dev/null 2>&1; then
+    warn "unzip command not available; skipping VueTorrent installation"
+    return 0
+  fi
+
+  local temp_zip="/tmp/vuetorrent-$$.zip"
+  if curl -sL "$download_url" -o "$temp_zip"; then
+    if unzip -qo "$temp_zip" -d "$vuetorrent_dir"; then
+      rm -f "$temp_zip"
+
+      chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
+      chmod -R 755 "$vuetorrent_dir" 2>/dev/null || true
+
+      msg "  ✅ VueTorrent installed successfully"
+    else
+      rm -f "$temp_zip"
+      warn "  Failed to extract VueTorrent archive, continuing without it"
+    fi
+  else
+    rm -f "$temp_zip"
+    warn "  Failed to download VueTorrent, continuing without it"
+  fi
+}
+
+safe_cleanup() {
+  msg "🧹 Safely stopping existing services..."
+
+  if [[ -f "$ARR_STACK_DIR/docker-compose.yml" ]]; then
+    "${DOCKER_COMPOSE_CMD[@]}" stop 2>/dev/null || true
+    sleep 5
+    "${DOCKER_COMPOSE_CMD[@]}" down --remove-orphans 2>/dev/null || true
+  fi
+
+  local temp_files=(
+    "$ARR_DOCKER_DIR/gluetun/forwarded_port"
+    "$ARR_DOCKER_DIR/gluetun/forwarded_port.json"
+    "$ARR_DOCKER_DIR/gluetun/port-forwarding.json"
+    "$ARR_DOCKER_DIR/qbittorrent/qBittorrent/BT_backup/.cleaning"
+  )
+
+  local file
+  for file in "${temp_files[@]}"; do
+    rm -f "$file" 2>/dev/null || true
+  done
+
+  docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" |
+    xargs -r docker rm -f 2>/dev/null || true
 }
 
 update_env_image_var() {
@@ -1518,67 +1594,128 @@ sync_qbt_password_from_logs() {
   warn "  Unable to automatically determine the qBittorrent password. Update QBT_PASS in .env manually."
 }
 
+wait_for_vpn_connection() {
+  local max_wait="${1:-180}"
+  local elapsed=0
+  local check_interval=5
+  local api_url="http://localhost:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
+
+  while (( elapsed < max_wait )); do
+    if [[ "$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "")" != "running" ]]; then
+      sleep "$check_interval"
+      elapsed=$((elapsed + check_interval))
+      continue
+    fi
+
+    local -a curl_cmd=(curl -fsS --max-time 5)
+    if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+      curl_cmd+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
+    fi
+
+    if "${curl_cmd[@]}" "$api_url" >/dev/null 2>&1; then
+      local ip=""
+      ip="$(fetch_public_ip 2>/dev/null || true)"
+      if [[ -n "$ip" ]]; then
+        msg "✅ VPN connected! Public IP: $ip"
+        return 0
+      fi
+    fi
+
+    if (( elapsed > 0 && elapsed % 20 == 0 )); then
+      msg "  Still waiting... (${elapsed}s elapsed)"
+    fi
+
+    sleep "$check_interval"
+    elapsed=$((elapsed + check_interval))
+  done
+
+  return 1
+}
+
+show_service_status() {
+  msg "Service status summary:"
+  local service
+  for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
+    local status
+    status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
+    printf '  %-15s: %s\n' "$service" "$status"
+  done
+}
+
 start_stack() {
   msg "🚀 Starting services"
 
   cd "$ARR_STACK_DIR" || die "Failed to change to $ARR_STACK_DIR"
 
-  cleanup_existing
+  safe_cleanup
 
   validate_images
 
-  msg "Starting Gluetun..."
-  "${DOCKER_COMPOSE_CMD[@]}" up -d gluetun
+  install_vuetorrent
 
-  local gluetun_control_port="${GLUETUN_CONTROL_PORT:-8000}"
-  local gluetun_control_url="http://localhost:${gluetun_control_port}/v1/openvpn/portforwarded"
-  local -a gluetun_curl=(curl -fsS --max-time 5)
-  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
-    gluetun_curl+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
-  fi
+  local gluetun_attempts=0
+  local gluetun_max_attempts=3
+  local gluetun_started=0
+  local output=""
 
-  msg "Waiting for Gluetun to be usable (up to 180s)..."
-  local gluetun_usable=0
-  local gluetun_deadline=$((SECONDS + 180))
+  while (( gluetun_attempts < gluetun_max_attempts )); do
+    local attempt=$((gluetun_attempts + 1))
+    msg "Starting Gluetun VPN container (attempt ${attempt}/${gluetun_max_attempts})..."
 
-  while (( SECONDS < gluetun_deadline )); do
-    if wait_for_healthy "gluetun" 10 true; then
-      gluetun_usable=1
+    if output="$("${DOCKER_COMPOSE_CMD[@]}" up -d gluetun 2>&1)"; then
+      if [[ -n "$output" ]]; then
+        while IFS= read -r line; do
+          printf '  %s\n' "$line"
+        done <<<"$output"
+      fi
+      gluetun_started=1
       break
     fi
 
-    if "${gluetun_curl[@]}" "$gluetun_control_url" >/dev/null 2>&1; then
-      msg "  Gluetun control server is responding"
-      gluetun_usable=1
-      break
+    warn "Failed to start Gluetun${output:+:}"
+    if [[ -n "$output" ]]; then
+      while IFS= read -r line; do
+        printf '  %s\n' "$line"
+      done <<<"$output"
     fi
 
-    if (( SECONDS >= gluetun_deadline )); then
-      break
+    gluetun_attempts=$((gluetun_attempts + 1))
+    if (( gluetun_attempts < gluetun_max_attempts )); then
+      warn "Failed to start Gluetun, retrying in 10s..."
+      sleep 10
+    else
+      warn "Failed to start Gluetun after ${gluetun_max_attempts} attempts"
     fi
-
-    sleep 10
   done
 
-  if (( gluetun_usable == 0 )); then
-    warn "Gluetun not confirmed usable within 180s; continuing best-effort bring-up."
+  if (( gluetun_started == 0 )); then
+    warn "Gluetun may not have started successfully"
   fi
 
-  local ip
-  ip="$(fetch_public_ip)"
+  msg "Waiting for VPN connection..."
+  local vpn_wait_levels=(60 120 180)
+  local vpn_ready=0
 
-  if [[ -n "$ip" ]]; then
-    msg "✅ VPN connected! Public IP: $ip"
-  else
-    warn "Could not verify VPN connection automatically"
-    warn "Check: docker logs gluetun --tail 100"
+  local max_wait
+  for max_wait in "${vpn_wait_levels[@]}"; do
+    if wait_for_vpn_connection "$max_wait"; then
+      vpn_ready=1
+      break
+    fi
+
+    warn "VPN not ready after ${max_wait}s, extending timeout..."
+  done
+
+  if (( vpn_ready == 0 )); then
+    warn "VPN connection not verified after extended wait"
+    warn "Services will start anyway with potential connectivity issues"
   fi
 
   msg "Checking port forwarding status..."
   local pf_port
-  pf_port="$(fetch_forwarded_port)"
+  pf_port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
 
-  if [[ "$pf_port" == "0" ]]; then
+  if [[ -z "$pf_port" || "$pf_port" == "0" ]]; then
     warn "================================================"
     warn "Port forwarding is not active yet."
     warn "This is normal - it can take a few minutes."
@@ -1587,76 +1724,80 @@ start_stack() {
     msg "✅ Port forwarding active: Port $pf_port"
   fi
 
-  msg "Starting qBittorrent..."
-  compose_up_service qbittorrent
-  sync_qbt_password_from_logs
+  local services=(qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  local service
+  local qb_started=0
 
-  msg "Starting supporting services..."
-  for service in sonarr radarr prowlarr bazarr flaresolverr; do
-    compose_up_service "$service"
-  done
+  for service in "${services[@]}"; do
+    msg "Starting $service..."
+    local service_started=0
+    local start_output=""
 
-  local -a critical_services=(qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
-  local -a pending_services=("${critical_services[@]}")
-  local fallback_deadline=$((SECONDS + 90))
-  local fallback_interval=5
-
-  while (( ${#pending_services[@]} > 0 )) && (( SECONDS < fallback_deadline )); do
-    local -a still_pending=()
-    local svc
-    for svc in "${pending_services[@]}"; do
-      local status
-      status="$(docker inspect "$svc" --format '{{.State.Status}}' 2>/dev/null || echo "not_found")"
-      if [[ "$status" != "running" ]]; then
-        still_pending+=("$svc")
+    if start_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1)"; then
+      if [[ -n "$start_output" ]]; then
+        while IFS= read -r line; do
+          printf '  %s\n' "$line"
+        done <<<"$start_output"
       fi
-    done
+      service_started=1
+    else
+      warn "Failed to start $service with normal dependencies"
+      if [[ -n "$start_output" ]]; then
+        while IFS= read -r line; do
+          printf '  %s\n' "$line"
+        done <<<"$start_output"
+      fi
 
-    if (( ${#still_pending[@]} == 0 )); then
-      pending_services=()
-      break
+      local fallback_output=""
+      if fallback_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d --no-deps "$service" 2>&1)"; then
+        msg "  Started $service without dependency checks"
+        if [[ -n "$fallback_output" ]]; then
+          while IFS= read -r line; do
+            printf '    %s\n' "$line"
+          done <<<"$fallback_output"
+        fi
+        service_started=1
+      else
+        warn "Failed to start $service even without dependencies, skipping..."
+        if [[ -n "$fallback_output" ]]; then
+          while IFS= read -r line; do
+            printf '    %s\n' "$line"
+          done <<<"$fallback_output"
+        fi
+        continue
+      fi
     fi
 
-    pending_services=("${still_pending[@]}")
-    sleep "$fallback_interval"
+    if [[ "$service" == "qbittorrent" && $service_started -eq 1 ]]; then
+      qb_started=1
+    fi
+
+    sleep 3
   done
 
-  if (( ${#pending_services[@]} > 0 )); then
-    warn "Bypassing Gluetun health gating for: ${pending_services[*]}"
-    warn "Gluetun may still be initialising; forcing services to start without dependency checks."
-    for svc in "${pending_services[@]}"; do
-      warn "  Forcing start of $svc (--no-deps)"
-      local fallback_output=""
-      if fallback_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d "$svc" --no-deps 2>&1)"; then
-        if [[ -n "$fallback_output" ]]; then
-          while IFS= read -r line; do
-            printf '    %s\n' "$line"
-          done <<<"$fallback_output"
-        fi
-      else
-        warn "  Failed to start $svc with --no-deps"
-        if [[ -n "$fallback_output" ]]; then
-          while IFS= read -r line; do
-            printf '    %s\n' "$line"
-          done <<<"$fallback_output"
-        fi
-      fi
-      sleep 2
-    done
+  if (( qb_started )); then
+    sync_qbt_password_from_logs
   fi
 
-  msg "Starting port-sync..."
-  compose_up_service port-sync
+  msg "Starting port synchronization..."
+  local port_sync_output=""
+  if port_sync_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d port-sync 2>&1)"; then
+    if [[ -n "$port_sync_output" ]]; then
+      while IFS= read -r line; do
+        printf '  %s\n' "$line"
+      done <<<"$port_sync_output"
+    fi
+  else
+    warn "Port-sync failed to start (non-critical)"
+    if [[ -n "$port_sync_output" ]]; then
+      while IFS= read -r line; do
+        printf '  %s\n' "$line"
+      done <<<"$port_sync_output"
+    fi
+  fi
 
   msg "Services started - they may take a minute to be fully ready"
-  sleep 10
-
-  msg "Service status summary:"
-  for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
-    local status
-    status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
-    printf '  %-15s: %s\n' "$service" "$status"
-  done
+  show_service_status
 }
 
 install_aliases() {
@@ -1932,6 +2073,7 @@ main() {
 
   preflight
   mkdirs
+  safe_cleanup
   generate_api_key
   write_env
   write_compose
