@@ -6,6 +6,8 @@
 ARR_BASE="${ARR_BASE:-${HOME}/srv}"
 ARR_STACK_DIR="${ARR_STACK_DIR:-${ARR_BASE}/arrstack}"
 ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
+ARR_LOG_DIR="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
+ARR_INSTALL_LOG="${ARR_INSTALL_LOG:-${ARR_LOG_DIR}/arrstack-install.log}"
 ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"
 ARRCONF_DIR="${ARRCONF_DIR:-${PWD}/arrconf}"
 
