@@ -320,7 +320,10 @@ ensure_udp_5351_firewall() {
 
   if ((${#ensured[@]} > 0)); then
     local ensured_text
-    ensured_text="$(IFS=', '; printf '%s' "${ensured[*]}")"
+    ensured_text="$(
+      IFS=', '
+      printf '%s' "${ensured[*]}"
+    )"
     msg "iptables: ensured outbound UDP/5351 allowed in ${ensured_text}"
   else
     msg "iptables: ensured outbound UDP/5351 allowed in none"
@@ -1814,7 +1817,7 @@ install_vuetorrent() {
 
   rm -rf "$temp_extract"
 
-  if (( copy_failed )); then
+  if ((copy_failed)); then
     warn "  Failed to install VueTorrent files, continuing without it"
     return 0
   fi
