@@ -62,9 +62,10 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
 4. **Run the installer.**
    ```bash
-   ./arrstack.sh --yes
+   ./arrstack.sh
    ```
-   - Use `--yes` to skip the interactive confirmation prompt.
+   - Review the summary shown before containers launch and confirm to proceed.
+   - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install.
    - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`.
 
     The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
@@ -78,7 +79,7 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. Port-sync will use those credentials when available but otherwise relies on the localhost/LAN auth bypass. Log in with the recorded value, update it in the WebUI, then mirror the new password in `.env` for continued convenience.
 
 ### First-time checklist
-After `./arrstack.sh --yes` finishes:
+After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 
 1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
 2. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
@@ -151,7 +152,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | Variable | Default | Why change it? |
 | -------- | ------- | --------------- |
 | `ARR_PERMISSION_PROFILE` | `strict` | Switch to `collaborative` to make non-secret files group-readable (`0640`/`0750`) when sharing the host with other users. |
-| `ASSUME_YES` | `0` | Set to `1` when scripting unattended installs that should skip confirmation prompts. |
+| `ASSUME_YES` | `0` | Set to `1` for unattended installs that must skip prompts (avoid enabling on first run). |
 | `FORCE_ROTATE_API_KEY` | `0` | Set to `1` to regenerate the Gluetun API key on the next run (useful if the key leaked). |
 
 #### Container images
