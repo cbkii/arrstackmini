@@ -28,6 +28,7 @@ TIMEZONE="Australia/Sydney"            # Timezone for container logs and schedul
 LAN_IP=""                              # Bind services to one LAN IP (leave blank to listen on all)
 LOCALHOST_IP="127.0.0.1"               # Loopback used by the Gluetun control API
 SERVER_COUNTRIES="Switzerland,Iceland,Romania,Czech Republic,Netherlands"  # ProtonVPN exit country list
+PVPN_ROTATE_COUNTRIES="${SERVER_COUNTRIES},France,Germany"  # Optional rotation order for arr.vpn switch (always includes SERVER_COUNTRIES)
 GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API
 
 # --- Credentials ---

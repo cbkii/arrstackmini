@@ -35,7 +35,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 ## Stack highlights
 - **Reproducible bootstrap** – `arrstack.sh` verifies Docker Compose prerequisites, creates the directory tree, generates secrets, writes `.env`, and starts the stack non-interactively when `--yes` is supplied.
 - **Opinionated defaults** – all configuration inputs inherit from `arrconf/userconf.defaults.sh`, allowing simple overrides in `arrconf/userconf.sh` (ignored by Git) without editing the script.
-- **Alias-driven operations** – `.arraliases` exposes helper commands (`arr.up`, `arr.logs`, `pvpn.status`, etc.) for routine management.
+- **Alias-driven operations** – `.arraliases` exposes helper commands (`arr.up`, `arr.logs`, `arr.vpn.status`, `arr.help`, etc.) for routine management.
 - **Unified reverse proxy** – Caddy shares the Gluetun network namespace and is the only container publishing LAN ports (80/443). LAN clients bypass credentials while non-LAN clients authenticate via Basic Auth before reaching the apps.
 - **Native port forwarding** – OpenVPN Proton credentials are massaged into the `+pmp` form and Gluetun's `VPN_PORT_FORWARDING_UP_COMMAND` immediately pushes the assigned port into qBittorrent's Web API. A lightweight `port-sync` container still polls the control server as a watchdog so qBittorrent stays aligned even after reconnects.
 
@@ -61,7 +61,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    nano arrconf/proton.auth
    ```
    Replace the placeholders with your Proton VPN username and password (the installer tightens the file permissions automatically).
-3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
+3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, `PVPN_ROTATE_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
 4. **(Optional) Customize the port-sync helper image.**
    The default `alpine:3.20.3` boots fine and installs `curl` on the fly. If you prefer a pre-baked image (for example one built with `curl`/CA bundles already present), publish it to your registry of choice and set `PORT_SYNC_IMAGE=your/image:tag` in `arrconf/userconf.sh` (a minimal Dockerfile just needs `FROM alpine:3.20` plus `apk add --no-cache curl ca-certificates`).
 5. **Run the installer.**
@@ -79,7 +79,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - ✅ **Pinned container versions with validation** – every service ships with a known-good tag. During startup the installer now validates each image and automatically falls back to LinuxServer's `:latest` tag when a pinned build disappears (the default for Prowlarr and Bazarr). Override tags in `.env`/`arrconf/userconf.sh` and review the [version management guide](docs/VERSION_MANAGEMENT.md) before upgrading.
 - 🆘 **Recovery helper** – `${ARR_STACK_DIR}/scripts/fix-versions.sh` repairs `.env` if an old LinuxServer tag is removed. It creates a timestamped backup and replaces missing images with the safe fallback before rerunning the installer.
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
-- 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
+- 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `arr.vpn.*`, `arr.help`, `arr.health`, and other shortcuts.
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
 - 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). Point your router or client DNS to `${LAN_IP}` for automatic hostnames, or disable it with `ENABLE_LOCAL_DNS=0` and manage `/etc/hosts` yourself. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
@@ -96,7 +96,7 @@ After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 2. **Rotate the Caddy Basic Auth credentials.** Run `./arrstack.sh --rotate-caddy-auth` (or set `FORCE_REGEN_CADDY_AUTH=1 ./arrstack.sh --yes`) to mint a fresh username/password pair. The plaintext is written to `${ARR_DOCKER_DIR}/caddy/credentials`, and the bcrypt hash is saved to `.env`. Prefer manual control? You can still generate a hash yourself with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and update `.env` accordingly.
 3. **Decide how LAN DNS resolves the stack.** Leave `ENABLE_LOCAL_DNS=1` and point routers/devices at `${LAN_IP}` so dnsmasq serves `*.${LAN_DOMAIN_SUFFIX}` automatically, or disable it and create manual DNS/`/etc/hosts` entries that map each service (`qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc.) to `LAN_IP`.
 4. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
-5. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
+5. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `arr.vpn.status`, `arr.help`, `arr.logs`, and other useful aliased quick commands.
 6. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
 7. **Review version guidance when upgrading.** Refer to [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md) for image pinning strategy and manual upgrade steps.
 
@@ -152,6 +152,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `VPN_SERVICE_PROVIDER` | `protonvpn` | Keep Gluetun pinned to ProtonVPN. Change only when migrating to a different supported provider. |
 | `VPN_TYPE` | `openvpn` | Force Gluetun to use Proton's OpenVPN stack (required for port forwarding). |
 | `SERVER_COUNTRIES` | `Switzerland,Iceland,Romania,Czech Republic,Netherlands` | Limit ProtonVPN exits to countries that support port forwarding or suit your latency. |
+| `PVPN_ROTATE_COUNTRIES` | `Switzerland,Iceland,Romania,Czech Republic,Netherlands` | Optional ProtonVPN rotation list used by `arr.vpn switch`. Any extra countries you add are merged with `SERVER_COUNTRIES` automatically. |
 | `GLUETUN_CONTROL_PORT` | `8000` | Adjust the host port for the Gluetun control API when 8000 is taken. |
 
 #### Credentials and WebUI access
@@ -226,7 +227,9 @@ source ${ARR_STACK_DIR:-/path/to/arrstack}/.arraliases  # load helper functions
 The generated `.arraliases` file enables:
 
 ```bash
-pvpn.status    # Inspect VPN status and forwarded port
+arr.help       # Show the full alias catalogue
+arr.vpn.status # Inspect VPN status and forwarded port
+arr.vpn.switch # Rotate Proton exit countries (or pick one explicitly)
 arr.health     # Summarise container health checks
 arr.open       # Print (or open) service URLs in your browser
 ```
