@@ -37,9 +37,18 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${FLARESOLVERR_PORT:=8191}"
 : "${SUBS_DIR:=}"
 
+: "${LAN_DOMAIN_SUFFIX:=home.arpa}"
+LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX#.}"
+if [[ -z "${LAN_DOMAIN_SUFFIX}" ]]; then
+  LAN_DOMAIN_SUFFIX="lan"
+fi
+
+: "${UPSTREAM_DNS_1:=1.1.1.1}"
+: "${UPSTREAM_DNS_2:=1.0.0.1}"
+: "${ENABLE_LOCAL_DNS:=1}"
+
 : "${FORCE_REGEN_CADDY_AUTH:=0}"
 : "${CADDY_IMAGE:=caddy:2.8.4}"
-: "${CADDY_DOMAIN_SUFFIX:=lan}"
 : "${CADDY_LAN_CIDRS:=192.168.0.0/16 10.0.0.0/8 172.16.0.0/12}"
 : "${CADDY_BASIC_AUTH_USER:=user}"
 : "${CADDY_BASIC_AUTH_HASH:=}"
@@ -59,8 +68,23 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PORT_SYNC_IMAGE:=alpine:3.20.3}"
 
 # Derived / normalized
+if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
+  CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"
+fi
+
+if [[ -z "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
+  CADDY_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" 
+fi
+
+if [[ -z "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
+  CADDY_DOMAIN_SUFFIX="lan"
+fi
+
 ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
 ARR_DOMAIN_SUFFIX_CLEAN="${ARR_DOMAIN_SUFFIX_CLEAN:-lan}"
+
+export CADDY_DOMAIN_SUFFIX
+export LAN_DOMAIN_SUFFIX
 
 PROTON_USER_VALUE=""
 PROTON_PASS_VALUE=""
@@ -178,7 +202,7 @@ case "${ARR_PERMISSION_PROFILE}" in
 esac
 
 readonly ARR_PERMISSION_PROFILE SECRET_FILE_MODE LOCK_FILE_MODE NONSECRET_FILE_MODE DATA_DIR_MODE
-ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy)
+ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy local_dns)
 readonly -a ARR_DOCKER_SERVICES
 
 atomic_write() {
@@ -324,6 +348,9 @@ verify_permissions() {
   local -a data_dirs=("${ARR_DOCKER_DIR}")
   local service
   for service in "${ARR_DOCKER_SERVICES[@]}"; do
+    if [[ "$service" == "local_dns" && "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+      continue
+    fi
     data_dirs+=("${ARR_DOCKER_DIR}/${service}")
   done
 
@@ -1075,6 +1102,9 @@ mkdirs() {
 
   local service
   for service in "${ARR_DOCKER_SERVICES[@]}"; do
+    if [[ "$service" == "local_dns" && "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+      continue
+    fi
     ensure_dir "${ARR_DOCKER_DIR}/${service}"
     chmod "$DATA_DIR_MODE" "${ARR_DOCKER_DIR}/${service}" 2>/dev/null || true
   done
@@ -1190,6 +1220,13 @@ write_env() {
     format_env_line "LOCALHOST_IP" "$LOCALHOST_IP"
     printf '\n'
 
+    printf '# Local DNS\n'
+    format_env_line "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
+    format_env_line "ENABLE_LOCAL_DNS" "$ENABLE_LOCAL_DNS"
+    format_env_line "UPSTREAM_DNS_1" "$UPSTREAM_DNS_1"
+    format_env_line "UPSTREAM_DNS_2" "$UPSTREAM_DNS_2"
+    printf '\n'
+
     # Derived, so downstream tools (and developers) can reference the normalized suffix directly
     format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
     printf '\n'
@@ -1267,7 +1304,8 @@ write_compose() {
   local compose_content
 
   compose_content="$(
-    cat <<'YAML'
+    {
+      cat <<'YAML'
 services:
   gluetun:
     image: ${GLUETUN_IMAGE}
@@ -1323,7 +1361,38 @@ services:
       options:
         max-size: "1m"
         max-file: "3"
+YAML
 
+      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+        cat <<'YAML'
+  local_dns:
+    image: 4km3/dnsmasq:2.90-r3
+    container_name: arr_local_dns
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "${LAN_IP}:53:53/udp"
+      - "${LAN_IP}:53:53/tcp"
+    command:
+      - --log-facility=-
+      - --no-resolv
+      - --server=${UPSTREAM_DNS_1}
+      - --server=${UPSTREAM_DNS_2}
+      - --domain-needed
+      - --bogus-priv
+      - --domain=${LAN_DOMAIN_SUFFIX}
+      - --local=/${LAN_DOMAIN_SUFFIX}/
+      - --address=/${LAN_DOMAIN_SUFFIX}/${LAN_IP}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+YAML
+      fi
+
+      cat <<'YAML'
   qbittorrent:
     image: ${QBITTORRENT_IMAGE}
     container_name: qbittorrent
@@ -1516,6 +1585,7 @@ __BAZARR_OPTIONAL_SUBS__
         max-file: "2"
 
 YAML
+    }
   )"
 
   local bazarr_subs_volume=""
@@ -2637,7 +2707,14 @@ wait_for_vpn_connection() {
 show_service_status() {
   msg "Service status summary:"
   local service
-  for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy port-sync; do
+  local -a services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy)
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    services+=(local_dns)
+  fi
+  services+=(port-sync)
+
+  local service
+  for service in "${services[@]}"; do
     local status
     status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
     printf '  %-15s: %s\n' "$service" "$status"
@@ -2726,7 +2803,11 @@ start_stack() {
     msg "✅ Port forwarding active: Port $pf_port"
   fi
 
-  local services=(caddy qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  local services=()
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    services+=(local_dns)
+  fi
+  services+=(caddy qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
   local service
   local qb_started=0
   local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
@@ -3044,6 +3125,14 @@ show_summary() {
 
   local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
 
+  local lan_ip_display="${LAN_IP:-<unset>}"
+  local lan_dns_hint
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    lan_dns_hint="LAN DNS hint: ensure clients use ${lan_ip_display} as their DNS server so *.${domain_suffix} resolves via local dnsmasq."
+  else
+    lan_dns_hint="LAN DNS hint: point qbittorrent.${domain_suffix} to ${lan_ip_display} (via DNS or /etc/hosts)."
+  fi
+
   cat <<QBT_INFO
 ================================================
 qBittorrent Access Information:
@@ -3053,7 +3142,7 @@ HTTPS:    https://qbittorrent.${domain_suffix}/  (trust the Caddy internal CA)
 Username: ${QBT_USER}
 ${qbt_pass_msg}
 
-LAN DNS hint: point qbittorrent.${domain_suffix} to ${LAN_IP} (via DNS or /etc/hosts).
+${lan_dns_hint}
 Remote clients must supply the Caddy Basic Auth user '${CADDY_BASIC_AUTH_USER}' with the password saved in ${ARR_DOCKER_DIR}/caddy/credentials.
 ================================================
 
@@ -3150,6 +3239,18 @@ main() {
   verify_permissions
   install_aliases
   start_stack
+
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    local doctor_script="${REPO_ROOT}/scripts/doctor.sh"
+    if [[ -x "$doctor_script" ]]; then
+      msg "🩺 Running LAN diagnostics"
+      if ! LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" LAN_IP="${LAN_IP}" bash "$doctor_script"; then
+        warn "LAN diagnostics reported issues"
+      fi
+    else
+      warn "Doctor script missing or not executable at ${doctor_script}"
+    fi
+  fi
 
   msg "Installation completed at $(date)"
   show_summary

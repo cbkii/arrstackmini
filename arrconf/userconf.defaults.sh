@@ -34,6 +34,16 @@ LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
 
+# Domain suffix used by Caddy hostnames (default to RFC 8375 recommendation)
+LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}"
+
+# Upstream DNS resolvers for fallback
+UPSTREAM_DNS_1="${UPSTREAM_DNS_1:-1.1.1.1}"
+UPSTREAM_DNS_2="${UPSTREAM_DNS_2:-1.0.0.1}"
+
+# Enable internal local DNS resolver service
+ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
+
 # Gluetun control server
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
 GLUETUN_API_KEY="${GLUETUN_API_KEY:-}"
