@@ -197,8 +197,8 @@ main() {
   fi
 
   if [[ "$lan_ip" == "0.0.0.0" ]]; then
-    log "LAN_IP is 0.0.0.0; skipping hosts update"
-    exit 0
+    warn "LAN_IP is 0.0.0.0; skipping hosts update"
+    exit 3
   fi
 
   if ! is_debian_like; then
