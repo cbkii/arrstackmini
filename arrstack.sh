@@ -47,6 +47,17 @@ fi
 : "${UPSTREAM_DNS_2:=1.0.0.1}"
 : "${ENABLE_LOCAL_DNS:=1}"
 : "${SETUP_HOST_DNS:=0}"
+: "${AUTO_DISABLE_LOCAL_DNS:=0}"
+
+LAN_IP_AUTODETECTED_IFACE=""
+LAN_IP_AUTODETECTED_METHOD=""
+LAN_IP_EFFECTIVE_IFACE=""
+LAN_IP_EFFECTIVE_METHOD=""
+LOCAL_DNS_SERVICE_ENABLED=0
+LOCAL_DNS_SERVICE_REASON="pending"
+LOCAL_DNS_HELPER_STATUS="not-run"
+LOCAL_DNS_AUTO_DISABLED=0
+LOCAL_DNS_AUTO_DISABLED_REASON=""
 
 : "${FORCE_REGEN_CADDY_AUTH:=0}"
 : "${CADDY_IMAGE:=caddy:2.8.4}"
@@ -105,6 +116,8 @@ Options:
   --rotate-api-key      Force regeneration of the Gluetun API key
   --rotate-caddy-auth   Force regeneration of the Caddy basic auth credentials
   --setup-host-dns      Run the host DNS takeover helper during installation
+  --auto-disable-local-dns
+                        Automatically disable the local dnsmasq container when port 53 is occupied
   --help                Show this help message
 USAGE
 }
@@ -350,8 +363,10 @@ verify_permissions() {
   local -a data_dirs=("${ARR_DOCKER_DIR}")
   local service
   for service in "${ARR_DOCKER_SERVICES[@]}"; do
-    if [[ "$service" == "local_dns" && "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
-      continue
+    if [[ "$service" == "local_dns" ]]; then
+      if [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 || ${LOCAL_DNS_SERVICE_ENABLED:-0} -ne 1 ]]; then
+        continue
+      fi
     fi
     data_dirs+=("${ARR_DOCKER_DIR}/${service}")
   done
@@ -404,9 +419,83 @@ validate_proton_creds() {
   return 0
 }
 
+is_private_ipv4() {
+  local ip="$1"
+
+  case "$ip" in
+    10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[0-1].*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_virtual_interface_name() {
+  local name="$1"
+
+  case "$name" in
+    lo | lo0 | docker* | br-* | veth* | virbr* | vbox* | vmnet* | vti* | cni* | flannel* | kube* | tailscale* | tun* | tap* | wg* | zt* | podman* | dummy*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+interface_for_ip() {
+  local ip="$1"
+
+  if ! command -v ip >/dev/null 2>&1; then
+    return 1
+  fi
+
+  ip -o -4 addr show scope global 2>/dev/null | awk -v target="$ip" '$4 ~ ("^" target "/") {print $2; exit}'
+}
+
+ip_assigned() {
+  local ip="$1"
+
+  if [[ -z "$ip" || "$ip" == "0.0.0.0" ]]; then
+    return 1
+  fi
+
+  if ! command -v ip >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ip -o -4 addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -Fxq "$ip"; then
+    return 0
+  fi
+
+  return 1
+}
+
+assert_ip_assigned() {
+  local ip="$1"
+
+  if [[ -z "$ip" || "$ip" == "0.0.0.0" ]]; then
+    die "LAN_IP ${ip:-<unset>} is not a usable address; set LAN_IP to a specific interface IP."
+  fi
+
+  if ! command -v ip >/dev/null 2>&1; then
+    warn "Cannot verify LAN_IP ownership for ${ip}: 'ip' command not found"
+    return 0
+  fi
+
+  if ip_assigned "$ip"; then
+    return 0
+  fi
+
+  die "LAN_IP ${ip} is not assigned to this host. Run 'ip -4 addr show' to find valid addresses or remove LAN_IP from arrconf/userconf.sh to auto-detect."
+}
+
 validate_config() {
   if [ -n "${LAN_IP:-}" ] && [ "${LAN_IP}" != "0.0.0.0" ]; then
     validate_ipv4 "$LAN_IP" || die "Invalid LAN_IP: ${LAN_IP}"
+    assert_ip_assigned "$LAN_IP"
   fi
   validate_port "$GLUETUN_CONTROL_PORT" || die "Invalid GLUETUN_CONTROL_PORT: ${GLUETUN_CONTROL_PORT}"
   validate_port "$QBT_HTTP_PORT_HOST" || die "Invalid QBT_HTTP_PORT_HOST: ${QBT_HTTP_PORT_HOST}"
@@ -489,12 +578,83 @@ wait_for_healthy() {
 }
 
 detect_lan_ip() {
-  local candidate
+  local candidate=""
+  local candidate_iface=""
+  local method=""
+
+  LAN_IP_AUTODETECTED_IFACE=""
+  LAN_IP_AUTODETECTED_METHOD=""
+
   if command -v ip >/dev/null 2>&1; then
-    candidate="$(ip -4 addr show scope global | awk '/inet / {print $2}' | cut -d/ -f1 | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)"
-  else
-    candidate="$(hostname -I 2>/dev/null | awk '{for (i=1;i<=NF;i++) print $i}' | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)' | head -n1 || true)"
+    local route_line=""
+    route_line="$(ip -o route get 1.1.1.1 2>/dev/null | head -n1 || true)"
+    if [[ -n "$route_line" ]]; then
+      local route_iface=""
+      local route_src=""
+      route_iface="$(awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' <<<"$route_line")"
+      route_src="$(awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' <<<"$route_line")"
+      if [[ -n "$route_iface" && -n "$route_src" ]] && is_private_ipv4 "$route_src" && ! is_virtual_interface_name "$route_iface"; then
+        if ip_assigned "$route_src"; then
+          candidate="$route_src"
+          candidate_iface="$route_iface"
+          method="default route"
+        fi
+      fi
+    fi
+
+    if [[ -z "$candidate" ]]; then
+      local line=""
+      while IFS= read -r line; do
+        local ifname=""
+        local ip_cidr=""
+        local ip_addr=""
+        ifname="$(awk '{print $2}' <<<"$line")"
+        ip_cidr="$(awk '{print $4}' <<<"$line")"
+        ip_addr="${ip_cidr%/*}"
+        if [[ -z "$ip_addr" ]]; then
+          continue
+        fi
+        if ! is_private_ipv4 "$ip_addr"; then
+          continue
+        fi
+        if is_virtual_interface_name "$ifname"; then
+          continue
+        fi
+        candidate="$ip_addr"
+        candidate_iface="$ifname"
+        method="interface scan"
+        break
+      done < <(ip -o -4 addr show scope global 2>/dev/null || true)
+    fi
   fi
+
+  if [[ -z "$candidate" ]]; then
+    local addresses=""
+    addresses="$(hostname -I 2>/dev/null || true)"
+    if [[ -n "$addresses" ]]; then
+      local addr=""
+      for addr in $addresses; do
+        if ! is_private_ipv4 "$addr"; then
+          continue
+        fi
+        candidate="$addr"
+        method="hostname -I"
+        if command -v ip >/dev/null 2>&1; then
+          candidate_iface="$(interface_for_ip "$candidate")"
+        fi
+        break
+      done
+    fi
+  fi
+
+  if [[ -n "$candidate" && -z "$candidate_iface" ]]; then
+    if command -v ip >/dev/null 2>&1; then
+      candidate_iface="$(interface_for_ip "$candidate")"
+    fi
+  fi
+
+  LAN_IP_AUTODETECTED_IFACE="$candidate_iface"
+  LAN_IP_AUTODETECTED_METHOD="$method"
 
   if [[ -z "$candidate" ]]; then
     warn "================================================"
@@ -506,6 +666,223 @@ detect_lan_ip() {
   else
     echo "$candidate"
   fi
+}
+
+normalize_bind_address() {
+  local address="$1"
+
+  address="${address%%%*}"
+  address="${address#[}"
+  address="${address%]}"
+
+  if [[ "$address" == ::ffff:* ]]; then
+    address="${address##::ffff:}"
+  fi
+
+  if [[ -z "$address" ]]; then
+    address="*"
+  fi
+
+  printf '%s\n' "$address"
+}
+
+address_conflicts() {
+  local desired_raw="$1"
+  local actual_raw="$2"
+
+  local desired
+  local actual
+  desired="$(normalize_bind_address "$desired_raw")"
+  actual="$(normalize_bind_address "$actual_raw")"
+
+  if [[ "$desired" == "0.0.0.0" || "$desired" == "*" ]]; then
+    return 0
+  fi
+
+  case "$actual" in
+    "0.0.0.0" | "::" | "*")
+      return 0
+      ;;
+  esac
+
+  if [[ "$desired" == "$actual" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+port_in_use_with_ss() {
+  local proto="$1"
+  local bind_ip="$2"
+  local port="$3"
+
+  local flag="t"
+  if [[ "$proto" == "udp" ]]; then
+    flag="u"
+  fi
+
+  local output
+  output="$(ss -H -ln${flag} 2>/dev/null || true)"
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local addr_field=""
+    addr_field="$(awk '{print $5}' <<<"$line")"
+    if [[ -z "$addr_field" ]]; then
+      addr_field="$(awk '{print $4}' <<<"$line")"
+    fi
+    [[ -z "$addr_field" ]] && continue
+    local host="${addr_field%:*}"
+    local port_field="${addr_field##*:}"
+    host="${host%%%*}"
+    if [[ "$port_field" != "$port" ]]; then
+      continue
+    fi
+    if address_conflicts "$bind_ip" "$host"; then
+      return 0
+    fi
+  done <<<"$output"
+
+  return 1
+}
+
+port_in_use_with_netstat() {
+  local proto="$1"
+  local bind_ip="$2"
+  local port="$3"
+
+  local -a cmd
+  if [[ "$proto" == "udp" ]]; then
+    cmd=(netstat -lnu)
+  else
+    cmd=(netstat -lnt)
+  fi
+
+  local output
+  output="$(${cmd[@]} 2>/dev/null || true)"
+  if [[ -z "$output" ]]; then
+    return 1
+  fi
+
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^(Active|Proto) ]] && continue
+    local local_field
+    local_field="$(awk '{print $4}' <<<"$line")"
+    [[ -z "$local_field" ]] && continue
+    local_field="${local_field//\[/}"
+    local_field="${local_field//\]/}"
+    local host="${local_field%:*}"
+    local port_field="${local_field##*:}"
+    if [[ "$port_field" != "$port" ]]; then
+      continue
+    fi
+    if address_conflicts "$bind_ip" "$host"; then
+      return 0
+    fi
+  done <<<"$output"
+
+  return 1
+}
+
+check_required_ports() {
+  local lan_ip_for_check=""
+  local lan_ip_source="configured"
+
+  if [[ -n "${LAN_IP:-}" && "${LAN_IP}" != "0.0.0.0" ]]; then
+    lan_ip_for_check="$LAN_IP"
+  else
+    lan_ip_for_check="$(detect_lan_ip)"
+    lan_ip_source="auto-detected"
+  fi
+
+  if [[ -z "$lan_ip_for_check" || "$lan_ip_for_check" == "0.0.0.0" ]]; then
+    warn "Skipping LAN port availability check: LAN_IP is not set. Services will bind to 0.0.0.0."
+    return 0
+  fi
+
+  if ! validate_ipv4 "$lan_ip_for_check"; then
+    warn "Skipping LAN port availability check: ${lan_ip_for_check} is not a valid IPv4 address."
+    return 0
+  fi
+
+  local port_tool=""
+  if command -v ss >/dev/null 2>&1; then
+    port_tool="ss"
+  elif command -v netstat >/dev/null 2>&1; then
+    port_tool="netstat"
+  else
+    warn "Cannot check host port usage automatically: install 'ss' (iproute2) or 'netstat' (net-tools)."
+    return 0
+  fi
+
+  msg "  Checking host ports for ${lan_ip_for_check} (${lan_ip_source})"
+
+  local local_dns_requested=0
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    local_dns_requested=1
+  fi
+
+  local -a port_checks=(
+    "tcp:${lan_ip_for_check}:80:Caddy HTTP"
+    "tcp:${lan_ip_for_check}:443:Caddy HTTPS"
+  )
+
+  if ((local_dns_requested)); then
+    port_checks+=("udp:${lan_ip_for_check}:53:Local DNS")
+    port_checks+=("tcp:${lan_ip_for_check}:53:Local DNS")
+  fi
+
+  port_checks+=("tcp:${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT}:Gluetun control API")
+
+  local -a conflicts=()
+  local entry=""
+  for entry in "${port_checks[@]}"; do
+    IFS=: read -r proto bind_ip port label <<<"$entry"
+    if [[ "$label" == "Local DNS" && "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+      continue
+    fi
+
+    local in_use=1
+    if [[ "$port_tool" == "ss" ]]; then
+      port_in_use_with_ss "$proto" "$bind_ip" "$port"
+      in_use=$?
+    else
+      port_in_use_with_netstat "$proto" "$bind_ip" "$port"
+      in_use=$?
+    fi
+
+    if ((in_use == 0)); then
+      if [[ "$label" == "Local DNS" && "${AUTO_DISABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+        warn "  Port ${port}/${proto^^} already in use on ${bind_ip}; disabling local DNS (--auto-disable-local-dns)."
+        ENABLE_LOCAL_DNS=0
+        LOCAL_DNS_AUTO_DISABLED=1
+        LOCAL_DNS_AUTO_DISABLED_REASON="port ${port}/${proto^^}"
+        LOCAL_DNS_SERVICE_REASON="auto-disabled-port-conflict"
+        continue
+      fi
+      conflicts+=("${label} requires ${bind_ip}:${port}/${proto}")
+    fi
+  done
+
+  if ((${#conflicts[@]} > 0)); then
+    warn "Host port conflicts detected:"
+    local conflict=""
+    for conflict in "${conflicts[@]}"; do
+      warn "  - ${conflict}"
+    done
+    warn "Free these ports or adjust arrconf/userconf.sh (LAN_IP, ENABLE_LOCAL_DNS, or ports) before retrying."
+    warn "Tip: run 'sudo ss -tulpn' or 'sudo netstat -tulpn' to identify the conflicting services."
+    die "Resolve host port conflicts before continuing."
+  fi
+
+  msg "  Required host ports are available"
 }
 
 install_missing() {
@@ -1080,6 +1457,8 @@ preflight() {
 
   show_configuration_preview
 
+  check_required_ports
+
   if [[ "$ASSUME_YES" != 1 ]]; then
     local response=""
 
@@ -1191,16 +1570,48 @@ write_env() {
 
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
+  if (( LOCAL_DNS_AUTO_DISABLED )); then
+    warn "Local DNS disabled automatically (${LOCAL_DNS_AUTO_DISABLED_REASON}). Update arrconf/userconf.sh or free the port to re-enable it."
+  fi
+
+  LAN_IP_EFFECTIVE_IFACE=""
+  LAN_IP_EFFECTIVE_METHOD=""
+
   if [[ -z "${LAN_IP:-}" ]]; then
     LAN_IP="$(detect_lan_ip)"
     if [[ "$LAN_IP" != "0.0.0.0" ]]; then
-      msg "Detected LAN IP: $LAN_IP"
+      LAN_IP_EFFECTIVE_IFACE="${LAN_IP_AUTODETECTED_IFACE:-$(interface_for_ip "$LAN_IP")}" 
+      LAN_IP_EFFECTIVE_METHOD="auto-detected"
+      if [[ -n "$LAN_IP_AUTODETECTED_METHOD" ]]; then
+        LAN_IP_EFFECTIVE_METHOD+=" via ${LAN_IP_AUTODETECTED_METHOD}"
+      fi
+      local detection_msg="Detected LAN IP: $LAN_IP"
+      if [[ -n "$LAN_IP_EFFECTIVE_IFACE" ]]; then
+        detection_msg+=" (interface ${LAN_IP_EFFECTIVE_IFACE}"
+        if [[ -n "$LAN_IP_AUTODETECTED_METHOD" ]]; then
+          detection_msg+=", ${LAN_IP_AUTODETECTED_METHOD}"
+        fi
+        detection_msg+=")"
+      elif [[ -n "$LAN_IP_AUTODETECTED_METHOD" ]]; then
+        detection_msg+=" (${LAN_IP_AUTODETECTED_METHOD})"
+      fi
+      msg "$detection_msg"
     else
+      LAN_IP_EFFECTIVE_METHOD="auto-detected (failed)"
       warn "Using LAN_IP=0.0.0.0; services will listen on all interfaces"
     fi
   elif [[ "$LAN_IP" == "0.0.0.0" ]]; then
+    LAN_IP_EFFECTIVE_METHOD="wildcard (0.0.0.0)"
     warn "LAN_IP explicitly set to 0.0.0.0; services will bind to all interfaces"
     warn "Consider using a specific RFC1918 address to limit exposure"
+  else
+    LAN_IP_EFFECTIVE_IFACE="$(interface_for_ip "$LAN_IP")"
+    LAN_IP_EFFECTIVE_METHOD="user-specified"
+    local configured_msg="Using configured LAN_IP: $LAN_IP"
+    if [[ -n "$LAN_IP_EFFECTIVE_IFACE" ]]; then
+      configured_msg+=" (interface ${LAN_IP_EFFECTIVE_IFACE})"
+    fi
+    msg "$configured_msg"
   fi
 
   load_proton_credentials
@@ -1305,6 +1716,15 @@ write_compose() {
   local compose_path="${ARR_STACK_DIR}/docker-compose.yml"
   local compose_content
 
+  LOCAL_DNS_SERVICE_ENABLED=0
+  if (( LOCAL_DNS_AUTO_DISABLED )); then
+    LOCAL_DNS_SERVICE_REASON="auto-disabled-port-conflict"
+  elif [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+    LOCAL_DNS_SERVICE_REASON="disabled"
+  else
+    LOCAL_DNS_SERVICE_REASON="requested"
+  fi
+
   compose_content="$(
     {
       cat <<'YAML'
@@ -1365,7 +1785,14 @@ services:
         max-file: "3"
 YAML
 
-      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+      local include_local_dns=0
+      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && "${LAN_IP:-}" != "0.0.0.0" && "${LAN_IP:-}" != "" && ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 0 ]]; then
+        include_local_dns=1
+      fi
+
+      if ((include_local_dns)); then
+        LOCAL_DNS_SERVICE_ENABLED=1
+        LOCAL_DNS_SERVICE_REASON="enabled"
         cat <<'YAML'
   local_dns:
     image: 4km3/dnsmasq:2.90-r3
@@ -1392,6 +1819,10 @@ YAML
         max-size: "1m"
         max-file: "2"
 YAML
+      elif [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 0 ]]; then
+        LOCAL_DNS_SERVICE_ENABLED=0
+        LOCAL_DNS_SERVICE_REASON="invalid-ip"
+        warn "Skipping local_dns service because LAN_IP is not set to a specific address. Set LAN_IP or disable ENABLE_LOCAL_DNS."
       fi
 
       cat <<'YAML'
@@ -2720,7 +3151,7 @@ show_service_status() {
   msg "Service status summary:"
   local service
   local -a services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy)
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
     services+=(local_dns)
   fi
   services+=(port-sync)
@@ -2816,7 +3247,7 @@ start_stack() {
   fi
 
   local services=()
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
     services+=(local_dns)
   fi
   services+=(caddy qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
@@ -3095,26 +3526,55 @@ configure_local_dns_entries() {
 
   local helper_script="${REPO_ROOT}/scripts/setup-lan-dns.sh"
 
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 || ${LOCAL_DNS_SERVICE_ENABLED:-0} -ne 1 ]]; then
+    LOCAL_DNS_HELPER_STATUS="skipped-disabled"
+    msg "  Local DNS container disabled; skipping host entries helper"
+    return 0
+  fi
+
   if [[ ! -f "$helper_script" ]]; then
     warn "Local DNS helper script ${helper_script} not found"
+    LOCAL_DNS_HELPER_STATUS="missing-script"
     return 0
   fi
 
   if [[ ! -x "$helper_script" ]]; then
     warn "Local DNS helper script is not executable; fix permissions on ${helper_script}"
+    LOCAL_DNS_HELPER_STATUS="not-executable"
     return 0
   fi
 
   if [[ -z "${LAN_IP:-}" ]]; then
     warn "LAN_IP is unset; skipping local DNS helper"
+    LOCAL_DNS_HELPER_STATUS="skipped-missing-ip"
+    return 0
+  fi
+
+  if [[ "${LAN_IP}" == "0.0.0.0" ]]; then
+    warn "LAN_IP is 0.0.0.0; skipping local DNS helper"
+    LOCAL_DNS_HELPER_STATUS="skipped-missing-ip"
+    return 0
+  fi
+
+  if ! ip_assigned "$LAN_IP"; then
+    warn "LAN_IP ${LAN_IP} is not assigned on this host; skipping local DNS helper"
+    LOCAL_DNS_HELPER_STATUS="skipped-unassigned"
     return 0
   fi
 
   if ! "$helper_script" "$ARR_DOMAIN_SUFFIX_CLEAN" "$LAN_IP"; then
-    warn "Local DNS helper was unable to update host mappings; rerun arrstack.sh with sudo to grant access"
+    local exit_code=$?
+    if ((exit_code == 3)); then
+      warn "Local DNS helper refused to update hosts because LAN_IP is 0.0.0.0; provide a valid address and rerun."
+      LOCAL_DNS_HELPER_STATUS="failed-invalid-ip"
+    else
+      warn "Local DNS helper was unable to update host mappings; rerun arrstack.sh with sudo to grant access"
+      LOCAL_DNS_HELPER_STATUS="failed"
+    fi
     return 0
   fi
 
+  LOCAL_DNS_HELPER_STATUS="succeeded"
   msg "✅ Local DNS helper completed"
 }
 
@@ -3127,6 +3587,12 @@ run_host_dns_setup() {
   if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
     warn "Cannot run --setup-host-dns automatically: LAN_IP is ${LAN_IP:-<unset>}"
     warn "Set LAN_IP to a specific address and rerun arrstack.sh --setup-host-dns once available."
+    return 0
+  fi
+
+  if ! ip_assigned "$LAN_IP"; then
+    warn "Cannot run --setup-host-dns automatically: LAN_IP ${LAN_IP} is not assigned on this host"
+    warn "Verify the address with 'ip -4 addr show' or remove LAN_IP to auto-detect."
     return 0
   fi
 
@@ -3163,6 +3629,24 @@ show_summary() {
   msg "🎉 Setup complete!!"
   warn "Check these details and revisit the README for any manual steps you may need to perform from here"
 
+  local lan_binding_summary="LAN binding target: ${LAN_IP:-<unset>}"
+  if [[ -n "${LAN_IP_EFFECTIVE_IFACE:-}" ]]; then
+    lan_binding_summary+=" on ${LAN_IP_EFFECTIVE_IFACE}"
+  fi
+  if [[ -n "${LAN_IP_EFFECTIVE_METHOD:-}" ]]; then
+    lan_binding_summary+=" (${LAN_IP_EFFECTIVE_METHOD})"
+  fi
+  msg "$lan_binding_summary"
+
+  case "${LOCAL_DNS_SERVICE_REASON}" in
+    auto-disabled-port-conflict)
+      warn "Local DNS container disabled automatically because ${LOCAL_DNS_AUTO_DISABLED_REASON}. Free port 53 or rerun with --auto-disable-local-dns to accept the fallback."
+      ;;
+    invalid-ip)
+      warn "Local DNS container skipped because LAN_IP (${LAN_IP:-<unset>}) is not a specific address. Update arrconf/userconf.sh and rerun."
+      ;;
+  esac
+
   # Always show qBittorrent access information prominently
   local qbt_pass_msg=""
   if [[ -f "$ARR_ENV_FILE" ]]; then
@@ -3179,8 +3663,10 @@ show_summary() {
 
   local lan_ip_display="${LAN_IP:-<unset>}"
   local lan_dns_hint
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
     lan_dns_hint="LAN DNS hint: ensure clients use ${lan_ip_display} as their DNS server so *.${domain_suffix} resolves via local dnsmasq."
+  elif [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    lan_dns_hint="LAN DNS hint: local_dns container is not active; clients must use another resolver until LAN_IP/port conflicts are resolved."
   else
     lan_dns_hint="LAN DNS hint: point qbittorrent.${domain_suffix} to ${lan_ip_display} (via DNS or /etc/hosts)."
   fi
@@ -3217,6 +3703,28 @@ WARNING
 
 WARNING
   fi
+
+  local helper_script_path="${REPO_ROOT}/scripts/setup-lan-dns.sh"
+  case "${LOCAL_DNS_HELPER_STATUS}" in
+    skipped-missing-ip)
+      warn "Local DNS host entries were not updated because LAN_IP was unavailable. Provide a valid LAN_IP and rerun arrstack.sh --setup-host-dns if needed."
+      ;;
+    skipped-unassigned)
+      warn "Local DNS host entries were not updated because LAN_IP ${LAN_IP:-<unset>} is not assigned on this host."
+      ;;
+    missing-script)
+      warn "Local DNS helper script not found at ${helper_script_path}; host entries were not configured."
+      ;;
+    not-executable)
+      warn "Local DNS helper script at ${helper_script_path} is not executable; run chmod +x to allow host entry updates."
+      ;;
+    failed-invalid-ip)
+      warn "Local DNS helper skipped because LAN_IP is 0.0.0.0; update LAN_IP and rerun."
+      ;;
+    failed)
+      warn "Local DNS helper could not update /etc/hosts; rerun arrstack.sh with sudo if host entries are desired."
+      ;;
+  esac
 
   cat <<SUMMARY
 Access your services via Caddy:
@@ -3259,6 +3767,10 @@ main() {
         SETUP_HOST_DNS=1
         shift
         ;;
+      --auto-disable-local-dns)
+        AUTO_DISABLE_LOCAL_DNS=1
+        shift
+        ;;
       --help | -h)
         help
         exit 0
@@ -3299,11 +3811,18 @@ main() {
   install_aliases
   start_stack
 
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 || ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 1 ]]; then
     local doctor_script="${REPO_ROOT}/scripts/doctor.sh"
     if [[ -x "$doctor_script" ]]; then
       msg "🩺 Running LAN diagnostics"
-      if ! LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" LAN_IP="${LAN_IP}" bash "$doctor_script"; then
+      if ! LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
+        LAN_IP="${LAN_IP}" \
+        ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS}" \
+        LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED}" \
+        LOCAL_DNS_AUTO_DISABLED="${LOCAL_DNS_AUTO_DISABLED}" \
+        LOCALHOST_IP="${LOCALHOST_IP}" \
+        GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT}" \
+        bash "$doctor_script"; then
         warn "LAN diagnostics reported issues"
       fi
     else
