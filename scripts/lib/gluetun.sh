@@ -4,7 +4,7 @@
 _gluetun_control_base() {
   local port host
   port="${GLUETUN_CONTROL_PORT:-8000}"
-  host="${LOCALHOST_IP:-localhost}"
+  host="${LOCALHOST_IP:-127.0.0.1}"
   if [[ $host == *:* && $host != [* ]]; then
     printf 'http://[%s]:%s' "$host" "$port"
   else

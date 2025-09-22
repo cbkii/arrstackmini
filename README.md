@@ -26,16 +26,18 @@ Minimal, reproducible ARR stack routed through Gluetun with ProtonVPN port forwa
 - Gluetun (Proton OpenVPN with native port forwarding)
 - qBittorrent (Vuetorrent-compatible WebUI)
 - port-sync (Alpine helper that keeps qBittorrent aligned with the forwarded port)
+- Caddy (reverse proxy inside the Gluetun namespace that fronts every service on LAN ports 80/443)
 - Sonarr, Radarr, Prowlarr, Bazarr
 - FlareSolverr
 
-By default only LAN listeners are published; *arr apps and qBittorrent egress the tunnel while auxiliary services (health probes, port-sync) stay inside the namespace.
+Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every application continues to run inside Gluetun’s network namespace so traffic egresses the VPN while health probes and helpers stay local.
 
 ## Stack highlights
 - **Reproducible bootstrap** – `arrstack.sh` verifies Docker Compose prerequisites, creates the directory tree, generates secrets, writes `.env`, and starts the stack non-interactively when `--yes` is supplied.
 - **Opinionated defaults** – all configuration inputs inherit from `arrconf/userconf.defaults.sh`, allowing simple overrides in `arrconf/userconf.sh` (ignored by Git) without editing the script.
 - **Alias-driven operations** – `.arraliases` exposes helper commands (`arr.up`, `arr.logs`, `pvpn.status`, etc.) for routine management.
-- **Native port forwarding** – OpenVPN Proton credentials are massaged into the `+pmp` form and a companion `port-sync` container polls Gluetun and updates qBittorrent whenever the forwarded port changes.
+- **Unified reverse proxy** – Caddy shares the Gluetun network namespace and is the only container publishing LAN ports (80/443). LAN clients bypass credentials while non-LAN clients authenticate via Basic Auth before reaching the apps.
+- **Native port forwarding** – OpenVPN Proton credentials are massaged into the `+pmp` form and Gluetun's `VPN_PORT_FORWARDING_UP_COMMAND` immediately pushes the assigned port into qBittorrent's Web API. A lightweight `port-sync` container still polls the control server as a watchdog so qBittorrent stays aligned even after reconnects.
 
 ## Requirements
 - 64-bit Debian Bookworm host with at least 4 CPU cores, 4 GB RAM, and fast storage for downloads.
@@ -76,16 +78,18 @@ By default only LAN listeners are published; *arr apps and qBittorrent egress th
 - 🆘 **Recovery helper** – `${ARR_STACK_DIR}/scripts/fix-versions.sh` repairs `.env` if an old LinuxServer tag is removed. It creates a timestamped backup and replaces missing images with the safe fallback before rerunning the installer.
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
-- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. Port-sync will use those credentials when available but otherwise relies on the localhost/LAN auth bypass. Log in with the recorded value, update it in the WebUI, then mirror the new password in `.env` for continued convenience.
+- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user configured in `${ARR_DOCKER_DIR}/caddy/Caddyfile`. Log in with the recorded value, change it in the WebUI, then mirror the new password in `.env` so automation keeps working.
 
 ### First-time checklist
 After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 
 1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
-2. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
-3. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
-4. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
-5. **Review version guidance when upgrading.** Refer to [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md) for image pinning strategy and manual upgrade steps.
+2. **Rotate the Caddy Basic Auth hash.** Generate a new bcrypt hash with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and replace the value in `${ARR_DOCKER_DIR}/caddy/Caddyfile` (and optionally set `CADDY_BASIC_AUTH_HASH` in `.env`).
+3. **Create LAN DNS or hosts entries.** Point `qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc. to your host’s `LAN_IP` so browsers reach Caddy.
+4. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
+5. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
+6. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
+7. **Review version guidance when upgrading.** Refer to [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md) for image pinning strategy and manual upgrade steps.
 
 ## Configuration
 ### Directory layout
@@ -148,7 +152,15 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `QBT_USER` | `admin` | Set your desired qBittorrent username before the first login. |
 | `QBT_PASS` | `adminadmin` | Seed a temporary qBittorrent password (update in WebUI afterwards). |
 | `QBT_DOCKER_MODS` | `ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest` | Swap to a different qBittorrent WebUI mod or remove mods entirely. |
-| `QBT_AUTH_WHITELIST` | `127.0.0.1/8,::1/128` | Allow extra CIDR ranges to bypass the qBittorrent login page (useful on trusted LANs). |
+| `QBT_AUTH_WHITELIST` | `127.0.0.1/32,127.0.0.0/8,::1/128` | Allow extra CIDR ranges to bypass the qBittorrent login page (useful on trusted LANs). |
+
+#### Reverse proxy
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `CADDY_DOMAIN_SUFFIX` | `lan` | Controls the hostnames served by Caddy (`qbittorrent.<suffix>`, `sonarr.<suffix>`, etc.). |
+| `CADDY_LAN_CIDRS` | `192.168.0.0/16 10.0.0.0/8 172.16.0.0/12` | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
+| `CADDY_BASIC_AUTH_USER` | `user` | Username presented to non-LAN clients when Caddy prompts for credentials. |
+| `CADDY_BASIC_AUTH_HASH` | `$2b$12$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa` | Replace with your own bcrypt hash to secure remote Basic Auth access. |
 
 #### Behaviour toggles
 | Variable | Default | Why change it? |
@@ -167,20 +179,21 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `PROWLARR_IMAGE` | `lscr.io/linuxserver/prowlarr:latest` | Pin to a specific version to avoid unexpected updates. |
 | `BAZARR_IMAGE` | `lscr.io/linuxserver/bazarr:latest` | Pin to a specific version to avoid unexpected updates. |
 | `FLARESOLVERR_IMAGE` | `ghcr.io/flaresolverr/flaresolverr:v3.3.21` | Track newer FlareSolverr releases when needed. |
+| `CADDY_IMAGE` | `caddy:2.8.4` | Pin the reverse proxy to a tested version or upgrade deliberately. |
 
-### Service ports
-Each service publishes a configurable LAN port. Edit the matching variable in `arrconf/userconf.sh` (or `.env`) if a port clashes with something else on your network.
+### Service hostnames
+Caddy is the only container exposing ports on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. Point your LAN DNS (or `/etc/hosts`) to resolve each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to the host’s `LAN_IP`.
 
-| Service      | Variable | Default port | LAN URL pattern |
-| ------------ | -------- | ------------- | --------------- |
-| qBittorrent  | `QBT_HTTP_PORT_HOST` | `8080` | `http://${LAN_IP:-0.0.0.0}:${QBT_HTTP_PORT_HOST:-8080}` |
-| Sonarr       | `SONARR_PORT` | `8989` | `http://${LAN_IP:-0.0.0.0}:${SONARR_PORT:-8989}` |
-| Radarr       | `RADARR_PORT` | `7878` | `http://${LAN_IP:-0.0.0.0}:${RADARR_PORT:-7878}` |
-| Prowlarr     | `PROWLARR_PORT` | `9696` | `http://${LAN_IP:-0.0.0.0}:${PROWLARR_PORT:-9696}` |
-| Bazarr       | `BAZARR_PORT` | `6767` | `http://${LAN_IP:-0.0.0.0}:${BAZARR_PORT:-6767}` |
-| FlareSolverr | `FLARESOLVERR_PORT` | `8191` | `http://${LAN_IP:-0.0.0.0}:${FLARESOLVERR_PORT:-8191}` |
+| Service      | Hostname pattern | Internal port variable | Default port |
+| ------------ | ---------------- | ---------------------- | ------------- |
+| qBittorrent  | `qbittorrent.${CADDY_DOMAIN_SUFFIX}` | `QBT_HTTP_PORT_HOST` | `8080` |
+| Sonarr       | `sonarr.${CADDY_DOMAIN_SUFFIX}` | `SONARR_PORT` | `8989` |
+| Radarr       | `radarr.${CADDY_DOMAIN_SUFFIX}` | `RADARR_PORT` | `7878` |
+| Prowlarr     | `prowlarr.${CADDY_DOMAIN_SUFFIX}` | `PROWLARR_PORT` | `9696` |
+| Bazarr       | `bazarr.${CADDY_DOMAIN_SUFFIX}` | `BAZARR_PORT` | `6767` |
+| FlareSolverr | `flaresolverr.${CADDY_DOMAIN_SUFFIX}` | `FLARESOLVERR_PORT` | `8191` |
 
-Set `LAN_IP` to a single RFC1918 address to restrict access or leave it blank to bind on all interfaces (the installer warns when it falls back to `0.0.0.0`).
+If you reconfigure an application to listen on a different internal port, update the corresponding variable so Caddy continues routing correctly.
 
 ## Daily operations
 The installer adds two aliases to `~/.bashrc` when possible:
@@ -199,13 +212,13 @@ arr.health     # Summarise container health checks
 arr.open       # Print (or open) service URLs in your browser
 ```
 
-The stack also maintains `port-sync`, a lightweight helper container that watches the Gluetun control API and applies the latest forwarded port to qBittorrent without manual input.
+The installer also drops `/gluetun/hooks/update-qbt-port.sh`, which Gluetun executes whenever Proton assigns a new port so qBittorrent's listen socket is updated immediately. The `port-sync` helper container keeps polling the control API as a fallback to catch any missed updates.
 
 Manage the stack directly with Docker Compose commands from `${ARR_STACK_DIR}` if you prefer finer-grained control.
 
 ## Security posture
 ### Gluetun control API
-The control server listens inside the VPN namespace and is published to the host at `${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}`. API-key authentication is required; requests must include `X-API-Key: ${GLUETUN_API_KEY}`:
+The control server listens inside the VPN namespace and is published to the host at `${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}`. It is forced to bind on IPv4 loopback to avoid `localhost` resolving to IPv6 and breaking the control client. API-key authentication is required and `/gluetun/auth/config.toml` allow-lists only the routes the stack needs (`/v1/publicip/ip`, `/v1/openvpn/status`, `/v1/forwardedport`, `/v1/openvpn/portforwarded`). Requests must include `X-API-Key: ${GLUETUN_API_KEY}`:
 
 ```bash
 curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
