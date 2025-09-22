@@ -82,14 +82,18 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
-- 🌐 **LAN DNS & TLS** – create DNS or `/etc/hosts` entries so `qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc. resolve to `${LAN_IP}`. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
+- 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). Point your router or client DNS to `${LAN_IP}` for automatic hostnames, or disable it with `ENABLE_LOCAL_DNS=0` and manage `/etc/hosts` yourself. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
+  1. Set your router’s DHCP DNS server to `${LAN_IP}` so new devices learn the resolver automatically.
+  2. Override DNS manually on devices that allow it (laptops, consoles, smart TVs) if the router cannot be changed.
+  3. On Android, leave Private DNS **Off** or **Automatic**—forcing a public resolver bypasses local hostnames.
+  **Domain suffix note:** prefer `.home.arpa` (RFC 8375). `.lan` is supported but not reserved, so some clients may leak queries to the public internet.
 
 ### First-time checklist
 After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 
 1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
 2. **Rotate the Caddy Basic Auth credentials.** Run `./arrstack.sh --rotate-caddy-auth` (or set `FORCE_REGEN_CADDY_AUTH=1 ./arrstack.sh --yes`) to mint a fresh username/password pair. The plaintext is written to `${ARR_DOCKER_DIR}/caddy/credentials`, and the bcrypt hash is saved to `.env`. Prefer manual control? You can still generate a hash yourself with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and update `.env` accordingly.
-3. **Create LAN DNS or hosts entries.** Point `qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc. to your host’s `LAN_IP` so browsers reach Caddy.
+3. **Decide how LAN DNS resolves the stack.** Leave `ENABLE_LOCAL_DNS=1` and point routers/devices at `${LAN_IP}` so dnsmasq serves `*.${LAN_DOMAIN_SUFFIX}` automatically, or disable it and create manual DNS/`/etc/hosts` entries that map each service (`qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc.) to `LAN_IP`.
 4. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
 5. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
 6. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
@@ -158,10 +162,20 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `QBT_DOCKER_MODS` | `ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest` | Swap to a different qBittorrent WebUI mod or remove mods entirely. |
 | `QBT_AUTH_WHITELIST` | `127.0.0.1/32,127.0.0.0/8,::1/128` | Allow extra CIDR ranges to bypass the qBittorrent login page (useful on trusted LANs). |
 
+#### LAN DNS
+| Variable | Default | Why change it? |
+| -------- | ------- | --------------- |
+| `LAN_DOMAIN_SUFFIX` | `home.arpa` | Choose a different private suffix (e.g. `lan`) for Caddy hostnames if your network already uses one. |
+| `ENABLE_LOCAL_DNS` | `1` | Set to `0` to skip running the `local_dns` dnsmasq container and manage name resolution manually. |
+| `UPSTREAM_DNS_1` | `1.1.1.1` | Point dnsmasq at your preferred upstream resolver (e.g. router, Pi-hole). |
+| `UPSTREAM_DNS_2` | `1.0.0.1` | Secondary upstream resolver for redundancy. |
+
+> **Note:** `.home.arpa` is reserved for private residential networks by [RFC 8375](https://datatracker.ietf.org/doc/html/rfc8375). You can still set `LAN_DOMAIN_SUFFIX=lan` for legacy behaviour, but it is not guaranteed to stay collision-free on public DNS.
+
 #### Reverse proxy
 | Variable | Default | Why change it? |
 | -------- | ------- | --------------- |
-| `CADDY_DOMAIN_SUFFIX` | `lan` | Controls the hostnames served by Caddy (`qbittorrent.<suffix>`, `sonarr.<suffix>`, etc.). |
+| `CADDY_DOMAIN_SUFFIX` | `home.arpa` | Controls the hostnames served by Caddy (`qbittorrent.<suffix>`, `sonarr.<suffix>`, etc.). Inherits from `LAN_DOMAIN_SUFFIX` when unset. |
 | `CADDY_LAN_CIDRS` | `192.168.0.0/16 10.0.0.0/8 172.16.0.0/12` | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
 | `CADDY_BASIC_AUTH_USER` | `user` | Username presented to non-LAN clients when Caddy prompts for credentials. |
 | `CADDY_BASIC_AUTH_HASH` | `$2b$12$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa` | Replace with your own bcrypt hash to secure remote Basic Auth access. |
@@ -186,7 +200,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `CADDY_IMAGE` | `caddy:2.8.4` | Pin the reverse proxy to a tested version or upgrade deliberately. |
 
 ### Service hostnames
-Caddy is the only container exposing ports on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. Point your LAN DNS (or `/etc/hosts`) to resolve each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to the host’s `LAN_IP`.
+Caddy is the only container exposing ports on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. When `local_dns` is enabled, dnsmasq already resolves each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to `LAN_IP`; otherwise point your LAN DNS (or `/etc/hosts`) at the host manually.
 
 | Service      | Hostname pattern | Internal port variable | Default port |
 | ------------ | ---------------- | ---------------------- | ------------- |

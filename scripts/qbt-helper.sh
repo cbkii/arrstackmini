@@ -70,7 +70,7 @@ webui_port() {
 }
 
 webui_domain() {
-  local suffix="${CADDY_DOMAIN_SUFFIX:-lan}"
+  local suffix="${CADDY_DOMAIN_SUFFIX:-home.arpa}"
   suffix="${suffix#.}"
   printf 'qbittorrent.%s' "$suffix"
 }
