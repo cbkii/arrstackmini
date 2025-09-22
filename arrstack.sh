@@ -56,7 +56,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
 : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
 : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
-: "${PORT_SYNC_IMAGE:=local/port-sync:alpine-curl}"
+: "${PORT_SYNC_IMAGE:=alpine:3.20.3}"
 
 # Derived / normalized
 ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
@@ -1253,6 +1253,7 @@ write_env() {
     format_env_line "BAZARR_IMAGE" "$BAZARR_IMAGE"
     format_env_line "FLARESOLVERR_IMAGE" "$FLARESOLVERR_IMAGE"
     format_env_line "CADDY_IMAGE" "$CADDY_IMAGE"
+    format_env_line "PORT_SYNC_IMAGE" "$PORT_SYNC_IMAGE"
   })"
 
   atomic_write "$ARR_ENV_FILE" "$env_content" 600
@@ -1789,13 +1790,133 @@ ensure_curl() {
         return
     fi
 
+    log "curl not found, attempting to install..."
+
     if command -v apk >/dev/null 2>&1; then
-        if ! apk add --no-cache curl >/dev/null 2>&1; then
-            log 'warn: unable to install curl via apk'
+        if apk update >/dev/null 2>&1 && apk add --no-cache curl ca-certificates >/dev/null 2>&1; then
+            log "curl installed successfully"
+            return
         fi
-    else
-        log 'warn: curl is required but not available'
+        log "warn: apk update/add failed; retrying simple add..."
+        if apk add --no-cache curl >/dev/null 2>&1; then
+            log "curl installed successfully (without update)"
+            return
+        fi
     fi
+
+    if command -v wget >/dev/null 2>&1; then
+        log "warn: curl unavailable; using wget shim as fallback"
+        curl() {
+            set -- "$@"
+            headers=""
+            url=""
+            post_data=""
+            method="GET"
+            load_cookies=""
+            save_cookies=""
+            output_target="-"
+            newline_store="$(printf '\n_')"
+            newline="${newline_store%_}"
+
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    -H)
+                        [ $# -ge 2 ] || break
+                        if [ -z "$headers" ]; then
+                            headers="$2"
+                        else
+                            headers="${headers}${newline}$2"
+                        fi
+                        shift 2
+                        ;;
+                    -b)
+                        [ $# -ge 2 ] || break
+                        load_cookies="$2"
+                        shift 2
+                        ;;
+                    -c)
+                        [ $# -ge 2 ] || break
+                        save_cookies="$2"
+                        shift 2
+                        ;;
+                    --data|-d|--data-raw)
+                        [ $# -ge 2 ] || break
+                        method="POST"
+                        post_data="$2"
+                        shift 2
+                        ;;
+                    --data-urlencode)
+                        [ $# -ge 2 ] || break
+                        method="POST"
+                        if [ -n "$post_data" ]; then
+                            post_data="${post_data}&$2"
+                        else
+                            post_data="$2"
+                        fi
+                        shift 2
+                        ;;
+                    --output|-o)
+                        [ $# -ge 2 ] || break
+                        output_target="$2"
+                        shift 2
+                        ;;
+                    --max-time)
+                        shift
+                        [ $# -gt 0 ] && shift
+                        ;;
+                    -fsS|-f|-s|-S|--silent|--show-error)
+                        shift
+                        ;;
+                    -* )
+                        shift
+                        ;;
+                    *)
+                        if [ -z "$url" ]; then
+                            url="$1"
+                        fi
+                        shift
+                        ;;
+                esac
+            done
+
+            if [ -z "$url" ]; then
+                return 22
+            fi
+
+            set -- --quiet
+            if [ "$output_target" = "-" ]; then
+                set -- "$@" -O -
+            else
+                set -- "$@" -O "$output_target"
+            fi
+            if [ "$method" = "POST" ]; then
+                set -- "$@" --post-data="$post_data"
+            fi
+            if [ -n "$load_cookies" ]; then
+                set -- "$@" --load-cookies="$load_cookies"
+            fi
+            if [ -n "$save_cookies" ]; then
+                set -- "$@" --save-cookies="$save_cookies"
+            fi
+
+            old_ifs=$IFS
+            IFS="$newline"
+            for header in $headers; do
+                [ -n "$header" ] || continue
+                set -- "$@" --header="$header"
+            done
+            IFS=$old_ifs
+            unset newline_store newline
+
+            set -- "$@" "$url"
+            wget "$@"
+        }
+        export -f curl 2>/dev/null || true
+        return
+    fi
+
+    log "ERROR: Neither curl nor wget available, and installation failed"
+    exit 1
 }
 
 wait_for_gluetun() {
@@ -2353,6 +2474,7 @@ validate_images() {
     BAZARR_IMAGE
     FLARESOLVERR_IMAGE
     CADDY_IMAGE
+    PORT_SYNC_IMAGE
   )
 
   local failed_images=()
