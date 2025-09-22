@@ -33,6 +33,7 @@ TIMEZONE="${TIMEZONE:-Australia/Sydney}"
 LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
+PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
 
 # Domain suffix used by Caddy hostnames (default to RFC 8375 recommendation)
 LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}"

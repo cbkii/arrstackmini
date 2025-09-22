@@ -3233,8 +3233,8 @@ Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PO
 
 Helper commands:
   source ${ARR_STACK_DIR}/.arraliases
-  pvpn.status    # Check VPN status
-  arr.health     # Container health summary
+  arr.help       # Show all available aliases
+  arr.vpn.status # Check VPN status and forwarded port
   arr.logs       # Follow container logs via docker compose
 
 SUMMARY
