@@ -37,11 +37,12 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${FLARESOLVERR_PORT:=8191}"
 : "${SUBS_DIR:=}"
 
+: "${FORCE_REGEN_CADDY_AUTH:=0}"
 : "${CADDY_IMAGE:=caddy:2.8.4}"
 : "${CADDY_DOMAIN_SUFFIX:=lan}"
 : "${CADDY_LAN_CIDRS:=192.168.0.0/16 10.0.0.0/8 172.16.0.0/12}"
 : "${CADDY_BASIC_AUTH_USER:=user}"
-: "${CADDY_BASIC_AUTH_HASH:=\$2b\$12\$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa}"
+: "${CADDY_BASIC_AUTH_HASH:=}"
 
 : "${QBT_USER:=admin}"
 : "${QBT_PASS:=adminadmin}"
@@ -55,6 +56,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
 : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
 : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
+: "${PORT_SYNC_IMAGE:=local/port-sync:alpine-curl}"
 
 # Derived / normalized
 ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
@@ -76,6 +78,7 @@ Usage: ./arrstack.sh [options]
 Options:
   --yes                 Run non-interactively and assume yes to prompts
   --rotate-api-key      Force regeneration of the Gluetun API key
+  --rotate-caddy-auth   Force regeneration of the Caddy basic auth credentials
   --help                Show this help message
 USAGE
 }
@@ -521,6 +524,18 @@ install_missing() {
     die "Missing required tools: ${missing[*]}. Please install them and re-run."
   fi
 
+  if ! command -v certutil >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      msg "  Tip: install certutil for smoother Caddy TLS trust: sudo apt-get install -y libnss3-tools"
+    elif command -v yum >/dev/null 2>&1; then
+      msg "  Tip: install certutil for smoother Caddy TLS trust: sudo yum install -y nss-tools"
+    elif command -v dnf >/dev/null 2>&1; then
+      msg "  Tip: install certutil for smoother Caddy TLS trust: sudo dnf install -y nss-tools"
+    else
+      msg "  Tip: certutil not found (optional); Caddy may print a trust-store warning."
+    fi
+  fi
+
   msg "  Docker: $(docker version --format '{{.Server.Version}}')"
   local compose_version_display=""
   if ((${#DOCKER_COMPOSE_CMD[@]} > 0)); then
@@ -557,7 +572,7 @@ is_bcrypt_hash() {
 
   candidate="$(unescape_env_value_from_compose "$candidate")"
 
-  [[ $candidate =~ ^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]]
+  valid_bcrypt "$candidate"
 }
 
 format_env_line() {
@@ -650,6 +665,174 @@ obfuscate_sensitive() {
   mask="$(printf '%*s' "$hidden_len" '' | tr ' ' '*')"
 
   printf '%s%s%s' "$prefix" "$mask" "$suffix"
+}
+
+# Generate a safe (shell/compose/caddy-friendly) password: alphanumeric only
+gen_safe_password() {
+  local len="${1:-20}"
+  local password=""
+
+  if ((len <= 0)); then
+    len=20
+  fi
+
+  if command -v tr >/dev/null 2>&1 && [ -r /dev/urandom ]; then
+    password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len" || true)"
+  fi
+
+  if (( ${#password} < len )) && command -v openssl >/dev/null 2>&1; then
+    password="$(openssl rand -base64 $((len * 2)) | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$len" || true)"
+  fi
+
+  if (( ${#password} < len )); then
+    password="$(printf '%s' "$(date +%s%N)$$" | sha256sum | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$len" || true)"
+  fi
+
+  if (( ${#password} < len )); then
+    password="$(printf '%*s' "$len" '' | tr ' ' 'A')"
+  fi
+
+  printf '%s' "$password"
+}
+
+# Sanitize a username into a safe token (alnum, dot, underscore, hyphen)
+sanitize_user() {
+  local input="${1:-user}"
+  local sanitized
+  sanitized="$(printf '%s' "$input" | tr -cd 'A-Za-z0-9._-' || true)"
+  if [[ -z "$sanitized" ]]; then
+    sanitized="user"
+  fi
+  printf '%s' "$sanitized"
+}
+
+valid_bcrypt() {
+  local candidate="${1-}"
+
+  if [[ "$candidate" =~ ^\$2[aby]\$([0-3][0-9])\$[./A-Za-z0-9]{53}$ ]]; then
+    local cost="${BASH_REMATCH[1]}"
+    if ((10#$cost >= 4 && 10#$cost <= 31)); then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Produce a bcrypt hash using the configured Caddy image
+caddy_bcrypt() {
+  local plaintext="${1-}"
+
+  if [[ -z "$plaintext" ]]; then
+    return 1
+  fi
+
+  docker run --rm "${CADDY_IMAGE}" caddy hash-password --algorithm bcrypt --plaintext "$plaintext" 2>/dev/null
+}
+
+ensure_caddy_auth() {
+  msg "🔐 Ensuring Caddy Basic Auth"
+
+  if [[ -f "$ARR_ENV_FILE" ]]; then
+    if [[ -z "${CADDY_BASIC_AUTH_USER:-}" || "${CADDY_BASIC_AUTH_USER}" == "user" ]]; then
+      local env_user_line env_user_value
+      env_user_line="$(grep '^CADDY_BASIC_AUTH_USER=' "$ARR_ENV_FILE" | head -n1 || true)"
+      if [[ -n "$env_user_line" ]]; then
+        env_user_value="${env_user_line#CADDY_BASIC_AUTH_USER=}"
+        env_user_value="$(unescape_env_value_from_compose "$env_user_value")"
+        if [[ -n "$env_user_value" ]]; then
+          CADDY_BASIC_AUTH_USER="$env_user_value"
+        fi
+      fi
+    fi
+
+    if [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]]; then
+      local env_hash_line env_hash_value
+      env_hash_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "$ARR_ENV_FILE" | head -n1 || true)"
+      if [[ -n "$env_hash_line" ]]; then
+        env_hash_value="${env_hash_line#CADDY_BASIC_AUTH_HASH=}"
+        env_hash_value="$(unescape_env_value_from_compose "$env_hash_value")"
+        if [[ -n "$env_hash_value" ]]; then
+          CADDY_BASIC_AUTH_HASH="$env_hash_value"
+        fi
+      fi
+    fi
+  fi
+
+  local sanitized_user
+  sanitized_user="$(sanitize_user "${CADDY_BASIC_AUTH_USER}")"
+  if [[ "$sanitized_user" != "$CADDY_BASIC_AUTH_USER" ]]; then
+    CADDY_BASIC_AUTH_USER="$sanitized_user"
+    persist_env_var "CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_USER"
+    msg "  Caddy user sanitized → ${CADDY_BASIC_AUTH_USER}"
+  fi
+
+  local current_hash
+  current_hash="$(unescape_env_value_from_compose "${CADDY_BASIC_AUTH_HASH:-}")"
+  CADDY_BASIC_AUTH_HASH="$current_hash"
+
+  local need_regen=0
+  if [[ "${FORCE_REGEN_CADDY_AUTH:-0}" == "1" ]]; then
+    need_regen=1
+  elif [[ -z "$current_hash" ]] || ! valid_bcrypt "$current_hash"; then
+    need_regen=1
+  fi
+
+  local cred_dir="${ARR_DOCKER_DIR}/caddy"
+  local cred_file="${cred_dir}/credentials"
+
+  if [[ "$need_regen" == "1" ]]; then
+    local plaintext
+    plaintext="$(gen_safe_password 20)"
+
+    local hash_output
+    hash_output="$(caddy_bcrypt "$plaintext" || true)"
+    local new_hash
+    new_hash="$(printf '%s\n' "$hash_output" | awk '/^\$2[aby]\$/{hash=$0} END {if (hash) print hash}')"
+
+    if [[ -z "$new_hash" ]] || ! valid_bcrypt "$new_hash"; then
+      die "Failed to generate Caddy bcrypt hash (docker or ${CADDY_IMAGE} unavailable?)"
+    fi
+
+    CADDY_BASIC_AUTH_HASH="$new_hash"
+    persist_env_var "CADDY_BASIC_AUTH_HASH" "$CADDY_BASIC_AUTH_HASH"
+
+    ensure_dir "$cred_dir"
+    chmod 700 "$cred_dir" 2>/dev/null || true
+    (
+      umask 0077
+      {
+        printf 'username=%s\n' "$CADDY_BASIC_AUTH_USER"
+        printf 'password=%s\n' "$plaintext"
+      } >"$cred_file"
+    )
+    chmod 600 "$cred_file" 2>/dev/null || true
+
+    local passmask
+    passmask="$(obfuscate_sensitive "$plaintext" 2 2)"
+    msg "  Generated new Caddy credentials → user: ${CADDY_BASIC_AUTH_USER}, pass: ${passmask}"
+    msg "  Full credentials saved to: ${cred_file}"
+  else
+    ensure_dir "$cred_dir"
+    chmod 700 "$cred_dir" 2>/dev/null || true
+    local existing_plain=""
+    if [[ -f "$cred_file" ]]; then
+      existing_plain="$(grep '^password=' "$cred_file" | head -n1 | cut -d= -f2- || true)"
+    fi
+    if [[ -n "$existing_plain" ]]; then
+      (
+        umask 0077
+        {
+          printf 'username=%s\n' "$CADDY_BASIC_AUTH_USER"
+          printf 'password=%s\n' "$existing_plain"
+        } >"$cred_file"
+      )
+      chmod 600 "$cred_file" 2>/dev/null || true
+    else
+      warn "Caddy credentials file missing plaintext password; use --rotate-caddy-auth to recreate it."
+    fi
+    msg "  Existing Caddy bcrypt hash is valid ✓"
+  fi
 }
 
 # Build the qBittorrent WebUI auth whitelist, ensuring LAN & localhost get no-auth
@@ -948,6 +1131,34 @@ generate_api_key() {
 write_env() {
   msg "📝 Writing .env file"
 
+  if [[ -f "$ARR_ENV_FILE" ]]; then
+    if [[ -z "${CADDY_BASIC_AUTH_USER:-}" || "${CADDY_BASIC_AUTH_USER}" == "user" ]]; then
+      local env_user_line env_user_value
+      env_user_line="$(grep '^CADDY_BASIC_AUTH_USER=' "$ARR_ENV_FILE" | head -n1 || true)"
+      if [[ -n "$env_user_line" ]]; then
+        env_user_value="${env_user_line#CADDY_BASIC_AUTH_USER=}"
+        env_user_value="$(unescape_env_value_from_compose "$env_user_value")"
+        if [[ -n "$env_user_value" ]]; then
+          CADDY_BASIC_AUTH_USER="$env_user_value"
+        fi
+      fi
+    fi
+
+    if [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]]; then
+      local env_hash_line env_hash_value
+      env_hash_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "$ARR_ENV_FILE" | head -n1 || true)"
+      if [[ -n "$env_hash_line" ]]; then
+        env_hash_value="${env_hash_line#CADDY_BASIC_AUTH_HASH=}"
+        env_hash_value="$(unescape_env_value_from_compose "$env_hash_value")"
+        if [[ -n "$env_hash_value" ]]; then
+          CADDY_BASIC_AUTH_HASH="$env_hash_value"
+        fi
+      fi
+    fi
+  fi
+
+  CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
+
   if [[ -z "${LAN_IP:-}" ]]; then
     LAN_IP="$(detect_lan_ip)"
     if [[ "$LAN_IP" != "0.0.0.0" ]]; then
@@ -1018,7 +1229,7 @@ write_env() {
     format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
     format_env_line "CADDY_LAN_CIDRS" "$CADDY_LAN_CIDRS"
     format_env_line "CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_USER"
-    # store unhashed string in file *escaped* so compose does not interpret it
+    # Store the bcrypt hash and escape dollars so Compose does not expand them
     format_env_line "CADDY_BASIC_AUTH_HASH" "$(unescape_env_value_from_compose "$CADDY_BASIC_AUTH_HASH")"
     printf '\n'
 
@@ -1251,7 +1462,7 @@ __BAZARR_OPTIONAL_SUBS__
         max-file: "2"
 
   port-sync:
-    image: alpine:3.20.3
+    image: ${PORT_SYNC_IMAGE}
     container_name: port-sync
     network_mode: "service:gluetun"
     environment:
@@ -1422,7 +1633,7 @@ write_caddy_assets() {
   caddy_auth_hash="$(unescape_env_value_from_compose "${CADDY_BASIC_AUTH_HASH}")"
 
   if ! is_bcrypt_hash "$caddy_auth_hash"; then
-    warn "CADDY_BASIC_AUTH_HASH does not appear to be a valid bcrypt string; Caddy Basic Auth may fail."
+    warn "CADDY_BASIC_AUTH_HASH does not appear to be a valid bcrypt string; use --rotate-caddy-auth to regenerate."
   fi
 
   # Prefer normalized suffix if set via .env; fall back to computed value
@@ -1464,7 +1675,7 @@ write_caddy_assets() {
       printf '        reverse_proxy 127.0.0.1:%s\n' "$port"
       printf '    }\n'
       printf '    handle {\n'
-      printf '        basicauth * {\n'
+      printf '        basic_auth * {\n'
       printf '            %s %s\n' "$CADDY_BASIC_AUTH_USER" "$caddy_auth_hash"
       printf '        }\n'
       printf '        reverse_proxy 127.0.0.1:%s\n' "$port"
@@ -1479,8 +1690,8 @@ write_caddy_assets() {
     warn "Caddyfile is missing the configured Basic Auth user; verify CADDY_BASIC_AUTH_USER"
   fi
 
-  if ! grep -qE '\$2[aby]\$' "$caddyfile"; then
-    warn "Caddyfile appears to be missing a valid bcrypt string; check CADDY_BASIC_AUTH_HASH handling."
+  if ! grep -qE '\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}' "$caddyfile"; then
+    warn "Caddyfile bcrypt string may be invalid; hash regeneration fixes this (use --rotate-caddy-auth)."
   fi
 }
 
@@ -2115,6 +2326,20 @@ update_env_image_var() {
   fi
 }
 
+check_image_exists() {
+  local image="$1"
+
+  if docker manifest inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
 validate_images() {
   msg "🔍 Validating Docker images..."
 
@@ -2137,8 +2362,8 @@ validate_images() {
 
     msg "  Checking $image..."
 
-    # Just try to pull - simpler and more reliable
-    if docker pull "$image" >/dev/null 2>&1; then
+    # Check via manifest (remote) or local cache without pulling layers
+    if check_image_exists "$image"; then
       msg "  ✅ Valid: $image"
       continue
     fi
@@ -2155,7 +2380,7 @@ validate_images() {
       local latest_image="${base_image}:latest"
       msg "    Trying fallback: $latest_image"
 
-      if docker pull "$latest_image" >/dev/null 2>&1; then
+      if check_image_exists "$latest_image"; then
         msg "    ✅ Using fallback: $latest_image"
 
         case "$base_image" in
@@ -2706,7 +2931,7 @@ Username: ${QBT_USER}
 ${qbt_pass_msg}
 
 LAN DNS hint: point qbittorrent.${domain_suffix} to ${LAN_IP} (via DNS or /etc/hosts).
-Remote clients must supply the Caddy Basic Auth user '${CADDY_BASIC_AUTH_USER}' with the password stored in ${ARR_DOCKER_DIR}/caddy/Caddyfile.
+Remote clients must supply the Caddy Basic Auth user '${CADDY_BASIC_AUTH_USER}' with the password saved in ${ARR_DOCKER_DIR}/caddy/credentials.
 ================================================
 
 QBT_INFO
@@ -2762,6 +2987,10 @@ main() {
         FORCE_ROTATE_API_KEY=1
         shift
         ;;
+      --rotate-caddy-auth)
+        FORCE_REGEN_CADDY_AUTH=1
+        shift
+        ;;
       --help | -h)
         help
         exit 0
@@ -2785,6 +3014,7 @@ main() {
   write_env
   write_compose
   write_gluetun_control_assets
+  ensure_caddy_auth
   write_caddy_assets
   sync_gluetun_library
   write_port_sync_script
