@@ -79,6 +79,8 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user configured in `${ARR_DOCKER_DIR}/caddy/Caddyfile`. Log in with the recorded value, change it in the WebUI, then mirror the new password in `.env` so automation keeps working.
+- 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
+- 🌐 **LAN DNS & TLS** – create DNS or `/etc/hosts` entries so `qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc. resolve to `${LAN_IP}`. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
 
 ### First-time checklist
 After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
@@ -218,7 +220,7 @@ Manage the stack directly with Docker Compose commands from `${ARR_STACK_DIR}` i
 
 ## Security posture
 ### Gluetun control API
-The control server listens inside the VPN namespace and is published to the host at `${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}`. It is forced to bind on IPv4 loopback to avoid `localhost` resolving to IPv6 and breaking the control client. API-key authentication is required and `/gluetun/auth/config.toml` allow-lists only the routes the stack needs (`/v1/publicip/ip`, `/v1/openvpn/status`, `/v1/forwardedport`, `/v1/openvpn/portforwarded`). Requests must include `X-API-Key: ${GLUETUN_API_KEY}`:
+The control server listens inside the VPN namespace and is published to the host at `${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}`. It is forced to bind on IPv4 loopback to avoid `localhost` resolving to IPv6 and breaking the control client. API-key authentication is enforced via Gluetun's `HTTP_CONTROL_SERVER_AUTH=apikey` and `HTTP_CONTROL_SERVER_APIKEY=${GLUETUN_API_KEY}` environment variables. Legacy `/gluetun/auth/config.toml` files are removed automatically to avoid schema drift, so requests must include `X-API-Key: ${GLUETUN_API_KEY}` when calling the limited set of endpoints the stack uses (`/v1/publicip/ip`, `/v1/openvpn/status`, `/v1/forwardedport`, `/v1/openvpn/portforwarded`):
 
 ```bash
 curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
