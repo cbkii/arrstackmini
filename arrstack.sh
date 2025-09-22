@@ -56,6 +56,7 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
 : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
 
+# Derived / normalized
 ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
 ARR_DOMAIN_SUFFIX_CLEAN="${ARR_DOMAIN_SUFFIX_CLEAN:-lan}"
 
@@ -551,6 +552,14 @@ unescape_env_value_from_compose() {
   printf '%s' "$value"
 }
 
+is_bcrypt_hash() {
+  local candidate="${1-}"
+
+  candidate="$(unescape_env_value_from_compose "$candidate")"
+
+  [[ $candidate =~ ^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]]
+}
+
 format_env_line() {
   local key="$1"
   local value="${2-}"
@@ -643,11 +652,12 @@ obfuscate_sensitive() {
   printf '%s%s%s' "$prefix" "$mask" "$suffix"
 }
 
+# Build the qBittorrent WebUI auth whitelist, ensuring LAN & localhost get no-auth
 calculate_qbt_auth_whitelist() {
   local auth_whitelist=""
 
   append_whitelist_entry() {
-    local entry="$1"
+    local entry="${1-}"
     entry="${entry//[[:space:]]/}"
     if [[ -z "$entry" ]]; then
       return
@@ -835,11 +845,12 @@ preflight() {
 
   load_proton_credentials
 
+  # Make it explicit in logs what we will use for PF
+  msg "  OpenVPN username (enforced '+pmp'): $(obfuscate_sensitive "$OPENVPN_USER_VALUE" 2 4)"
+
   if ((PROTON_USER_PMP_ADDED)); then
     warn "Proton username '${PROTON_USER_VALUE}' missing '+pmp'; using '${OPENVPN_USER_VALUE}'"
   fi
-
-  msg "  OpenVPN username (enforced): $(obfuscate_sensitive "$OPENVPN_USER_VALUE" 2 4)"
 
   install_missing
 
@@ -968,9 +979,17 @@ write_env() {
     format_env_line "LOCALHOST_IP" "$LOCALHOST_IP"
     printf '\n'
 
+    # Derived, so downstream tools (and developers) can reference the normalized suffix directly
+    format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
+    printf '\n'
+
     printf '# ProtonVPN OpenVPN credentials\n'
     format_env_line "OPENVPN_USER" "$PU"
     format_env_line "OPENVPN_PASSWORD" "$PW"
+    printf '\n'
+
+    # Also persist for clarity (helps compose templating & external tooling)
+    format_env_line "OPENVPN_USER_ENFORCED" "$PU"
     printf '\n'
 
     printf '# Gluetun settings\n'
@@ -999,6 +1018,7 @@ write_env() {
     format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
     format_env_line "CADDY_LAN_CIDRS" "$CADDY_LAN_CIDRS"
     format_env_line "CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_USER"
+    # store unhashed string in file *escaped* so compose does not interpret it
     format_env_line "CADDY_BASIC_AUTH_HASH" "$(unescape_env_value_from_compose "$CADDY_BASIC_AUTH_HASH")"
     printf '\n'
 
@@ -1390,8 +1410,9 @@ write_caddy_assets() {
   chmod "$DATA_DIR_MODE" "$data_dir" 2>/dev/null || true
   chmod "$DATA_DIR_MODE" "$config_dir" 2>/dev/null || true
 
+  # Normalize LAN CIDRs (commas, tabs, multiple spaces, and newlines → single spaces)
   local lan_cidrs
-  lan_cidrs="$(printf '%s' "${CADDY_LAN_CIDRS}" | tr ',\t\n' '   ')"
+  lan_cidrs="$(printf '%s' "${CADDY_LAN_CIDRS}" | tr ',\t\r\n' '    ')"
   lan_cidrs="$(printf '%s\n' "$lan_cidrs" | xargs 2>/dev/null || printf '')"
   if [[ -z "$lan_cidrs" ]]; then
     lan_cidrs="127.0.0.1/32"
@@ -1399,6 +1420,13 @@ write_caddy_assets() {
 
   local caddy_auth_hash
   caddy_auth_hash="$(unescape_env_value_from_compose "${CADDY_BASIC_AUTH_HASH}")"
+
+  if ! is_bcrypt_hash "$caddy_auth_hash"; then
+    warn "CADDY_BASIC_AUTH_HASH does not appear to be a valid bcrypt string; Caddy Basic Auth may fail."
+  fi
+
+  # Prefer normalized suffix if set via .env; fall back to computed value
+  local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
 
   local -a services=(
     "qbittorrent 8080"
@@ -1417,6 +1445,7 @@ write_caddy_assets() {
     printf '  admin off\n'
     printf '}\n\n'
 
+    # Plain HTTP health endpoint for container healthcheck
     printf ':80 {\n'
     printf '    respond /healthz 200 {\n'
     printf '        body "ok"\n'
@@ -1427,7 +1456,7 @@ write_caddy_assets() {
     for entry in "${services[@]}"; do
       name="${entry%% *}"
       port="${entry##* }"
-      host="${name}.${ARR_DOMAIN_SUFFIX_CLEAN}"
+      host="${name}.${domain_suffix}"
       printf '%s {\n' "$host"
       printf '    tls internal\n'
       printf '    @lan remote_ip %s\n' "$lan_cidrs"
@@ -1440,9 +1469,6 @@ write_caddy_assets() {
       printf '        }\n'
       printf '        reverse_proxy 127.0.0.1:%s\n' "$port"
       printf '    }\n'
-      printf '    route /healthz {\n'
-      printf '        respond 200 "ok"\n'
-      printf '    }\n'
       printf '}\n\n'
     done
   })"
@@ -1453,7 +1479,7 @@ write_caddy_assets() {
     warn "Caddyfile is missing the configured Basic Auth user; verify CADDY_BASIC_AUTH_USER"
   fi
 
-  if ! grep -qE '\\$2[aby]\\$' "$caddyfile"; then
+  if ! grep -qE '\$2[aby]\$' "$caddyfile"; then
     warn "Caddyfile appears to be missing a valid bcrypt string; check CADDY_BASIC_AUTH_HASH handling."
   fi
 }
@@ -2623,6 +2649,34 @@ write_aliases_file() {
   msg "   Repo copy updated: $configured_template"
 }
 
+configure_local_dns_entries() {
+  msg "🧭 Ensuring local DNS entries exist for Caddy hostnames"
+
+  local helper_script="${REPO_ROOT}/scripts/setup-lan-dns.sh"
+
+  if [[ ! -f "$helper_script" ]]; then
+    warn "Local DNS helper script ${helper_script} not found"
+    return 0
+  fi
+
+  if [[ ! -x "$helper_script" ]]; then
+    warn "Local DNS helper script is not executable; fix permissions on ${helper_script}"
+    return 0
+  fi
+
+  if [[ -z "${LAN_IP:-}" ]]; then
+    warn "LAN_IP is unset; skipping local DNS helper"
+    return 0
+  fi
+
+  if ! "$helper_script" "$ARR_DOMAIN_SUFFIX_CLEAN" "$LAN_IP"; then
+    warn "Local DNS helper was unable to update host mappings; rerun arrstack.sh with sudo to grant access"
+    return 0
+  fi
+
+  msg "✅ Local DNS helper completed"
+}
+
 show_summary() {
 
   msg "🎉 Setup complete!!"
@@ -2725,8 +2779,8 @@ main() {
   # Check network requirements without blocking
   check_network_requirements
   mkdirs
-  safe_cleanup
   run_one_time_migrations
+  safe_cleanup
   generate_api_key
   write_env
   write_compose
@@ -2739,6 +2793,7 @@ main() {
   if ! write_aliases_file; then
     warn "Helper aliases file could not be generated"
   fi
+  configure_local_dns_entries
   verify_permissions
   install_aliases
   start_stack
