@@ -83,12 +83,38 @@ init_logging() {
   msg "Log file: $LOG_FILE"
 }
 
+# --- Colour setup ---
+CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
+RESET='\033[0m'
+
+msg_color_supported() {
+  if [ -n "${NO_COLOR:-}" ]; then
+    return 1
+  fi
+  if [ -n "${FORCE_COLOR:-}" ]; then
+    return 0
+  fi
+  if [ -t 1 ]; then
+    return 0
+  fi
+  return 1
+}
+
 msg() {
-  printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
+  if msg_color_supported; then
+    printf '%b%s%b\n' "$CYAN" "$*" "$RESET"
+  else
+    printf '%s\n' "$*"
+  fi
 }
 
 warn() {
-  printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" >&2
+  if msg_color_supported; then
+    printf '%bWARN: %s%b\n' "$YELLOW" "$*" "$RESET" >&2
+  else
+    printf 'WARN: %s\n' "$*" >&2
+  fi
 }
 
 die() {
@@ -910,7 +936,7 @@ preflight() {
   if [[ "$ASSUME_YES" != 1 ]]; then
     local response=""
 
-    printf 'Continue with ProtonVPN OpenVPN setup? [y/N]: '
+    warn "Continue with ProtonVPN OpenVPN setup? [y/N]: "
     if ! IFS= read -r response; then
       response=""
     fi
@@ -1164,7 +1190,7 @@ services:
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
   sonarr:
     image: ${SONARR_IMAGE}
@@ -1188,7 +1214,7 @@ services:
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
   radarr:
     image: ${RADARR_IMAGE}
@@ -1212,7 +1238,7 @@ services:
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
   prowlarr:
     image: ${PROWLARR_IMAGE}
@@ -1233,7 +1259,7 @@ services:
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
   bazarr:
     image: ${BAZARR_IMAGE}
@@ -1257,7 +1283,7 @@ __BAZARR_OPTIONAL_SUBS__
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
   flaresolverr:
     image: ${FLARESOLVERR_IMAGE}
@@ -1273,7 +1299,7 @@ __BAZARR_OPTIONAL_SUBS__
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
   port-sync:
     image: alpine:3.20.3
@@ -1302,7 +1328,7 @@ __BAZARR_OPTIONAL_SUBS__
       driver: json-file
       options:
         max-size: "1m"
-        max-file: "3"
+        max-file: "2"
 
 YAML
   )"
@@ -1487,7 +1513,8 @@ get_qbt_listen_port() {
 
     printf '%s
 ' "$response" | tr -d ' 
-' | awk -F'"listen_port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
+
+' | awk -F'"listen_port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
     return 0
 }
 
@@ -1813,9 +1840,7 @@ install_vuetorrent() {
   fi
 
   chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
-  # macOS ships BSD xargs which lacks -r (see POSIX spec); use a shell loop for
-  # portability across GNU/BSD implementations.
-  # Ref: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/xargs.html
+  # macOS ships BSD xargs which lacks -r (see POSIX spec)
   local -a stale_containers=()
   while IFS= read -r container_id; do
     stale_containers+=("$container_id")
@@ -2377,12 +2402,10 @@ write_aliases_file() {
 }
 
 show_summary() {
-  cat <<SUMMARY
 
-🎉 Setup complete!
-
-SUMMARY
-
+  msg "🎉 Setup complete!!"
+  warn "Check these details and revisit the README for any manual steps you may need to perform from here"
+  
   # Always show qBittorrent access information prominently
   local qbt_pass_msg=""
   if [[ -f "$ARR_ENV_FILE" ]]; then
