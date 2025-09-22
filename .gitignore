@@ -26,3 +26,4 @@ logs/
 # Editor files
 *.swp
 .vscode/
+*.patch

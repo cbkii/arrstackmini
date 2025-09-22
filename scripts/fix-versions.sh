@@ -3,7 +3,10 @@ set -euo pipefail
 
 msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
-die() { warn "$1"; exit 1; }
+die() {
+  warn "$1"
+  exit 1
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
