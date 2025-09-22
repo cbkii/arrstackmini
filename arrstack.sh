@@ -1324,7 +1324,7 @@ services:
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
       VPN_PORT_FORWARDING: "on"
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
-      HTTP_CONTROL_SERVER_ADDRESS: 127.0.0.1:${GLUETUN_CONTROL_PORT}
+      HTTP_CONTROL_SERVER_ADDRESS: 0.0.0.0:${GLUETUN_CONTROL_PORT}
       HTTP_CONTROL_SERVER_AUTH: "apikey"
       HTTP_CONTROL_SERVER_APIKEY: ${GLUETUN_API_KEY}
       VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
@@ -1574,7 +1574,17 @@ __BAZARR_OPTIONAL_SUBS__
       gluetun:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthz"]
+      test:
+        - "CMD-SHELL"
+        - >
+          if command -v curl >/dev/null 2>&1; then
+            curl -fsS http://127.0.0.1/healthz;
+          elif command -v wget >/dev/null 2>&1; then
+            wget -qO- http://127.0.0.1/healthz;
+          else
+            echo "missing http client" >&2;
+            exit 1;
+          fi
       interval: 15s
       timeout: 5s
       retries: 6
