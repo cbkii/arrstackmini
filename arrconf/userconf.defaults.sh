@@ -32,6 +32,8 @@ PGID="${PGID:-$(id -g)}"
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
 LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
+VPN_SERVICE_PROVIDER="${VPN_SERVICE_PROVIDER:-protonvpn}"
+VPN_TYPE="${VPN_TYPE:-openvpn}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
 
 # Gluetun control server
@@ -66,3 +68,4 @@ FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
+FORCE_COLOR="${FORCE_COLOR:-}"

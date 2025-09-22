@@ -27,6 +27,8 @@ TIMEZONE="Australia/Sydney"            # Timezone for container logs and schedul
 # --- Networking ---
 LAN_IP=""                              # Bind services to one LAN IP (leave blank to listen on all)
 LOCALHOST_IP="127.0.0.1"               # Loopback used by the Gluetun control API
+VPN_SERVICE_PROVIDER="protonvpn"       # Gluetun VPN provider (stick with protonvpn for native port forwarding)
+VPN_TYPE="openvpn"                     # ProtonVPN transport (OpenVPN required for port forwarding support)
 SERVER_COUNTRIES="Switzerland,Iceland,Romania,Czech Republic,Netherlands"  # ProtonVPN exit country list
 GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API
 
@@ -57,3 +59,4 @@ FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on th
 # --- Behaviour toggles ---
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs
 # FORCE_ROTATE_API_KEY="0"               # Force regeneration of the Gluetun API key on next run
+# FORCE_COLOR=""                         # Set to 1 to keep coloured output when piping/redirecting logs
