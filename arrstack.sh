@@ -680,15 +680,15 @@ gen_safe_password() {
     password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len" || true)"
   fi
 
-  if (( ${#password} < len )) && command -v openssl >/dev/null 2>&1; then
+  if ((${#password} < len)) && command -v openssl >/dev/null 2>&1; then
     password="$(openssl rand -base64 $((len * 2)) | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$len" || true)"
   fi
 
-  if (( ${#password} < len )); then
+  if ((${#password} < len)); then
     password="$(printf '%s' "$(date +%s%N)$$" | sha256sum | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$len" || true)"
   fi
 
-  if (( ${#password} < len )); then
+  if ((${#password} < len)); then
     password="$(printf '%*s' "$len" '' | tr ' ' 'A')"
   fi
 
@@ -1699,7 +1699,8 @@ run_one_time_migrations() {
   local legacy_auth="${ARR_DOCKER_DIR}/gluetun/auth/config.toml"
 
   if [[ -f "$legacy_auth" ]]; then
-    local legacy_backup="${legacy_auth}.bak.$(date +%s)"
+    local legacy_backup
+    legacy_backup="${legacy_auth}.bak.$(date +%s)"
     if mv "$legacy_auth" "$legacy_backup" 2>/dev/null; then
       warn "Removed legacy Gluetun auth config; backup saved to ${legacy_backup}"
     else
