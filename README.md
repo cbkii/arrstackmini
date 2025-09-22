@@ -62,13 +62,18 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    ```
    Replace the placeholders with your Proton VPN username and password (the installer tightens the file permissions automatically).
 3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
-4. **Run the installer.**
+4. **Build the port-sync helper image once.**
+   ```bash
+   docker build -t local/port-sync:alpine-curl images/port-sync
+   ```
+   This tiny Alpine build includes `curl` so the `port-sync` sidecar can run without installing packages at startup.
+5. **Run the installer.**
    ```bash
    ./arrstack.sh
    ```
    - Review the summary shown before containers launch and confirm to proceed.
    - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install.
-   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`.
+   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key` and `--rotate-caddy-auth`.
 
     The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
 
@@ -78,7 +83,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - 🆘 **Recovery helper** – `${ARR_STACK_DIR}/scripts/fix-versions.sh` repairs `.env` if an old LinuxServer tag is removed. It creates a timestamped backup and replaces missing images with the safe fallback before rerunning the installer.
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `pvpn.*`, `arr.health`, and other shortcuts.
-- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user configured in `${ARR_DOCKER_DIR}/caddy/Caddyfile`. Log in with the recorded value, change it in the WebUI, then mirror the new password in `.env` so automation keeps working.
+- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
 - 🌐 **LAN DNS & TLS** – create DNS or `/etc/hosts` entries so `qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc. resolve to `${LAN_IP}`. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
 
@@ -86,7 +91,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 
 1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
-2. **Rotate the Caddy Basic Auth hash.** Generate a new bcrypt hash with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and replace the value in `${ARR_DOCKER_DIR}/caddy/Caddyfile` (and optionally set `CADDY_BASIC_AUTH_HASH` in `.env`).
+2. **Rotate the Caddy Basic Auth credentials.** Run `./arrstack.sh --rotate-caddy-auth` (or set `FORCE_REGEN_CADDY_AUTH=1 ./arrstack.sh --yes`) to mint a fresh username/password pair. The plaintext is written to `${ARR_DOCKER_DIR}/caddy/credentials`, and the bcrypt hash is saved to `.env`. Prefer manual control? You can still generate a hash yourself with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and update `.env` accordingly.
 3. **Create LAN DNS or hosts entries.** Point `qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc. to your host’s `LAN_IP` so browsers reach Caddy.
 4. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
 5. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `pvpn.status`, `arr.logs`, and other useful aliased quick commands.
