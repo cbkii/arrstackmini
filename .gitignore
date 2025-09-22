@@ -13,6 +13,7 @@ media/
 # Logs
 logs/
 *.log
+*.txt
 
 # Backups
 *.backup
