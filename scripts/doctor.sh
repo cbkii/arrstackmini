@@ -13,6 +13,10 @@ echo "[doctor] Checking if port 53 is free (or already bound):"
 if command -v ss >/dev/null 2>&1; then
   if ss -ulpn 2>/dev/null | grep -q ':53 '; then
     echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved; then
+      echo "[doctor][hint] systemd-resolved is active and commonly owns :53 on Bookworm."
+      echo "[doctor][hint] Run: ./arrstack.sh --setup-host-dns (automated) or ./scripts/host-dns-setup.sh (manual)."
+    fi
   else
     echo "[doctor][ok] Port 53 appears free."
   fi
