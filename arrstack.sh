@@ -2405,7 +2405,7 @@ show_summary() {
 
   msg "🎉 Setup complete!!"
   warn "Check these details and revisit the README for any manual steps you may need to perform from here"
-  
+
   # Always show qBittorrent access information prominently
   local qbt_pass_msg=""
   if [[ -f "$ARR_ENV_FILE" ]]; then
@@ -2520,7 +2520,7 @@ main() {
   verify_permissions
   install_aliases
   start_stack
-  
+
   msg "Installation completed at $(date)"
   show_summary
 }
