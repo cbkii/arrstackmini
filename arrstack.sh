@@ -822,7 +822,7 @@ check_required_ports() {
     return 0
   fi
 
-  msg "  Checking host ports for ${lan_ip_for_check} (${lan_ip_source})"
+  msg "🔍 Checking host ports for ${lan_ip_for_check} (${lan_ip_source})"
 
   local local_dns_requested=0
   if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
@@ -842,6 +842,7 @@ check_required_ports() {
   port_checks+=("tcp:${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT}:Gluetun control API")
 
   local -a conflicts=()
+  local local_dns_conflicts=0
   local entry=""
   for entry in "${port_checks[@]}"; do
     IFS=: read -r proto bind_ip port label <<<"$entry"
@@ -867,6 +868,9 @@ check_required_ports() {
         LOCAL_DNS_SERVICE_REASON="auto-disabled-port-conflict"
         continue
       fi
+      if [[ "$label" == "Local DNS" ]]; then
+        local_dns_conflicts=$((local_dns_conflicts + 1))
+      fi
       conflicts+=("${label} requires ${bind_ip}:${port}/${proto}")
     fi
   done
@@ -879,10 +883,17 @@ check_required_ports() {
     done
     warn "Free these ports or adjust arrconf/userconf.sh (LAN_IP, ENABLE_LOCAL_DNS, or ports) before retrying."
     warn "Tip: run 'sudo ss -tulpn' or 'sudo netstat -tulpn' to identify the conflicting services."
+    if ((local_dns_conflicts > 0)); then
+      if ((local_dns_conflicts == ${#conflicts[@]})); then
+        warn "Tip: rerun with --auto-disable-local-dns (or set AUTO_DISABLE_LOCAL_DNS=1) to skip launching dnsmasq when port 53 is already in use."
+      else
+        warn "Tip: consider --auto-disable-local-dns if you prefer to disable the bundled dnsmasq when port 53 conflicts persist."
+      fi
+    fi
     die "Resolve host port conflicts before continuing."
   fi
 
-  msg "  Required host ports are available"
+  msg "  Required host ports are available ✓"
 }
 
 install_missing() {
@@ -3640,7 +3651,7 @@ show_summary() {
 
   case "${LOCAL_DNS_SERVICE_REASON}" in
     auto-disabled-port-conflict)
-      warn "Local DNS container disabled automatically because ${LOCAL_DNS_AUTO_DISABLED_REASON}. Free port 53 or rerun with --auto-disable-local-dns to accept the fallback."
+      warn "Local DNS container disabled automatically because ${LOCAL_DNS_AUTO_DISABLED_REASON}. Free port 53 and rerun without --auto-disable-local-dns (or set AUTO_DISABLE_LOCAL_DNS=0) to restore it."
       ;;
     invalid-ip)
       warn "Local DNS container skipped because LAN_IP (${LAN_IP:-<unset>}) is not a specific address. Update arrconf/userconf.sh and rerun."
