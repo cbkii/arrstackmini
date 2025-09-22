@@ -62,11 +62,8 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    ```
    Replace the placeholders with your Proton VPN username and password (the installer tightens the file permissions automatically).
 3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
-4. **Build the port-sync helper image once.**
-   ```bash
-   docker build -t local/port-sync:alpine-curl images/port-sync
-   ```
-   This tiny Alpine build includes `curl` so the `port-sync` sidecar can run without installing packages at startup.
+4. **(Optional) Customize the port-sync helper image.**
+   The default `alpine:3.20.3` boots fine and installs `curl` on the fly. If you prefer a pre-baked image (for example one built with `curl`/CA bundles already present), publish it to your registry of choice and set `PORT_SYNC_IMAGE=your/image:tag` in `arrconf/userconf.sh` (a minimal Dockerfile just needs `FROM alpine:3.20` plus `apk add --no-cache curl ca-certificates`).
 5. **Run the installer.**
    ```bash
    ./arrstack.sh

@@ -62,6 +62,11 @@ RADARR_IMAGE="${RADARR_IMAGE:-lscr.io/linuxserver/radarr:5.27.5.10198-ls283}"
 PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}"
 BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:latest}"
 FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
+#
+# Port-sync helper sidecar image:
+# - Default uses upstream Alpine and installs curl at runtime (robust path)
+# - If you want a pre-baked local image, set: PORT_SYNC_IMAGE=local/port-sync:alpine-curl
+PORT_SYNC_IMAGE="${PORT_SYNC_IMAGE:-alpine:3.20.3}"
 
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"
