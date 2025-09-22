@@ -69,6 +69,12 @@ webui_port() {
   printf '%s' "${QBT_HTTP_PORT_HOST:-8080}"
 }
 
+webui_domain() {
+  local suffix="${CADDY_DOMAIN_SUFFIX:-lan}"
+  suffix="${suffix#.}"
+  printf 'qbittorrent.%s' "$suffix"
+}
+
 config_file_path() {
   printf '%s/qbittorrent/qBittorrent.conf' "$DOCKER_DATA"
 }
@@ -90,7 +96,8 @@ derive_subnet() {
 show_info() {
   log "qBittorrent Access Information:"
   log "================================"
-  log "URL: http://$(webui_host):$(webui_port)/"
+  log "LAN URL:  http://$(webui_domain)/"
+  log "HTTPS:    https://$(webui_domain)/ (trust the Caddy internal CA)"
   log ""
 
   local temp_pass
@@ -103,6 +110,9 @@ show_info() {
     log "Username: ${QBT_USER:-admin}"
     log "Password: ${QBT_PASS:-Check logs or use 'reset' command}"
   fi
+
+  log ""
+  log "Remote clients must authenticate through Caddy using user '${CADDY_BASIC_AUTH_USER:-user}' and the password hashed in ${ARR_DOCKER_DIR}/caddy/Caddyfile."
 }
 
 reset_auth() {

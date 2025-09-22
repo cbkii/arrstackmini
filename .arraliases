@@ -27,7 +27,7 @@ _arr_loopback(){
   printf '%s' "$host"
 }
 
-_arr_services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+_arr_services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy port-sync)
 
 _arr_compose(){ (cd "$ARR_STACK_DIR" && docker compose "$@" ); }
 
@@ -40,6 +40,16 @@ _arr_host(){
     host="$(_arr_loopback)"
   fi
   printf '%s' "$host"
+}
+
+_arr_domain_suffix(){
+  local suffix
+  suffix="$(_arr_env_get CADDY_DOMAIN_SUFFIX)"
+  if [ -z "$suffix" ]; then
+    suffix="lan"
+  fi
+  suffix="${suffix#.}"
+  printf '%s' "$suffix"
 }
 
 _arr_gluetun_port(){ printf '%s' "${GLUETUN_CONTROL_PORT:-$(_arr_env_get GLUETUN_CONTROL_PORT || echo 8000)}"; }
@@ -86,11 +96,9 @@ _arr_gluetun_api(){
 }
 
 _arr_qbt_base(){
-  local host port
-  host="$(_arr_host)"
-  port="$(_arr_env_get QBT_HTTP_PORT_HOST)"
-  [ -n "$port" ] || port=8081
-  printf 'http://%s:%s' "$host" "$port"
+  local suffix
+  suffix="$(_arr_domain_suffix)"
+  printf 'http://qbittorrent.%s' "$suffix"
 }
 
 _arr_qbt_auth(){
@@ -162,7 +170,7 @@ arr.health(){
 arr.backup(){
   local dest="${1:-${ARR_STACK_DIR}/backups/$(date +%Y%m%d-%H%M%S)}"
   mkdir -p "$dest"
-  for svc in gluetun qbittorrent sonarr radarr prowlarr bazarr; do
+  for svc in gluetun qbittorrent sonarr radarr prowlarr bazarr caddy; do
     if [ -d "${ARR_DOCKER_DIR}/${svc}" ]; then
       tar -czf "${dest}/${svc}.tgz" -C "${ARR_DOCKER_DIR}" "$svc"
     fi
@@ -240,25 +248,23 @@ arr.data.usage(){
 }
 
 arr.open(){
-  local host="$(_arr_host)"
-  local entries='qBittorrent QBT_HTTP_PORT_HOST 8081
-Sonarr SONARR_PORT 8989
-Radarr RADARR_PORT 7878
-Prowlarr PROWLARR_PORT 9696
-Bazarr BAZARR_PORT 6767
-FlareSolverr FLARESOLVERR_PORT 8191'
+  local suffix="$(_arr_domain_suffix)"
+  local entries='qBittorrent qbittorrent
+Sonarr sonarr
+Radarr radarr
+Prowlarr prowlarr
+Bazarr bazarr
+FlareSolverr flaresolverr'
   local opener=""
   if command -v xdg-open >/dev/null 2>&1; then
     opener=xdg-open
   elif command -v open >/dev/null 2>&1; then
     opener=open
   fi
-  printf 'Service URLs (use your browser):\n'
-  while read -r name key fallback; do
+  printf 'Service URLs (proxied via Caddy):\n'
+  while read -r name host; do
     [ -n "$name" ] || continue
-    local port="$(_arr_env_get "$key")"
-    [ -n "$port" ] || port="$fallback"
-    local url="http://${host}:${port}"
+    local url="http://${host}.${suffix}"
     printf '  %s -> %s\n' "$name" "$url"
     if [ -n "$opener" ]; then
       "$opener" "$url" >/dev/null 2>&1 &

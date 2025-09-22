@@ -39,7 +39,7 @@ If the API key query fails, regenerate credentials with:
 ```
 
 ### qBittorrent login errors
-- Default credentials are `admin/adminadmin`.
+- Default credentials are `admin/adminadmin` (change them immediately and update `.env`).
 - If you changed them and forgot:
   ```bash
   docker compose stop qbittorrent
@@ -47,7 +47,7 @@ If the API key query fails, regenerate credentials with:
   docker compose up -d qbittorrent
   docker logs qbittorrent | grep "password"
   ```
-- Update `.env` with the new `QBT_USER`/`QBT_PASS` values so the port sync helper can authenticate if the WebUI requires it.
+- Update `.env` with the new `QBT_USER`/`QBT_PASS` values so the port-sync helper and Gluetun hook can authenticate whenever the WebUI requires it.
 
 ### Port forwarding not updating
 ```bash
@@ -62,7 +62,7 @@ curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
 # Review port-sync logs inside the shared Gluetun namespace
 docker logs port-sync --tail 50
 ```
-If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials or enable "Bypass authentication for clients on localhost" in the WebUI.
+If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials. LAN browsers traverse Caddy, so the qBittorrent “bypass” checkboxes are optional. Gluetun also executes `/gluetun/hooks/update-qbt-port.sh` whenever Proton allocates a new port—if the hook is missing or not executable, rerun the installer.
 
 #### Port forwarding timeouts or RPC failures
 - Inspect Gluetun logs for NAT-PMP activity to spot slow or stalled negotiations:
@@ -70,10 +70,11 @@ If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS
   docker logs gluetun | grep -i 'portforward'
   ```
 - Confirm `.env` still contains a Proton username with the `+pmp` suffix. The installer adds it automatically, but edits to `.env` can remove it and prevent Proton from enabling port forwarding.
+- Ensure `/gluetun/hooks/update-qbt-port.sh` exists and is executable inside the Gluetun container (rerun the installer if it is missing). The hook uses the qBittorrent Web API directly, so keep `.env` credentials accurate for seamless authentication.
 - Switch to another Proton exit in `arrconf/userconf.sh` by adjusting `SERVER_COUNTRIES`. Busy servers are more likely to drop the UDP 5351 NAT-PMP handshake.
-- Make sure nothing on the host blocks outbound UDP 5351 from the Gluetun namespace (Proton's NAT-PMP responder lives at 10.16.0.1:5351).
 - Give the tunnel time to settle. Port-sync uses exponential backoff (up to five minutes) and will automatically apply the forwarded port as soon as Gluetun reports it.
 - Keep the control API locked down: `GLUETUN_API_KEY` must be present and `LOCALHOST_IP` should stay on a loopback or other trusted address. Gluetun 3.40+ enforces authentication on `/v1/openvpn/portforwarded`, and the stack already ships with API-key protection—regenerate the key with `./arrstack.sh --rotate-api-key --yes` if required.
+- If Proton still never assigns a port, double-check that nothing on the host blocks outbound UDP 5351 to 10.16.0.1.
 
 
 ### Services exposed on all interfaces
@@ -106,9 +107,9 @@ docker logs qbittorrent 2>&1 | grep "temporary password" | tail -1
 
 1. **"Unauthorized" error**:
    - You need the temporary password from logs
-   - URL must be `http://YOUR_IP:8080/`
+   - URL must be `http://qbittorrent.${CADDY_DOMAIN_SUFFIX:-lan}/` (or `https://` with the Caddy internal CA)
 
-2. **Enable passwordless LAN access**:
+2. **Enable passwordless LAN access** (optional for direct connections bypassing Caddy):
    ```bash
    ${ARR_STACK_DIR}/scripts/qbt-helper.sh whitelist
    ```
@@ -133,8 +134,8 @@ docker compose ps
 ```
 
 ```bash
-# Port currently used by qBittorrent
-curl -fsS "http://localhost:${QBT_HTTP_PORT_HOST:-8080}/api/v2/app/preferences" | jq '.listen_port'
+# Port currently used by qBittorrent (query from inside the Gluetun namespace)
+docker exec gluetun curl -fsS "http://127.0.0.1:8080/api/v2/app/preferences" | jq '.listen_port'
 ```
 
 ## Resetting everything

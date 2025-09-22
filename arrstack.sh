@@ -37,10 +37,16 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${FLARESOLVERR_PORT:=8191}"
 : "${SUBS_DIR:=}"
 
+: "${CADDY_IMAGE:=caddy:2.8.4}"
+: "${CADDY_DOMAIN_SUFFIX:=lan}"
+: "${CADDY_LAN_CIDRS:=192.168.0.0/16 10.0.0.0/8 172.16.0.0/12}"
+: "${CADDY_BASIC_AUTH_USER:=user}"
+: "${CADDY_BASIC_AUTH_HASH:=\$2b\$12\$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa}"
+
 : "${QBT_USER:=admin}"
 : "${QBT_PASS:=adminadmin}"
 : "${QBT_DOCKER_MODS:=ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
-: "${QBT_AUTH_WHITELIST:=127.0.0.1/8,::1/128}"
+: "${QBT_AUTH_WHITELIST:=127.0.0.1/32,127.0.0.0/8,::1/128}"
 
 : "${GLUETUN_IMAGE:=qmcgaw/gluetun:v3.39.1}"
 : "${QBITTORRENT_IMAGE:=lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
@@ -49,6 +55,10 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
 : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
 : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
+
+ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
+ARR_DOMAIN_SUFFIX_CLEAN="${ARR_DOMAIN_SUFFIX_CLEAN:-lan}"
+
 
 DOCKER_COMPOSE_CMD=()
 ARRSTACK_LOCKFILE=""
@@ -123,193 +133,17 @@ die() {
 }
 
 check_network_requirements() {
-  msg "🔍 Checking network requirements"
+  msg "🔍 Checking Gluetun control prerequisites"
 
-  local needs_fix=0
-  local nc_output=""
-  local nc_status=0
-
-  if have_command nc; then
-    if nc_output="$(nc -u -w1 -z 10.16.0.1 5351 2>&1)"; then
-      nc_status=0
-    else
-      nc_status=$?
-    fi
-
-    if grep -qi "unreachable" <<<"$nc_output"; then
-      needs_fix=1
-      warn "UDP/5351 to 10.16.0.1 appears unreachable; ProtonVPN port forwarding may fail."
-    elif ((nc_status != 0)); then
-      needs_fix=1
-      warn "UDP/5351 probe exited with status ${nc_status}; ProtonVPN port forwarding may fail."
-    fi
-  else
-    warn "nc not installed; skipping UDP/5351 probe"
+  if ! have_command curl; then
+    warn "curl not installed; install it so the stack can query the Gluetun control API"
   fi
 
-  if ((needs_fix)); then
-    cat <<'FIREWALL_INFO'
-
-⚠️  ProtonVPN Port Forwarding Requirements
-==========================================
-Port forwarding requires UDP port 5351 outbound to 10.16.0.1.
-
-Manual remediation steps (requires sudo privileges):
-
-1. Inspect Docker's iptables rules:
-   sudo iptables -L DOCKER-USER -n | grep 5351 || echo "Rule missing in DOCKER-USER"
-   sudo iptables -L OUTPUT -n | grep 5351      || echo "Rule missing in OUTPUT"
-   sudo iptables -L FORWARD -n | grep 5351     || echo "Rule missing in FORWARD"
-
-2. Allow outbound UDP 5351 when rules are missing:
-   sudo iptables -I DOCKER-USER 1 -p udp --dport 5351 -j ACCEPT
-   sudo iptables -I OUTPUT -p udp --dport 5351 -j ACCEPT
-   sudo iptables -I FORWARD -p udp --dport 5351 -j ACCEPT
-
-3. Persist the rules on Debian/Ubuntu (installs packages if absent):
-   sudo apt-get install -y iptables-persistent netfilter-persistent
-   sudo netfilter-persistent save
-
-The installer can attempt these steps automatically when sudo is available.
-See: https://github.com/qdm12/gluetun/wiki/ProtonVPN#port-forwarding
-==========================================
-
-FIREWALL_INFO
-
-    if have_command sudo; then
-      local proceed=0
-
-      if [[ "$ASSUME_YES" == 1 ]]; then
-        if sudo -n true >/dev/null 2>&1; then
-          proceed=1
-        else
-          warn "Skipping automated sudo remediation because passwordless sudo is unavailable (ASSUME_YES=1)."
-        fi
-      else
-        printf 'Attempt automated firewall remediation with sudo? [y/N]: '
-        local response=""
-        if IFS= read -r response && [[ ${response,,} =~ ^[[:space:]]*(y|yes)[[:space:]]*$ ]]; then
-          proceed=1
-        fi
-      fi
-
-      if ((proceed)); then
-        if ! setup_network_requirements; then
-          warn "Automated firewall remediation failed; follow the manual steps above."
-        fi
-      else
-        msg "  Skipping automated firewall remediation; follow the manual steps above if needed."
-      fi
-    else
-      warn "sudo not available; follow the manual steps above to adjust iptables manually."
-    fi
+  if ! have_command jq; then
+    warn "jq not installed; helper scripts rely on it when parsing Gluetun responses"
   fi
 
-  msg "  Network check complete ✓"
-}
-
-setup_network_requirements() {
-  msg "🛠️ Applying UDP/5351 firewall configuration via sudo"
-
-  if ! have_command sudo; then
-    warn "sudo command not found; cannot adjust iptables automatically"
-    return 1
-  fi
-
-  if ! have_command iptables; then
-    warn "iptables command not found; cannot adjust firewall rules"
-    return 1
-  fi
-
-  local ok=true
-  local -a sudo_cmd=(sudo)
-  local -a chains=(OUTPUT FORWARD)
-
-  if "${sudo_cmd[@]}" iptables -L DOCKER-USER -n >/dev/null 2>&1; then
-    chains+=(DOCKER-USER)
-  else
-    warn "  DOCKER-USER chain not found; Docker may not have created it yet"
-  fi
-
-  local chain=""
-  for chain in "${chains[@]}"; do
-    if "${sudo_cmd[@]}" iptables -C "$chain" -p udp --dport 5351 -j ACCEPT >/dev/null 2>&1; then
-      msg "  Rule already present in $chain"
-      continue
-    fi
-
-    if "${sudo_cmd[@]}" iptables -I "$chain" 1 -p udp --dport 5351 -j ACCEPT >/dev/null 2>&1; then
-      msg "  Added UDP/5351 rule to $chain"
-    else
-      warn "  Failed to add UDP/5351 rule to $chain"
-      ok=false
-    fi
-  done
-
-  local -a missing_packages=()
-  if have_command dpkg-query; then
-    local pkg=""
-    for pkg in iptables-persistent netfilter-persistent; do
-      if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then
-        missing_packages+=("$pkg")
-      fi
-    done
-  else
-    warn "  dpkg-query not available; skipping persistence package detection"
-  fi
-
-  if ((${#missing_packages[@]} > 0)); then
-    if have_command apt-get; then
-      msg "  Installing persistence packages: ${missing_packages[*]}"
-      if ! "${sudo_cmd[@]}" apt-get update; then
-        warn "  apt-get update failed; skipping package installation"
-        ok=false
-      elif ! "${sudo_cmd[@]}" DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_packages[@]}"; then
-        warn "  Failed to install: ${missing_packages[*]}"
-        ok=false
-      fi
-    else
-      warn "  apt-get not available; cannot install persistence packages automatically"
-      ok=false
-    fi
-  else
-    msg "  Persistence packages already installed"
-  fi
-
-  if have_command netfilter-persistent; then
-    if "${sudo_cmd[@]}" netfilter-persistent save; then
-      msg "  Saved iptables rules via netfilter-persistent"
-    else
-      warn "  netfilter-persistent save failed"
-      ok=false
-    fi
-  else
-    warn "  netfilter-persistent command not available; skipping save"
-  fi
-
-  if have_command nc; then
-    local verify_output=""
-    local verify_status=0
-    if verify_output="$(nc -u -w1 -z 10.16.0.1 5351 2>&1)"; then
-      verify_status=0
-    else
-      verify_status=$?
-    fi
-
-    if grep -qi "unreachable" <<<"$verify_output" || ((verify_status != 0)); then
-      warn "  UDP/5351 probe still failing; manual inspection required"
-      ok=false
-    else
-      msg "  UDP/5351 probe succeeded after remediation"
-    fi
-  fi
-
-  if [[ "$ok" == true ]]; then
-    msg "  Firewall remediation complete"
-    return 0
-  fi
-
-  return 1
+  msg "  Skipping legacy NAT-PMP probe; Gluetun readiness is now verified via /v1/openvpn/status once the container starts"
 }
 
 ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
@@ -336,7 +170,7 @@ case "${ARR_PERMISSION_PROFILE}" in
 esac
 
 readonly ARR_PERMISSION_PROFILE SECRET_FILE_MODE LOCK_FILE_MODE NONSECRET_FILE_MODE DATA_DIR_MODE
-ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy)
 readonly -a ARR_DOCKER_SERVICES
 
 atomic_write() {
@@ -804,7 +638,17 @@ calculate_qbt_auth_whitelist() {
     fi
   fi
 
-  append_whitelist_entry "127.0.0.1/8"
+  if [[ -n "${CADDY_LAN_CIDRS:-}" ]]; then
+    local lan_entries
+    lan_entries="${CADDY_LAN_CIDRS//,/ }"
+    lan_entries="${lan_entries//$'\n'/ }"
+    for entry in $lan_entries; do
+      append_whitelist_entry "$entry"
+    done
+  fi
+
+  append_whitelist_entry "127.0.0.1/32"
+  append_whitelist_entry "127.0.0.0/8"
   append_whitelist_entry "::1/128"
 
   if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
@@ -812,7 +656,7 @@ calculate_qbt_auth_whitelist() {
   fi
 
   if [[ -z "$auth_whitelist" ]]; then
-    auth_whitelist="127.0.0.1/8,::1/128"
+    auth_whitelist="127.0.0.1/32,127.0.0.0/8,::1/128"
   fi
 
   printf '%s' "$auth_whitelist"
@@ -930,6 +774,14 @@ preflight() {
   fi
 
   install_missing
+
+  if [[ -f "$ARR_ENV_FILE" ]]; then
+    local existing_openvpn_user=""
+    existing_openvpn_user="$(grep '^OPENVPN_USER=' "$ARR_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
+    if [[ -n "$existing_openvpn_user" && "$existing_openvpn_user" != *"+pmp" ]]; then
+      warn "OPENVPN_USER in ${ARR_ENV_FILE} is '${existing_openvpn_user}' but ProtonVPN port forwarding requires the '+pmp' suffix. Edit the file to set OPENVPN_USER=\"${existing_openvpn_user}+pmp\" before continuing."
+    fi
+  fi
 
   show_configuration_preview
 
@@ -1068,6 +920,12 @@ QBT_USER=${QBT_USER}
 QBT_PASS=${QBT_PASS}
 QBT_DOCKER_MODS=${QBT_DOCKER_MODS}
 
+# Reverse proxy defaults
+CADDY_DOMAIN_SUFFIX=${ARR_DOMAIN_SUFFIX_CLEAN}
+CADDY_LAN_CIDRS=${CADDY_LAN_CIDRS}
+CADDY_BASIC_AUTH_USER=${CADDY_BASIC_AUTH_USER}
+CADDY_BASIC_AUTH_HASH=${CADDY_BASIC_AUTH_HASH}
+
 # Paths
 ARR_DOCKER_DIR=${ARR_DOCKER_DIR}
 DOWNLOADS_DIR=${DOWNLOADS_DIR}
@@ -1084,6 +942,7 @@ RADARR_IMAGE=${RADARR_IMAGE}
 PROWLARR_IMAGE=${PROWLARR_IMAGE}
 BAZARR_IMAGE=${BAZARR_IMAGE}
 FLARESOLVERR_IMAGE=${FLARESOLVERR_IMAGE}
+CADDY_IMAGE=${CADDY_IMAGE}
 ENV
   )"
 
@@ -1121,10 +980,14 @@ services:
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
       VPN_PORT_FORWARDING: "on"
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
-      HTTP_CONTROL_SERVER_ADDRESS: ${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
+      HTTP_CONTROL_SERVER_ADDRESS: 127.0.0.1:${GLUETUN_CONTROL_PORT}
       HTTP_CONTROL_SERVER_AUTH: "apikey"
       HTTP_CONTROL_SERVER_APIKEY: ${GLUETUN_API_KEY}
       VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
+      VPN_PORT_FORWARDING_UP_COMMAND: "/gluetun/hooks/update-qbt-port.sh {{PORTS}}"
+      QBT_USER: ${QBT_USER}
+      QBT_PASS: ${QBT_PASS}
+      QBITTORRENT_ADDR: "http://127.0.0.1:8080"
       PORT_FORWARD_ONLY: "yes"
       HEALTH_TARGET_ADDRESS: "1.1.1.1:443"
       HEALTH_VPN_DURATION_INITIAL: "30s"
@@ -1133,9 +996,7 @@ services:
       DNS_KEEP_NAMESERVER: "off"
       PORT_FORWARDING_STATUS_FILE_CLEANUP: "off"
       FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
-      FIREWALL_INPUT_PORTS: "${QBT_HTTP_PORT_HOST},${SONARR_PORT},${RADARR_PORT},${PROWLARR_PORT},${BAZARR_PORT},${FLARESOLVERR_PORT}"
-      DOT: "off"
-      DNS_PLAINTEXT_ADDRESS: "1.1.1.1"
+      FIREWALL_INPUT_PORTS: "80,443"
       UPDATER_PERIOD: "24h"
       PUID: ${PUID}
       PGID: ${PGID}
@@ -1144,12 +1005,8 @@ services:
       - ${ARR_DOCKER_DIR}/gluetun:/gluetun
     ports:
       - "${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
-      - "${LAN_IP}:${QBT_HTTP_PORT_HOST}:8080"
-      - "${LAN_IP}:${SONARR_PORT}:${SONARR_PORT}"
-      - "${LAN_IP}:${RADARR_PORT}:${RADARR_PORT}"
-      - "${LAN_IP}:${PROWLARR_PORT}:${PROWLARR_PORT}"
-      - "${LAN_IP}:${BAZARR_PORT}:${BAZARR_PORT}"
-      - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
+      - "${LAN_IP}:80:80"
+      - "${LAN_IP}:443:443"
     healthcheck:
       test: /gluetun-entrypoint healthcheck
       interval: 30s
@@ -1181,7 +1038,7 @@ services:
         condition: service_healthy
         restart: true
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/app/version"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/v2/app/version"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1307,8 +1164,8 @@ __BAZARR_OPTIONAL_SUBS__
     network_mode: "service:gluetun"
     environment:
       GLUETUN_API_KEY: ${GLUETUN_API_KEY}
-      GLUETUN_ADDR: "http://localhost:${GLUETUN_CONTROL_PORT}"
-      QBITTORRENT_ADDR: "http://localhost:8080"
+      GLUETUN_ADDR: "http://127.0.0.1:${GLUETUN_CONTROL_PORT}"
+      QBITTORRENT_ADDR: "http://127.0.0.1:8080"
       UPDATE_INTERVAL: 300
       BACKOFF_MAX: 900
       QBT_USER: ${QBT_USER}
@@ -1330,6 +1187,24 @@ __BAZARR_OPTIONAL_SUBS__
         max-size: "1m"
         max-file: "2"
 
+  caddy:
+    image: ${CADDY_IMAGE}
+    container_name: caddy
+    network_mode: "service:gluetun"
+    volumes:
+      - ${ARR_DOCKER_DIR}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${ARR_DOCKER_DIR}/caddy/data:/data
+      - ${ARR_DOCKER_DIR}/caddy/config:/config
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+
 YAML
   )"
 
@@ -1340,6 +1215,169 @@ YAML
   compose_content="${compose_content/__BAZARR_OPTIONAL_SUBS__/${bazarr_subs_volume}}"
 
   atomic_write "$compose_path" "$compose_content" "$NONSECRET_FILE_MODE"
+}
+
+write_gluetun_control_assets() {
+  msg "🛡️ Preparing Gluetun control assets"
+
+  local gluetun_root="${ARR_DOCKER_DIR}/gluetun"
+  local auth_dir="${gluetun_root}/auth"
+  local hooks_dir="${gluetun_root}/hooks"
+
+  ensure_dir "$gluetun_root"
+  ensure_dir "$auth_dir"
+  chmod 700 "$auth_dir" 2>/dev/null || true
+
+  local config_content
+  config_content="$(
+    cat <<EOF
+[[apikeys]]
+token = "${GLUETUN_API_KEY}"
+routes = [
+  "GET /v1/publicip/ip",
+  "GET /v1/openvpn/status",
+  "GET /v1/forwardedport",
+  "GET /v1/openvpn/portforwarded"
+]
+EOF
+  )"
+
+  atomic_write "${auth_dir}/config.toml" "$config_content" 600
+
+  ensure_dir "$hooks_dir"
+  chmod 700 "$hooks_dir" 2>/dev/null || true
+
+  cat >"${hooks_dir}/update-qbt-port.sh" <<'HOOK'
+#!/bin/sh
+set -eu
+
+QBITTORRENT_ADDR="${QBITTORRENT_ADDR:-http://127.0.0.1:8080}"
+COOKIE_JAR="/tmp/qbt.hook.cookies"
+
+PORT_SPEC="${1:-}"
+
+if [ -z "$PORT_SPEC" ]; then
+    exit 0
+fi
+
+PORT_VALUE="${PORT_SPEC%%,*}"
+PORT_VALUE="${PORT_VALUE%%:*}"
+
+case "$PORT_VALUE" in
+    ''|*[!0-9]*)
+        exit 0
+        ;;
+esac
+
+payload=$(printf 'json={"listen_port":%s,"random_port":false}' "$PORT_VALUE")
+
+touch "$COOKIE_JAR" 2>/dev/null || true
+chmod 600 "$COOKIE_JAR" 2>/dev/null || true
+
+post_setprefs_unauth() {
+    curl --silent --show-error --max-time 8 \
+        --data "$payload" \
+        --output /dev/null "${QBITTORRENT_ADDR%/}/api/v2/app/setPreferences"
+}
+
+post_setprefs_auth() {
+    if [ -z "${QBT_USER:-}" ] || [ -z "${QBT_PASS:-}" ]; then
+        return 1
+    fi
+
+    if ! curl -fsS --max-time 5 -c "$COOKIE_JAR" \
+        --data-urlencode "username=${QBT_USER}" \
+        --data-urlencode "password=${QBT_PASS}" \
+        "${QBITTORRENT_ADDR%/}/api/v2/auth/login" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    curl --silent --show-error --max-time 8 -b "$COOKIE_JAR" \
+        --data "$payload" \
+        --output /dev/null "${QBITTORRENT_ADDR%/}/api/v2/app/setPreferences"
+}
+
+if command -v curl >/dev/null 2>&1; then
+    attempts=0
+    while [ $attempts -lt 5 ]; do
+        if post_setprefs_unauth; then
+            exit 0
+        fi
+        if post_setprefs_auth; then
+            exit 0
+        fi
+        attempts=$((attempts + 1))
+        sleep 2
+    done
+fi
+
+exit 0
+HOOK
+
+  chmod 700 "${hooks_dir}/update-qbt-port.sh" 2>/dev/null || true
+}
+
+write_caddy_assets() {
+  msg "🌐 Writing Caddy reverse proxy config"
+
+  local caddy_root="${ARR_DOCKER_DIR}/caddy"
+  local data_dir="${caddy_root}/data"
+  local config_dir="${caddy_root}/config"
+  local caddyfile="${caddy_root}/Caddyfile"
+
+  ensure_dir "$caddy_root"
+  ensure_dir "$data_dir"
+  ensure_dir "$config_dir"
+  chmod "$DATA_DIR_MODE" "$caddy_root" 2>/dev/null || true
+  chmod "$DATA_DIR_MODE" "$data_dir" 2>/dev/null || true
+  chmod "$DATA_DIR_MODE" "$config_dir" 2>/dev/null || true
+
+  local lan_cidrs
+  lan_cidrs="${CADDY_LAN_CIDRS//,/ }"
+  lan_cidrs="$(printf '%s' "$lan_cidrs" | tr '\n' ' ' | xargs 2>/dev/null || printf '')"
+  if [[ -z "$lan_cidrs" ]]; then
+    lan_cidrs="127.0.0.1/32"
+  fi
+
+  local -a services=(
+    "qbittorrent 8080"
+    "sonarr ${SONARR_PORT}"
+    "radarr ${RADARR_PORT}"
+    "prowlarr ${PROWLARR_PORT}"
+    "bazarr ${BAZARR_PORT}"
+    "flaresolverr ${FLARESOLVERR_PORT}"
+  )
+
+  local caddyfile_content
+  caddyfile_content="$({
+    printf '# Auto-generated by arrstack.sh\n'
+    printf '# Adjust LAN CIDRs or add TLS settings via arrconf/userconf.sh overrides.\n\n'
+    printf '{\n'
+    printf '  admin off\n'
+    printf '}\n\n'
+
+    local entry name port host
+    for entry in "${services[@]}"; do
+      name="${entry%% *}"
+      port="${entry##* }"
+      host="${name}.${ARR_DOMAIN_SUFFIX_CLEAN}"
+      printf '%s {\n' "$host"
+      printf '    tls internal\n'
+      printf '    @lan remote_ip %s\n' "$lan_cidrs"
+      printf '    handle @lan {\n'
+      printf '        reverse_proxy 127.0.0.1:%s\n' "$port"
+      printf '    }\n'
+      printf '    handle {\n'
+      printf '        basicauth * {\n'
+      printf '            %s %s\n' "$CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_HASH"
+      printf '        }\n'
+      printf '        reverse_proxy 127.0.0.1:%s\n' "$port"
+      printf '    }\n'
+      printf '}\n\n'
+    done
+  })"
+
+  atomic_write "$caddyfile" "$caddyfile_content" "$NONSECRET_FILE_MODE"
 }
 
 sync_gluetun_library() {
@@ -1383,30 +1421,45 @@ ensure_curl() {
 
 wait_for_gluetun() {
     local attempts=0
-    local max_attempts=30
+    local max_attempts=8
+    local sleep_seconds=2
+    local status_url="${GLUETUN_ADDR}/v1/openvpn/status"
+    local response=""
 
-    log "Waiting for Gluetun API to be ready..."
+    log "Waiting for Gluetun OpenVPN status endpoint (max ~$((max_attempts * sleep_seconds))s)..."
 
     while [ $attempts -lt $max_attempts ]; do
-        if curl -fsS --max-time 2 "${GLUETUN_ADDR}/health" >/dev/null 2>&1; then
-            log "Gluetun API is ready"
-            return 0
+        if [ -n "$GLUETUN_API_KEY" ]; then
+            response="$(curl -fsS --max-time 3 -H "X-Api-Key: $GLUETUN_API_KEY" "$status_url" 2>/dev/null || true)"
+        else
+            response="$(curl -fsS --max-time 3 "$status_url" 2>/dev/null || true)"
+        fi
+
+        if [ -n "$response" ]; then
+            if printf '%s' "$response" | grep -q '"status"[[:space:]]*:[[:space:]]*"connected"'; then
+                log "Gluetun reports OpenVPN status: connected"
+                return 0
+            fi
+
+            if printf '%s' "$response" | grep -q '"status"[[:space:]]*:[[:space:]]*"completed"'; then
+                log "Gluetun OpenVPN status endpoint is responding"
+                return 0
+            fi
         fi
 
         attempts=$((attempts + 1))
-        if [ $((attempts % 10)) -eq 0 ]; then
-            log "Still waiting for Gluetun API (attempt $attempts/$max_attempts)"
+        if [ $attempts -lt $max_attempts ]; then
+            sleep "$sleep_seconds"
         fi
-        sleep 2
     done
 
-    log "ERROR: Gluetun API not available after ${max_attempts} attempts"
+    log "ERROR: Gluetun OpenVPN status endpoint unavailable after ~$((max_attempts * sleep_seconds))s"
     return 1
 }
 
-: "${GLUETUN_ADDR:=http://localhost:8000}"
+: "${GLUETUN_ADDR:=http://127.0.0.1:8000}"
 : "${GLUETUN_API_KEY:=}"
-: "${QBITTORRENT_ADDR:=http://localhost:8080}"
+: "${QBITTORRENT_ADDR:=http://127.0.0.1:8080}"
 : "${UPDATE_INTERVAL:=300}"
 : "${BACKOFF_MAX:=900}"
 : "${QBT_USER:=}"
@@ -1758,6 +1811,7 @@ EOF
   set_qbt_conf_value "$conf_file" 'WebUI\ServerDomains' '*'
   set_qbt_conf_value "$conf_file" 'WebUI\LocalHostAuth' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelistEnabled' 'true'
+  set_qbt_conf_value "$conf_file" 'WebUI\HostHeaderValidation' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
 }
 
@@ -1903,6 +1957,7 @@ validate_images() {
     PROWLARR_IMAGE
     BAZARR_IMAGE
     FLARESOLVERR_IMAGE
+    CADDY_IMAGE
   )
 
   local failed_images=()
@@ -2065,7 +2120,7 @@ wait_for_vpn_connection() {
 show_service_status() {
   msg "Service status summary:"
   local service
-  for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr port-sync; do
+  for service in gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy port-sync; do
     local status
     status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
     printf '  %-15s: %s\n' "$service" "$status"
@@ -2154,9 +2209,10 @@ start_stack() {
     msg "✅ Port forwarding active: Port $pf_port"
   fi
 
-  local services=(qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  local services=(caddy qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
   local service
   local qb_started=0
+  local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
 
   for service in "${services[@]}"; do
     msg "Starting $service..."
@@ -2418,24 +2474,19 @@ show_summary() {
     fi
   fi
 
+  local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
+
   cat <<QBT_INFO
 ================================================
 qBittorrent Access Information:
 ================================================
-URL: http://${LAN_IP}:${QBT_HTTP_PORT_HOST}/
+LAN URL:  http://qbittorrent.${domain_suffix}/
+HTTPS:    https://qbittorrent.${domain_suffix}/  (trust the Caddy internal CA)
 Username: ${QBT_USER}
 ${qbt_pass_msg}
 
-If you see "Unauthorized":
-1. Get the current password:
-   docker logs qbittorrent | grep "temporary password" | tail -1
-
-2. Login and set a permanent password in:
-   Tools → Options → Web UI
-
-3. Update .env with your new credentials:
-   QBT_USER=yournewusername
-   QBT_PASS=yournewpassword
+LAN DNS hint: point qbittorrent.${domain_suffix} to ${LAN_IP} (via DNS or /etc/hosts).
+Remote clients must supply the Caddy Basic Auth user '${CADDY_BASIC_AUTH_USER}' with the password stored in ${ARR_DOCKER_DIR}/caddy/Caddyfile.
 ================================================
 
 QBT_INFO
@@ -2459,13 +2510,15 @@ WARNING
   fi
 
   cat <<SUMMARY
-Access your services at:
-  qBittorrent:   http://${LAN_IP}:${QBT_HTTP_PORT_HOST}
-  Sonarr:        http://${LAN_IP}:${SONARR_PORT}
-  Radarr:        http://${LAN_IP}:${RADARR_PORT}
-  Prowlarr:      http://${LAN_IP}:${PROWLARR_PORT}
-  Bazarr:        http://${LAN_IP}:${BAZARR_PORT}
-  FlareSolverr:  http://${LAN_IP}:${FLARESOLVERR_PORT}
+Access your services via Caddy:
+  qBittorrent:   http://qbittorrent.${domain_suffix}
+  Sonarr:        http://sonarr.${domain_suffix}
+  Radarr:        http://radarr.${domain_suffix}
+  Prowlarr:      http://prowlarr.${domain_suffix}
+  Bazarr:        http://bazarr.${domain_suffix}
+  FlareSolverr:  http://flaresolverr.${domain_suffix}
+
+HTTPS is also available on the same hostnames (Caddy issues an internal certificate).
 
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 
@@ -2510,6 +2563,8 @@ main() {
   generate_api_key
   write_env
   write_compose
+  write_gluetun_control_assets
+  write_caddy_assets
   sync_gluetun_library
   write_port_sync_script
   write_qbt_helper_script
