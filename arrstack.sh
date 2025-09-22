@@ -46,6 +46,7 @@ fi
 : "${UPSTREAM_DNS_1:=1.1.1.1}"
 : "${UPSTREAM_DNS_2:=1.0.0.1}"
 : "${ENABLE_LOCAL_DNS:=1}"
+: "${SETUP_HOST_DNS:=0}"
 
 : "${FORCE_REGEN_CADDY_AUTH:=0}"
 : "${CADDY_IMAGE:=caddy:2.8.4}"
@@ -103,6 +104,7 @@ Options:
   --yes                 Run non-interactively and assume yes to prompts
   --rotate-api-key      Force regeneration of the Gluetun API key
   --rotate-caddy-auth   Force regeneration of the Caddy basic auth credentials
+  --setup-host-dns      Run the host DNS takeover helper during installation
   --help                Show this help message
 USAGE
 }
@@ -3106,6 +3108,46 @@ configure_local_dns_entries() {
   msg "✅ Local DNS helper completed"
 }
 
+run_host_dns_setup() {
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+    msg "Skipping host DNS setup (--setup-host-dns) because ENABLE_LOCAL_DNS=0"
+    return 0
+  fi
+
+  if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
+    warn "Cannot run --setup-host-dns automatically: LAN_IP is ${LAN_IP:-<unset>}"
+    warn "Set LAN_IP to a specific address and rerun arrstack.sh --setup-host-dns once available."
+    return 0
+  fi
+
+  local helper_script="${REPO_ROOT}/scripts/host-dns-setup.sh"
+
+  if [[ ! -f "$helper_script" ]]; then
+    warn "Host DNS helper script not found at ${helper_script}; skipping --setup-host-dns"
+    return 0
+  fi
+
+  if [[ ! -x "$helper_script" ]]; then
+    warn "Host DNS helper script is not executable; fix permissions on ${helper_script} or rerun manually."
+    return 0
+  fi
+
+  msg "🔧 Running host DNS setup helper (--setup-host-dns)"
+
+  if (
+    cd "$ARR_STACK_DIR" 2>/dev/null &&
+      LAN_IP="${LAN_IP}" \
+      LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
+      UPSTREAM_DNS_1="${UPSTREAM_DNS_1}" \
+      UPSTREAM_DNS_2="${UPSTREAM_DNS_2}" \
+      bash "$helper_script"
+  ); then
+    msg "✅ Host DNS setup helper completed"
+  else
+    warn "Host DNS setup helper reported an error; review the output above or run scripts/host-dns-setup.sh manually."
+  fi
+}
+
 show_summary() {
 
   msg "🎉 Setup complete!!"
@@ -3203,6 +3245,10 @@ main() {
         FORCE_REGEN_CADDY_AUTH=1
         shift
         ;;
+      --setup-host-dns)
+        SETUP_HOST_DNS=1
+        shift
+        ;;
       --help | -h)
         help
         exit 0
@@ -3236,6 +3282,9 @@ main() {
     warn "Helper aliases file could not be generated"
   fi
   configure_local_dns_entries
+  if [[ "${SETUP_HOST_DNS:-0}" -eq 1 ]]; then
+    run_host_dns_setup
+  fi
   verify_permissions
   install_aliases
   start_stack

@@ -70,7 +70,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    ```
    - Review the summary shown before containers launch and confirm to proceed.
    - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install.
-   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key` and `--rotate-caddy-auth`.
+   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`, `--rotate-caddy-auth`, and `--setup-host-dns` (automates the host DNS takeover helper).
 
     The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
 
@@ -83,6 +83,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
 - 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). Point your router or client DNS to `${LAN_IP}` for automatic hostnames, or disable it with `ENABLE_LOCAL_DNS=0` and manage `/etc/hosts` yourself. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
+  Debian Bookworm binds port 53 with `systemd-resolved` by default; pass `--setup-host-dns` to `arrstack.sh` to back up the current resolver state, disable the stub non-destructively, write a static `/etc/resolv.conf`, and restart the `local_dns` container automatically. You can rerun the helper later with `./scripts/host-dns-setup.sh` and undo the change any time with `./scripts/host-dns-rollback.sh`.
   1. Set your router’s DHCP DNS server to `${LAN_IP}` so new devices learn the resolver automatically.
   2. Override DNS manually on devices that allow it (laptops, consoles, smart TVs) if the router cannot be changed.
   3. On Android, leave Private DNS **Off** or **Automatic**—forcing a public resolver bypasses local hostnames.
