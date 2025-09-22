@@ -64,7 +64,6 @@ PROTON_PASS_VALUE=""
 OPENVPN_USER_VALUE=""
 PROTON_USER_PMP_ADDED=0
 
-
 DOCKER_COMPOSE_CMD=()
 ARRSTACK_LOCKFILE=""
 LOG_FILE=""
@@ -733,7 +732,7 @@ show_configuration_preview() {
     load_proton_credentials
   fi
 
-  local proton_user="${PROTON_USER_VALUE}" 
+  local proton_user="${PROTON_USER_VALUE}"
   local proton_pass="${PROTON_PASS_VALUE}"
   local openvpn_user="${OPENVPN_USER_VALUE}"
 
