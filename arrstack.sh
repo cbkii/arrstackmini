@@ -59,6 +59,11 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic
 ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
 ARR_DOMAIN_SUFFIX_CLEAN="${ARR_DOMAIN_SUFFIX_CLEAN:-lan}"
 
+PROTON_USER_VALUE=""
+PROTON_PASS_VALUE=""
+OPENVPN_USER_VALUE=""
+PROTON_USER_PMP_ADDED=0
+
 
 DOCKER_COMPOSE_CMD=()
 ARRSTACK_LOCKFILE=""
@@ -535,6 +540,24 @@ escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[&/]/\\&/g'
 }
 
+escape_env_value_for_compose() {
+  local value="${1-}"
+  value="${value//\$/\$\$}"
+  printf '%s' "$value"
+}
+
+unescape_env_value_from_compose() {
+  local value="${1-}"
+  value="${value//\$\$/\$}"
+  printf '%s' "$value"
+}
+
+format_env_line() {
+  local key="$1"
+  local value="${2-}"
+  printf '%s=%s\n' "$key" "$(escape_env_value_for_compose "$value")"
+}
+
 set_qbt_conf_value() {
   local file="$1"
   local key="$2"
@@ -572,35 +595,49 @@ persist_env_var() {
     return
   fi
 
+  local escaped_value
+  escaped_value="$(escape_env_value_for_compose "$value")"
+
   if [[ -f "$ARR_ENV_FILE" ]]; then
     if grep -q "^${key}=" "$ARR_ENV_FILE"; then
       local escaped
-      escaped="$(escape_sed_replacement "$value")"
+      escaped="$(escape_sed_replacement "$escaped_value")"
       portable_sed "s/^${key}=.*/${key}=${escaped}/" "$ARR_ENV_FILE"
     else
-      printf '%s=%s\n' "$key" "$value" >>"$ARR_ENV_FILE"
+      printf '%s' "$(format_env_line "$key" "$value")" >>"$ARR_ENV_FILE"
     fi
   fi
 }
 
 obfuscate_sensitive() {
   local value="${1-}"
+  local visible_prefix="${2:-2}"
+  local visible_suffix="${3:-${visible_prefix}}"
+
   if [[ -z "$value" ]]; then
     printf '(not set)'
     return
   fi
 
-  local length=${#value}
+  if ((visible_prefix < 0)); then
+    visible_prefix=0
+  fi
+  if ((visible_suffix < 0)); then
+    visible_suffix=0
+  fi
 
-  if ((length <= 4)); then
+  local length=${#value}
+  if ((length <= visible_prefix + visible_suffix)); then
     printf '%*s' "$length" '' | tr ' ' '*'
     return
   fi
 
-  local visible=2
-  local prefix="${value:0:visible}"
-  local suffix="${value: -visible}"
-  local hidden_len=$((length - visible * 2))
+  local prefix=""
+  local suffix=""
+  ((visible_prefix > 0)) && prefix="${value:0:visible_prefix}"
+  ((visible_suffix > 0)) && suffix="${value: -visible_suffix}"
+
+  local hidden_len=$((length - visible_prefix - visible_suffix))
   local mask
   mask="$(printf '%*s' "$hidden_len" '' | tr ' ' '*')"
 
@@ -663,17 +700,42 @@ calculate_qbt_auth_whitelist() {
   unset -f append_whitelist_entry || true
 }
 
+load_proton_credentials() {
+  local proton_file="${ARRCONF_DIR}/proton.auth"
+
+  PROTON_USER_VALUE=""
+  PROTON_PASS_VALUE=""
+  OPENVPN_USER_VALUE=""
+  PROTON_USER_PMP_ADDED=0
+
+  if [[ -f "$proton_file" ]]; then
+    PROTON_USER_VALUE="$(grep '^PROTON_USER=' "$proton_file" | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
+    PROTON_PASS_VALUE="$(grep '^PROTON_PASS=' "$proton_file" | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
+  fi
+
+  if [[ -z "$PROTON_USER_VALUE" || -z "$PROTON_PASS_VALUE" ]]; then
+    die "Missing or empty PROTON_USER/PROTON_PASS in ${proton_file}"
+  fi
+
+  local enforced
+  enforced="${PROTON_USER_VALUE%+pmp}+pmp"
+  if [[ "$enforced" != "$PROTON_USER_VALUE" ]]; then
+    PROTON_USER_PMP_ADDED=1
+  fi
+
+  OPENVPN_USER_VALUE="$enforced"
+}
+
 show_configuration_preview() {
   msg "🔎 Configuration preview"
 
-  local proton_file="${ARRCONF_DIR}/proton.auth"
-  local proton_user=""
-  local proton_pass=""
-
-  if [[ -f "$proton_file" ]]; then
-    proton_user="$(grep '^PROTON_USER=' "$proton_file" | head -n1 | cut -d= -f2- || true)"
-    proton_pass="$(grep '^PROTON_PASS=' "$proton_file" | head -n1 | cut -d= -f2- || true)"
+  if [[ -z "$PROTON_USER_VALUE" || -z "$PROTON_PASS_VALUE" ]]; then
+    load_proton_credentials
   fi
+
+  local proton_user="${PROTON_USER_VALUE}" 
+  local proton_pass="${PROTON_PASS_VALUE}"
+  local openvpn_user="${OPENVPN_USER_VALUE}"
 
   local proton_user_display="${proton_user:-'(not set)'}"
   local proton_pass_display
@@ -683,9 +745,8 @@ show_configuration_preview() {
   qbt_pass_display="$(obfuscate_sensitive "${QBT_PASS:-}")"
 
   local openvpn_user_display
-  if [[ -n "$proton_user" ]]; then
-    openvpn_user_display="$proton_user"
-    [[ "$openvpn_user_display" == *"+pmp" ]] || openvpn_user_display="${openvpn_user_display}+pmp"
+  if [[ -n "$openvpn_user" ]]; then
+    openvpn_user_display="$(obfuscate_sensitive "$openvpn_user" 2 4)"
   else
     openvpn_user_display="(not set)"
   fi
@@ -728,7 +789,7 @@ Network & system
 
 Credentials & secrets
   • Proton username: ${proton_user_display}
-  • Proton OpenVPN username: ${openvpn_user_display}
+  • Proton OpenVPN username (+pmp enforced): ${openvpn_user_display}
   • Proton password: ${proton_pass_display}
   • Gluetun API key: ${gluetun_api_key_display}
   • qBittorrent username: ${QBT_USER}
@@ -773,13 +834,25 @@ preflight() {
     die "Missing ${ARRCONF_DIR}/proton.auth - create it with PROTON_USER and PROTON_PASS"
   fi
 
+  load_proton_credentials
+
+  if ((PROTON_USER_PMP_ADDED)); then
+    warn "Proton username '${PROTON_USER_VALUE}' missing '+pmp'; using '${OPENVPN_USER_VALUE}'"
+  fi
+
+  msg "  OpenVPN username (enforced): $(obfuscate_sensitive "$OPENVPN_USER_VALUE" 2 4)"
+
   install_missing
 
   if [[ -f "$ARR_ENV_FILE" ]]; then
     local existing_openvpn_user=""
     existing_openvpn_user="$(grep '^OPENVPN_USER=' "$ARR_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
-    if [[ -n "$existing_openvpn_user" && "$existing_openvpn_user" != *"+pmp" ]]; then
-      warn "OPENVPN_USER in ${ARR_ENV_FILE} is '${existing_openvpn_user}' but ProtonVPN port forwarding requires the '+pmp' suffix. Edit the file to set OPENVPN_USER=\"${existing_openvpn_user}+pmp\" before continuing."
+    if [[ -n "$existing_openvpn_user" ]]; then
+      local existing_unescaped
+      existing_unescaped="$(unescape_env_value_from_compose "$existing_openvpn_user")"
+      if [[ "$existing_unescaped" != *"+pmp" ]]; then
+        warn "OPENVPN_USER in ${ARR_ENV_FILE} is '${existing_unescaped}' and will be updated to include '+pmp'."
+      fi
     fi
   fi
 
@@ -877,80 +950,80 @@ write_env() {
     warn "Consider using a specific RFC1918 address to limit exposure"
   fi
 
-  PU="$(grep '^PROTON_USER=' "${ARRCONF_DIR}/proton.auth" | cut -d= -f2- || true)"
-  PW="$(grep '^PROTON_PASS=' "${ARRCONF_DIR}/proton.auth" | cut -d= -f2- || true)"
+  load_proton_credentials
 
-  [[ -n "$PU" && -n "$PW" ]] || die "Empty PROTON_USER/PROTON_PASS in proton.auth"
-
-  [[ "$PU" == *"+pmp" ]] || PU="${PU}+pmp"
+  PU="$OPENVPN_USER_VALUE"
+  PW="$PROTON_PASS_VALUE"
+  OPENVPN_USER="$PU"
 
   validate_config
 
   local env_content
-  env_content="$(
-    cat <<ENV
-# Core settings
-VPN_TYPE=openvpn
-PUID=${PUID}
-PGID=${PGID}
-TIMEZONE=${TIMEZONE}
-LAN_IP=${LAN_IP}
-LOCALHOST_IP=${LOCALHOST_IP}
+  env_content="$({
+    printf '# Core settings\n'
+    format_env_line "VPN_TYPE" "openvpn"
+    format_env_line "PUID" "$PUID"
+    format_env_line "PGID" "$PGID"
+    format_env_line "TIMEZONE" "$TIMEZONE"
+    format_env_line "LAN_IP" "$LAN_IP"
+    format_env_line "LOCALHOST_IP" "$LOCALHOST_IP"
+    printf '\n'
 
-# ProtonVPN OpenVPN credentials
-OPENVPN_USER=${PU}
-OPENVPN_PASSWORD=${PW}
+    printf '# ProtonVPN OpenVPN credentials\n'
+    format_env_line "OPENVPN_USER" "$PU"
+    format_env_line "OPENVPN_PASSWORD" "$PW"
+    printf '\n'
 
-# Gluetun settings
-VPN_SERVICE_PROVIDER=protonvpn
-GLUETUN_API_KEY=${GLUETUN_API_KEY}
-GLUETUN_CONTROL_PORT=${GLUETUN_CONTROL_PORT}
-SERVER_COUNTRIES=${SERVER_COUNTRIES}
+    printf '# Gluetun settings\n'
+    format_env_line "VPN_SERVICE_PROVIDER" "protonvpn"
+    format_env_line "GLUETUN_API_KEY" "$GLUETUN_API_KEY"
+    format_env_line "GLUETUN_CONTROL_PORT" "$GLUETUN_CONTROL_PORT"
+    format_env_line "SERVER_COUNTRIES" "$SERVER_COUNTRIES"
+    printf '\n'
 
-# Service ports
-QBT_HTTP_PORT_HOST=${QBT_HTTP_PORT_HOST}
-SONARR_PORT=${SONARR_PORT}
-RADARR_PORT=${RADARR_PORT}
-PROWLARR_PORT=${PROWLARR_PORT}
-BAZARR_PORT=${BAZARR_PORT}
-FLARESOLVERR_PORT=${FLARESOLVERR_PORT}
+    printf '# Service ports\n'
+    format_env_line "QBT_HTTP_PORT_HOST" "$QBT_HTTP_PORT_HOST"
+    format_env_line "SONARR_PORT" "$SONARR_PORT"
+    format_env_line "RADARR_PORT" "$RADARR_PORT"
+    format_env_line "PROWLARR_PORT" "$PROWLARR_PORT"
+    format_env_line "BAZARR_PORT" "$BAZARR_PORT"
+    format_env_line "FLARESOLVERR_PORT" "$FLARESOLVERR_PORT"
+    printf '\n'
 
-# qBittorrent credentials (change in WebUI after install, then update here)
-QBT_USER=${QBT_USER}
-QBT_PASS=${QBT_PASS}
-QBT_DOCKER_MODS=${QBT_DOCKER_MODS}
+    printf '# qBittorrent credentials (change in WebUI after install, then update here)\n'
+    format_env_line "QBT_USER" "$QBT_USER"
+    format_env_line "QBT_PASS" "$QBT_PASS"
+    format_env_line "QBT_DOCKER_MODS" "$QBT_DOCKER_MODS"
+    printf '\n'
 
-# Reverse proxy defaults
-CADDY_DOMAIN_SUFFIX=${ARR_DOMAIN_SUFFIX_CLEAN}
-CADDY_LAN_CIDRS=${CADDY_LAN_CIDRS}
-CADDY_BASIC_AUTH_USER=${CADDY_BASIC_AUTH_USER}
-CADDY_BASIC_AUTH_HASH=${CADDY_BASIC_AUTH_HASH}
+    printf '# Reverse proxy defaults\n'
+    format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
+    format_env_line "CADDY_LAN_CIDRS" "$CADDY_LAN_CIDRS"
+    format_env_line "CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_USER"
+    format_env_line "CADDY_BASIC_AUTH_HASH" "$(unescape_env_value_from_compose "$CADDY_BASIC_AUTH_HASH")"
+    printf '\n'
 
-# Paths
-ARR_DOCKER_DIR=${ARR_DOCKER_DIR}
-DOWNLOADS_DIR=${DOWNLOADS_DIR}
-COMPLETED_DIR=${COMPLETED_DIR}
-TV_DIR=${TV_DIR}
-MOVIES_DIR=${MOVIES_DIR}
-__SUBS_DIR_LINE__
+    printf '# Paths\n'
+    format_env_line "ARR_DOCKER_DIR" "$ARR_DOCKER_DIR"
+    format_env_line "DOWNLOADS_DIR" "$DOWNLOADS_DIR"
+    format_env_line "COMPLETED_DIR" "$COMPLETED_DIR"
+    format_env_line "TV_DIR" "$TV_DIR"
+    format_env_line "MOVIES_DIR" "$MOVIES_DIR"
+    if [[ -n "${SUBS_DIR:-}" ]]; then
+      format_env_line "SUBS_DIR" "$SUBS_DIR"
+    fi
+    printf '\n'
 
-# Images
-GLUETUN_IMAGE=${GLUETUN_IMAGE}
-QBITTORRENT_IMAGE=${QBITTORRENT_IMAGE}
-SONARR_IMAGE=${SONARR_IMAGE}
-RADARR_IMAGE=${RADARR_IMAGE}
-PROWLARR_IMAGE=${PROWLARR_IMAGE}
-BAZARR_IMAGE=${BAZARR_IMAGE}
-FLARESOLVERR_IMAGE=${FLARESOLVERR_IMAGE}
-CADDY_IMAGE=${CADDY_IMAGE}
-ENV
-  )"
-
-  local subs_env_line=""
-  if [[ -n "${SUBS_DIR:-}" ]]; then
-    printf -v subs_env_line 'SUBS_DIR=%s\n' "$SUBS_DIR"
-  fi
-  env_content="${env_content/__SUBS_DIR_LINE__/${subs_env_line}}"
+    printf '# Images\n'
+    format_env_line "GLUETUN_IMAGE" "$GLUETUN_IMAGE"
+    format_env_line "QBITTORRENT_IMAGE" "$QBITTORRENT_IMAGE"
+    format_env_line "SONARR_IMAGE" "$SONARR_IMAGE"
+    format_env_line "RADARR_IMAGE" "$RADARR_IMAGE"
+    format_env_line "PROWLARR_IMAGE" "$PROWLARR_IMAGE"
+    format_env_line "BAZARR_IMAGE" "$BAZARR_IMAGE"
+    format_env_line "FLARESOLVERR_IMAGE" "$FLARESOLVERR_IMAGE"
+    format_env_line "CADDY_IMAGE" "$CADDY_IMAGE"
+  })"
 
   atomic_write "$ARR_ENV_FILE" "$env_content" 600
 
@@ -1198,6 +1271,12 @@ __BAZARR_OPTIONAL_SUBS__
     depends_on:
       gluetun:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     restart: unless-stopped
     logging:
       driver: json-file
@@ -1221,29 +1300,9 @@ write_gluetun_control_assets() {
   msg "🛡️ Preparing Gluetun control assets"
 
   local gluetun_root="${ARR_DOCKER_DIR}/gluetun"
-  local auth_dir="${gluetun_root}/auth"
   local hooks_dir="${gluetun_root}/hooks"
 
   ensure_dir "$gluetun_root"
-  ensure_dir "$auth_dir"
-  chmod 700 "$auth_dir" 2>/dev/null || true
-
-  local config_content
-  config_content="$(
-    cat <<EOF
-[[apikeys]]
-token = "${GLUETUN_API_KEY}"
-routes = [
-  "GET /v1/publicip/ip",
-  "GET /v1/openvpn/status",
-  "GET /v1/forwardedport",
-  "GET /v1/openvpn/portforwarded"
-]
-EOF
-  )"
-
-  atomic_write "${auth_dir}/config.toml" "$config_content" 600
-
   ensure_dir "$hooks_dir"
   chmod 700 "$hooks_dir" 2>/dev/null || true
 
@@ -1333,11 +1392,14 @@ write_caddy_assets() {
   chmod "$DATA_DIR_MODE" "$config_dir" 2>/dev/null || true
 
   local lan_cidrs
-  lan_cidrs="${CADDY_LAN_CIDRS//,/ }"
-  lan_cidrs="$(printf '%s' "$lan_cidrs" | tr '\n' ' ' | xargs 2>/dev/null || printf '')"
+  lan_cidrs="$(printf '%s' "${CADDY_LAN_CIDRS}" | tr ',\t\n' '   ')"
+  lan_cidrs="$(printf '%s\n' "$lan_cidrs" | xargs 2>/dev/null || printf '')"
   if [[ -z "$lan_cidrs" ]]; then
     lan_cidrs="127.0.0.1/32"
   fi
+
+  local caddy_auth_hash
+  caddy_auth_hash="$(unescape_env_value_from_compose "${CADDY_BASIC_AUTH_HASH}")"
 
   local -a services=(
     "qbittorrent 8080"
@@ -1356,6 +1418,12 @@ write_caddy_assets() {
     printf '  admin off\n'
     printf '}\n\n'
 
+    printf ':80 {\n'
+    printf '    respond /healthz 200 {\n'
+    printf '        body "ok"\n'
+    printf '    }\n'
+    printf '}\n\n'
+
     local entry name port host
     for entry in "${services[@]}"; do
       name="${entry%% *}"
@@ -1369,15 +1437,89 @@ write_caddy_assets() {
       printf '    }\n'
       printf '    handle {\n'
       printf '        basicauth * {\n'
-      printf '            %s %s\n' "$CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_HASH"
+      printf '            %s %s\n' "$CADDY_BASIC_AUTH_USER" "$caddy_auth_hash"
       printf '        }\n'
       printf '        reverse_proxy 127.0.0.1:%s\n' "$port"
+      printf '    }\n'
+      printf '    route /healthz {\n'
+      printf '        respond 200 "ok"\n'
       printf '    }\n'
       printf '}\n\n'
     done
   })"
 
   atomic_write "$caddyfile" "$caddyfile_content" "$NONSECRET_FILE_MODE"
+
+  if ! grep -Fq "${CADDY_BASIC_AUTH_USER}" "$caddyfile"; then
+    warn "Caddyfile is missing the configured Basic Auth user; verify CADDY_BASIC_AUTH_USER"
+  fi
+
+  if ! grep -qE '\\$2[aby]\\$' "$caddyfile"; then
+    warn "Caddyfile appears to be missing a valid bcrypt string; check CADDY_BASIC_AUTH_HASH handling."
+  fi
+}
+
+run_one_time_migrations() {
+  local legacy_auth="${ARR_DOCKER_DIR}/gluetun/auth/config.toml"
+
+  if [[ -f "$legacy_auth" ]]; then
+    local legacy_backup="${legacy_auth}.bak.$(date +%s)"
+    if mv "$legacy_auth" "$legacy_backup" 2>/dev/null; then
+      warn "Removed legacy Gluetun auth config; backup saved to ${legacy_backup}"
+    else
+      rm -f "$legacy_auth" 2>/dev/null || true
+      warn "Removed legacy Gluetun auth config"
+    fi
+  fi
+
+  if [[ -f "$ARR_ENV_FILE" ]]; then
+    local env_backup_created=0
+    local env_backup_path=""
+
+    ensure_env_backup() {
+      if ((env_backup_created == 0)); then
+        env_backup_path="${ARR_ENV_FILE}.bak.$(date +%s)"
+        if cp "$ARR_ENV_FILE" "$env_backup_path" 2>/dev/null; then
+          chmod 600 "$env_backup_path" 2>/dev/null || true
+          warn "Backed up existing .env to ${env_backup_path} before applying migrations"
+          env_backup_created=1
+        else
+          warn "Unable to create backup of ${ARR_ENV_FILE} before migrations"
+        fi
+      fi
+    }
+
+    local existing_line existing_value existing_unescaped fixed_value escaped_fixed sed_value
+
+    existing_line="$(grep '^OPENVPN_USER=' "$ARR_ENV_FILE" | head -n1 || true)"
+    if [[ -n "$existing_line" ]]; then
+      existing_value="${existing_line#OPENVPN_USER=}"
+      existing_unescaped="$(unescape_env_value_from_compose "$existing_value")"
+      fixed_value="${existing_unescaped%+pmp}+pmp"
+      if [[ "$fixed_value" != "$existing_unescaped" ]]; then
+        ensure_env_backup
+        escaped_fixed="$(escape_env_value_for_compose "$fixed_value")"
+        sed_value="$(escape_sed_replacement "$escaped_fixed")"
+        portable_sed "s|^OPENVPN_USER=.*$|OPENVPN_USER=${sed_value}|" "$ARR_ENV_FILE"
+        warn "OPENVPN_USER was missing '+pmp'; updated automatically in ${ARR_ENV_FILE}"
+      fi
+    fi
+
+    existing_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "$ARR_ENV_FILE" | head -n1 || true)"
+    if [[ -n "$existing_line" ]]; then
+      existing_value="${existing_line#CADDY_BASIC_AUTH_HASH=}"
+      existing_unescaped="$(unescape_env_value_from_compose "$existing_value")"
+      escaped_fixed="$(escape_env_value_for_compose "$existing_unescaped")"
+      if [[ "$existing_value" != "$escaped_fixed" ]]; then
+        ensure_env_backup
+        sed_value="$(escape_sed_replacement "$escaped_fixed")"
+        portable_sed "s|^CADDY_BASIC_AUTH_HASH=.*$|CADDY_BASIC_AUTH_HASH=${sed_value}|" "$ARR_ENV_FILE"
+        warn "Escaped dollar signs in CADDY_BASIC_AUTH_HASH for Docker Compose compatibility"
+      fi
+    fi
+
+    unset -f ensure_env_backup || true
+  fi
 }
 
 sync_gluetun_library() {
@@ -1811,6 +1953,8 @@ EOF
   set_qbt_conf_value "$conf_file" 'WebUI\ServerDomains' '*'
   set_qbt_conf_value "$conf_file" 'WebUI\LocalHostAuth' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelistEnabled' 'true'
+  set_qbt_conf_value "$conf_file" 'WebUI\CSRFProtection' 'true'
+  set_qbt_conf_value "$conf_file" 'WebUI\ClickjackingProtection' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\HostHeaderValidation' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
 }
@@ -2314,11 +2458,34 @@ warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 ARR_STACK_DIR="__ARR_STACK_DIR__"
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
 
+unescape_env_value_from_compose() {
+  local value="${1-}"
+  value="${value//\$\$/\$}"
+  printf '%s' "$value"
+}
+
+load_env_file() {
+  local file="$1"
+  local line key value
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      ''|\#*) continue ;;
+    esac
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    value="${value%$'\r'}"
+    value="$(unescape_env_value_from_compose "$value")"
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done <"$file"
+}
+
 if [[ -f "$ARR_ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ARR_ENV_FILE"
-  set +a
+  load_env_file "$ARR_ENV_FILE"
 fi
 
 GLUETUN_LIB="${ARR_STACK_DIR}/scripts/lib/gluetun.sh"
@@ -2560,6 +2727,7 @@ main() {
   check_network_requirements
   mkdirs
   safe_cleanup
+  run_one_time_migrations
   generate_api_key
   write_env
   write_compose
