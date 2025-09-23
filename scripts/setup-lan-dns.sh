@@ -180,6 +180,63 @@ rewrite_hosts_file() {
   trap - EXIT
 }
 
+configure_docker_dns() {
+  local lan_ip="$1"
+  local daemon_json="/etc/docker/daemon.json"
+  local dns_servers="[\"${lan_ip}\", \"1.1.1.1\"]"
+
+  if [[ -z "$lan_ip" ]]; then
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp "${daemon_json}.XXXXXX" 2>/dev/null || printf '')"
+  if [[ -z "$tmp" ]]; then
+    warn "Unable to create temporary file for ${daemon_json}; skipping Docker DNS configuration."
+    return 1
+  fi
+
+  if [[ -f "$daemon_json" ]]; then
+    if ! command -v jq >/dev/null 2>&1; then
+      warn "jq not available; skipping Docker daemon DNS update."
+      rm -f "$tmp"
+      return 1
+    fi
+    if ! jq ".dns = ${dns_servers}" "$daemon_json" >"$tmp" 2>/dev/null; then
+      warn "Failed to update ${daemon_json} with jq; leaving existing configuration untouched."
+      rm -f "$tmp"
+      return 1
+    fi
+  else
+    if ! printf '{"dns": %s}\n' "$dns_servers" >"$tmp" 2>/dev/null; then
+      warn "Failed to write Docker daemon DNS configuration."
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+
+  chmod 644 "$tmp" 2>/dev/null || true
+  if ! mv -f "$tmp" "$daemon_json" 2>/dev/null; then
+    warn "Unable to install ${daemon_json}; check permissions."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  log "Configured Docker daemon DNS to prefer ${lan_ip} with 1.1.1.1 as fallback."
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet docker; then
+      if ! systemctl reload docker >/dev/null 2>&1; then
+        warn "systemctl reload docker failed; restart Docker manually to apply DNS changes."
+      else
+        log "Reloaded Docker daemon with LAN DNS resolver ${lan_ip}."
+      fi
+    fi
+  fi
+
+  return 0
+}
+
 main() {
   if [[ $# -lt 2 ]]; then
     die "Usage: $0 <domain_suffix> <lan_ip>"
@@ -240,6 +297,8 @@ main() {
 
   rewrite_hosts_file "$hosts_file" "$new_content"
   log "Updated ${hosts_file} with arrstack-managed host entries"
+
+  configure_docker_dns "$lan_ip" || true
 }
 
 main "$@"

@@ -150,6 +150,11 @@ write_env() {
     msg "$configured_msg"
   fi
 
+  LAN_IPV4_SUBNET=""
+  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
+    LAN_IPV4_SUBNET="${LAN_IP%.*}.0/24"
+  fi
+
   load_proton_credentials
 
   PU="$OPENVPN_USER_VALUE"
@@ -166,7 +171,9 @@ write_env() {
     format_env_line "PGID" "$PGID"
     format_env_line "TIMEZONE" "$TIMEZONE"
     format_env_line "LAN_IP" "$LAN_IP"
+    format_env_line "LAN_IPV4_SUBNET" "$LAN_IPV4_SUBNET"
     format_env_line "LOCALHOST_IP" "$LOCALHOST_IP"
+    format_env_line "EXPOSE_DIRECT_PORTS" "$EXPOSE_DIRECT_PORTS"
     printf '\n'
 
     printf '# Local DNS\n'
@@ -267,6 +274,37 @@ write_compose() {
     LOCAL_DNS_SERVICE_REASON="requested"
   fi
 
+  local gluetun_direct_ports_block=""
+  if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
+    gluetun_direct_ports_block="$(cat <<'YAML'
+      - "${LAN_IP}:8080:8080"
+      - "${LAN_IP}:8989:8989"
+      - "${LAN_IP}:7878:7878"
+      - "${LAN_IP}:9696:9696"
+      - "${LAN_IP}:6767:6767"
+YAML
+    )"
+  fi
+
+  local -a outbound_candidates=("192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12")
+  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
+    outbound_candidates=("${LAN_IP%.*}.0/24" "${outbound_candidates[@]}")
+  fi
+
+  local -A outbound_seen=()
+  local -a outbound_unique=()
+  local outbound_entry=""
+  for outbound_entry in "${outbound_candidates[@]}"; do
+    [[ -z "$outbound_entry" ]] && continue
+    if [[ -z "${outbound_seen[$outbound_entry]:-}" ]]; then
+      outbound_seen[$outbound_entry]=1
+      outbound_unique+=("$outbound_entry")
+    fi
+  done
+
+  local gluetun_firewall_outbound="${outbound_unique[*]}"
+  gluetun_firewall_outbound="${gluetun_firewall_outbound// /,}"
+
   compose_content="$(
     {
       cat <<'YAML'
@@ -303,8 +341,8 @@ services:
       HEALTH_SUCCESS_WAIT_DURATION: "10s"
       DNS_KEEP_NAMESERVER: "off"
       PORT_FORWARDING_STATUS_FILE_CLEANUP: "off"
-      FIREWALL_OUTBOUND_SUBNETS: "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
-      FIREWALL_INPUT_PORTS: "80,443"
+      FIREWALL_OUTBOUND_SUBNETS: "__GLUETUN_FIREWALL_OUTBOUND__"
+      FIREWALL_INPUT_PORTS: "80,443,8080,8989,7878,9696,6767,8191"
       UPDATER_PERIOD: "24h"
       PUID: ${PUID}
       PGID: ${PGID}
@@ -315,6 +353,7 @@ services:
       - "${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
       - "${LAN_IP}:80:80"
       - "${LAN_IP}:443:443"
+      __GLUETUN_DIRECT_PORTS__
     healthcheck:
       test: /gluetun-entrypoint healthcheck
       interval: 30s
@@ -330,13 +369,16 @@ services:
 YAML
 
       local include_local_dns=0
-      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && "${LAN_IP:-}" != "0.0.0.0" && "${LAN_IP:-}" != "" && ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 0 ]]; then
+      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 0 ]]; then
         include_local_dns=1
       fi
 
       if ((include_local_dns)); then
         LOCAL_DNS_SERVICE_ENABLED=1
         LOCAL_DNS_SERVICE_REASON="enabled"
+        if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
+          warn "Local DNS will bind to all interfaces (0.0.0.0:53)"
+        fi
         cat <<'YAML'
   local_dns:
     image: 4km3/dnsmasq:2.90-r3
@@ -344,8 +386,8 @@ YAML
     cap_add:
       - NET_ADMIN
     ports:
-      - "${LAN_IP}:53:53/udp"
-      - "${LAN_IP}:53:53/tcp"
+      - "${LAN_IP:-0.0.0.0}:53:53/udp"
+      - "${LAN_IP:-0.0.0.0}:53:53/tcp"
     command:
       - --log-facility=-
       - --no-resolv
@@ -355,7 +397,7 @@ YAML
       - --bogus-priv
       - --domain=${LAN_DOMAIN_SUFFIX}
       - --local=/${LAN_DOMAIN_SUFFIX}/
-      - --address=/${LAN_DOMAIN_SUFFIX}/${LAN_IP}
+      - --address=/${LAN_DOMAIN_SUFFIX}/${LAN_IP:-HOST_IP}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -377,10 +419,6 @@ YAML
       timeout: 5s
       retries: 3
 YAML
-      elif [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 0 ]]; then
-        LOCAL_DNS_SERVICE_ENABLED=0
-        LOCAL_DNS_SERVICE_REASON="invalid-ip"
-        warn "Skipping local_dns service because LAN_IP is not set to a specific address. Set LAN_IP or disable ENABLE_LOCAL_DNS."
       fi
 
       cat <<'YAML'
@@ -623,6 +661,15 @@ __BAZARR_OPTIONAL_SUBS__
 YAML
     }
   )"
+
+  if [[ -n "$gluetun_direct_ports_block" ]]; then
+    compose_content="${compose_content/      __GLUETUN_DIRECT_PORTS__/${gluetun_direct_ports_block}}"
+  else
+    compose_content="${compose_content//$'\n      __GLUETUN_DIRECT_PORTS__'/}"
+    compose_content="${compose_content//      __GLUETUN_DIRECT_PORTS__/}"
+  fi
+
+  compose_content="${compose_content/__GLUETUN_FIREWALL_OUTBOUND__/$gluetun_firewall_outbound}"
 
   local bazarr_subs_volume=""
   if [[ -n "${SUBS_DIR:-}" ]]; then
@@ -1089,9 +1136,30 @@ write_caddy_assets() {
     printf '}\n\n'
 
     # Plain HTTP health endpoint for container healthcheck
-    printf ':80 {\n'
-    printf '    respond /healthz 200 {\n'
-    printf '        body "ok"\n'
+    printf 'http://:80 {\n'
+    printf '    @health {\n'
+    printf '        path /healthz\n'
+    printf '        method GET\n'
+    printf '    }\n'
+    printf '    handle @health {\n'
+    printf '        respond "ok" 200\n'
+    printf '    }\n'
+    printf '\n'
+    printf '    handle / {\n'
+    printf '        respond "ARR Stack Running" 200\n'
+    printf '    }\n'
+    printf '}\n\n'
+
+    printf 'ca.%s {\n' "$domain_suffix"
+    printf '    root * /data/caddy/pki/authorities/local\n'
+    printf '    file_server browse\n'
+    printf '\n'
+    printf '    @ca_cert {\n'
+    printf '        path /root.crt\n'
+    printf '    }\n'
+    printf '    handle @ca_cert {\n'
+    printf '        header Content-Type "application/x-x509-ca-cert"\n'
+    printf '        header Content-Disposition "attachment; filename=\"arrstack-ca.crt\""\n'
     printf '    }\n'
     printf '}\n\n'
 

@@ -82,7 +82,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `arr.vpn.*`, `arr.help`, `arr.health`, and other shortcuts.
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
-- 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). Point your router or client DNS to `${LAN_IP}` for automatic hostnames, or disable it with `ENABLE_LOCAL_DNS=0` and manage `/etc/hosts` yourself. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt` (or swap in publicly trusted certificates) so browsers trust the default HTTPS endpoints.
+- 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). Point your router or client DNS to `${LAN_IP}` for automatic hostnames, or disable it with `ENABLE_LOCAL_DNS=0` and manage `/etc/hosts` yourself. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt`, download it via `https://ca.${LAN_DOMAIN_SUFFIX}/root.crt`, or run `./scripts/export-caddy-ca.sh` to copy it into `~/arrstack-ca.crt` so browsers trust the default HTTPS endpoints. Set `EXPOSE_DIRECT_PORTS=1` if you want Gluetun to publish the raw application ports on the LAN alongside Caddy for troubleshooting.
   Debian Bookworm binds port 53 with `systemd-resolved` by default; pass `--setup-host-dns` to `arrstack.sh` to back up the current resolver state, disable the stub non-destructively, write a static `/etc/resolv.conf`, and restart the `local_dns` container automatically. You can rerun the helper later with `./scripts/host-dns-setup.sh` and undo the change any time with `./scripts/host-dns-rollback.sh`.
   1. Set your router’s DHCP DNS server to `${LAN_IP}` so new devices learn the resolver automatically.
   2. Override DNS manually on devices that allow it (laptops, consoles, smart TVs) if the router cannot be changed.
@@ -148,6 +148,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `PGID` | Current group ID (`id -g`) | Match the media group so containers can write to shared folders. |
 | `TIMEZONE` | `Australia/Sydney` | Align container logs and cron tasks with your local timezone. |
 | `LAN_IP` | Auto-detected (falls back to `0.0.0.0`) | Bind services to a specific RFC1918 address instead of all interfaces. |
+| `LAN_IPV4_SUBNET` | Derived from `LAN_IP` | Helps qBittorrent and Gluetun allow the detected LAN /24; rarely needs overriding. |
 | `LOCALHOST_IP` | `127.0.0.1` | Change where the Gluetun control API binds on the host (advanced). |
 | `VPN_SERVICE_PROVIDER` | `protonvpn` | Keep Gluetun pinned to ProtonVPN. Change only when migrating to a different supported provider. |
 | `VPN_TYPE` | `openvpn` | Force Gluetun to use Proton's OpenVPN stack (required for port forwarding). |
@@ -178,7 +179,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | Variable | Default | Why change it? |
 | -------- | ------- | --------------- |
 | `CADDY_DOMAIN_SUFFIX` | `home.arpa` | Controls the hostnames served by Caddy (`qbittorrent.<suffix>`, `sonarr.<suffix>`, etc.). Inherits from `LAN_DOMAIN_SUFFIX` when unset. |
-| `CADDY_LAN_CIDRS` | `192.168.0.0/16 10.0.0.0/8 172.16.0.0/12` | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
+| `CADDY_LAN_CIDRS` | Auto-detected (localhost + Docker + discovered RFC1918 routes) | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
 | `CADDY_BASIC_AUTH_USER` | `user` | Username presented to non-LAN clients when Caddy prompts for credentials. |
 | `CADDY_BASIC_AUTH_HASH` | `$2b$12$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa` | Replace with your own bcrypt hash to secure remote Basic Auth access. |
 
@@ -188,6 +189,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `ARR_PERMISSION_PROFILE` | `strict` | Switch to `collaborative` to make non-secret files group-readable (`0640`/`0750`) when sharing the host with other users. |
 | `ASSUME_YES` | `0` | Set to `1` for unattended installs that must skip prompts (avoid enabling on first run). |
 | `FORCE_ROTATE_API_KEY` | `0` | Set to `1` to regenerate the Gluetun API key on the next run (useful if the key leaked). |
+| `EXPOSE_DIRECT_PORTS` | `0` | Set to `1` to publish qBittorrent/Sonarr/Radarr/etc. on their native LAN ports in addition to the Caddy reverse proxy. |
 
 #### Container images
 | Variable | Default | Why change it? |
@@ -202,7 +204,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `CADDY_IMAGE` | `caddy:2.8.4` | Pin the reverse proxy to a tested version or upgrade deliberately. |
 
 ### Service hostnames
-Caddy is the only container exposing ports on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. When `local_dns` is enabled, dnsmasq already resolves each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to `LAN_IP`; otherwise point your LAN DNS (or `/etc/hosts`) at the host manually.
+Caddy is the primary entrypoint on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. When `local_dns` is enabled, dnsmasq already resolves each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to `LAN_IP`; otherwise point your LAN DNS (or `/etc/hosts`) at the host manually. Enable `EXPOSE_DIRECT_PORTS=1` if you need Gluetun to expose each application on its native port (8080, 8989, 7878, 9696, 6767) as a fallback during troubleshooting.
 
 | Service      | Hostname pattern | Internal port variable | Default port |
 | ------------ | ---------------- | ---------------------- | ------------- |

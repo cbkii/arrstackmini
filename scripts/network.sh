@@ -298,6 +298,62 @@ port_in_use_with_netstat() {
   return 1
 }
 
+configure_systemd_resolved_dropin() {
+  local dns_ip="$1"
+  local domain_suffix="$2"
+
+  if [[ -z "$domain_suffix" ]]; then
+    return 1
+  fi
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    warn "systemctl not available; configure systemd-resolved manually to forward ~${domain_suffix}."
+    return 1
+  fi
+
+  if ! systemctl is-active --quiet systemd-resolved; then
+    warn "systemd-resolved is not active; cannot install automatic DNS drop-in."
+    return 1
+  fi
+
+  local dropin_dir="/etc/systemd/resolved.conf.d"
+  local dropin_file="${dropin_dir}/arrstack.conf"
+
+  if ! mkdir -p "$dropin_dir" 2>/dev/null; then
+    warn "Unable to create ${dropin_dir}; rerun with sudo to integrate systemd-resolved."
+    return 1
+  fi
+
+  local tmp
+  tmp="$(mktemp "${dropin_file}.XXXXXX" 2>/dev/null || printf '')"
+  if [[ -z "$tmp" ]]; then
+    warn "Failed to create temporary file for systemd-resolved drop-in."
+    return 1
+  fi
+
+  if ! printf '[Resolve]\nDNS=%s\nDomains=~%s\n' "$dns_ip" "$domain_suffix" >"$tmp" 2>/dev/null; then
+    warn "Failed to write systemd-resolved drop-in content."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  chmod 644 "$tmp" 2>/dev/null || true
+
+  if ! mv -f "$tmp" "$dropin_file" 2>/dev/null; then
+    warn "Unable to install ${dropin_file}; check permissions."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  if ! systemctl reload systemd-resolved >/dev/null 2>&1; then
+    warn "systemd-resolved reload failed; restart it manually to apply DNS changes."
+    return 1
+  fi
+
+  msg "Configured systemd-resolved to forward ~${domain_suffix} to ${dns_ip}"
+  return 0
+}
+
 check_required_ports() {
   local lan_ip_for_check=""
   local lan_ip_source="configured"
@@ -350,6 +406,7 @@ check_required_ports() {
 
   local -a conflicts=()
   local local_dns_conflicts=0
+  local resolved_dropin_attempted=0
   local entry=""
   for entry in "${port_checks[@]}"; do
     IFS=: read -r proto bind_ip port label <<<"$entry"
@@ -373,6 +430,11 @@ check_required_ports() {
         LOCAL_DNS_AUTO_DISABLED=1
         LOCAL_DNS_AUTO_DISABLED_REASON="port ${port}/${proto^^}"
         LOCAL_DNS_SERVICE_REASON="auto-disabled-port-conflict"
+        if ((resolved_dropin_attempted == 0)); then
+          resolved_dropin_attempted=1
+          warn "Port ${port}/${proto^^} in use; attempting systemd-resolved integration for ~${LAN_DOMAIN_SUFFIX}."
+          configure_systemd_resolved_dropin "$lan_ip_for_check" "${LAN_DOMAIN_SUFFIX}" || true
+        fi
         continue
       fi
       if [[ "$label" == "Local DNS" ]]; then

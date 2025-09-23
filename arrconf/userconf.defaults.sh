@@ -57,6 +57,9 @@ PROWLARR_PORT="${PROWLARR_PORT:-9696}"
 BAZARR_PORT="${BAZARR_PORT:-6767}"
 FLARESOLVERR_PORT="${FLARESOLVERR_PORT:-8191}"
 
+# Expose application ports directly on the host alongside Caddy's reverse proxy
+EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS:-0}"
+
 # qBittorrent credentials (override after first login)
 QBT_USER="${QBT_USER:-admin}"
 QBT_PASS="${QBT_PASS:-adminadmin}"
