@@ -2,6 +2,26 @@
 # Default configuration for ARR Stack
 # Override these in arrconf/userconf.sh (git-ignored)
 
+# Guard helpers for shells that source these defaults alongside other scripts
+if ! declare -f arrstack_var_is_readonly >/dev/null 2>&1; then
+  arrstack_var_is_readonly() {
+    local var="$1"
+    local declaration=""
+
+    if ! declaration=$(declare -p "$var" 2>/dev/null); then
+      return 1
+    fi
+
+    case $declaration in
+      declare\ -r*)
+        return 0
+        ;;
+    esac
+
+    return 1
+  }
+fi
+
 # Base paths
 ARR_BASE="${ARR_BASE:-${HOME}/srv}"
 ARR_STACK_DIR="${ARR_STACK_DIR:-${ARR_BASE}/arrstack}"
@@ -12,7 +32,9 @@ ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"
 ARRCONF_DIR="${ARRCONF_DIR:-${PWD}/arrconf}"
 
 # File/dir permissions (strict keeps secrets 600/700, collaborative loosens group access)
-ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
+if ! arrstack_var_is_readonly ARR_PERMISSION_PROFILE; then
+  ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
+fi
 
 # Download paths
 DOWNLOADS_DIR="${DOWNLOADS_DIR:-${HOME}/Downloads}"
