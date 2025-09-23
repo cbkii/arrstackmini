@@ -40,4 +40,3 @@ else
   warn "Failed to copy ${CA_FILE} to ${DEST_FILE}" >&2
   exit 1
 fi
-

@@ -151,7 +151,7 @@ escape_sed_replacement() {
 escape_env_value_for_compose() {
   local value="${1-}"
 
-  value="${value//$'\r'/}"  # Strip carriage returns to avoid CRLF churn
+  value="${value//$'\r'/}" # Strip carriage returns to avoid CRLF churn
 
   if [[ "$value" == *$'\n'* ]]; then
     die "Environment values cannot contain newline characters"
@@ -168,7 +168,7 @@ unescape_env_value_from_compose() {
   local value="${1-}"
   local sentinel=$'\001__ARRSTACK_DOLLAR__\002'
 
-  value="${value//$'\r'/}"  # Normalize line endings
+  value="${value//$'\r'/}" # Normalize line endings
 
   if [[ "$value" =~ ^".*"$ ]]; then
     value="${value:1:${#value}-2}"

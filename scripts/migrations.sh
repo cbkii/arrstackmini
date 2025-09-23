@@ -62,4 +62,3 @@ run_one_time_migrations() {
     unset -f ensure_env_backup || true
   fi
 }
-

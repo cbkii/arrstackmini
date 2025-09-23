@@ -53,7 +53,7 @@ while (($#)); do
       DATA_DIR_OVERRIDE="$2"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;

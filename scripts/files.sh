@@ -223,7 +223,8 @@ write_compose() {
 
   local gluetun_direct_ports_block=""
   if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
-    gluetun_direct_ports_block="$(cat <<'YAML'
+    gluetun_direct_ports_block="$(
+      cat <<'YAML'
       - "${LAN_IP}:8080:8080"
       - "${LAN_IP}:8989:8989"
       - "${LAN_IP}:7878:7878"
@@ -954,4 +955,3 @@ EOF
   set_qbt_conf_value "$conf_file" 'WebUI\HostHeaderValidation' 'true'
   set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
 }
-

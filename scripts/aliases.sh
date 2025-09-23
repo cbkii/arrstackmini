@@ -225,4 +225,3 @@ refresh_aliases() {
     warn "Run 'source ${alias_path}' manually to pick up the latest aliases"
   fi
 }
-

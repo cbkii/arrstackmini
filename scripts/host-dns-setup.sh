@@ -22,7 +22,7 @@ fi
 
 # ---- Config knobs (can be overridden in env) ----
 LAN_IP="${LAN_IP:-192.168.1.50}"
-SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}"     # RFC 8375 special-use domain
+SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}" # RFC 8375 special-use domain
 FALLBACK1="${UPSTREAM_DNS_1:-1.1.1.1}"
 FALLBACK2="${UPSTREAM_DNS_2:-1.0.0.1}"
 
@@ -34,8 +34,8 @@ mkdir -p "${BACKUP_DIR}"
 RESOLV="/etc/resolv.conf"
 RESOLVED_UNIT="systemd-resolved.service"
 # Common systemd-resolved managed files/symlinks (documented by Debian manpages)
-STUB="/run/systemd/resolve/stub-resolv.conf"      # lists 127.0.0.53
-REAL="/run/systemd/resolve/resolv.conf"           # full upstreams (older dists)
+STUB="/run/systemd/resolve/stub-resolv.conf" # lists 127.0.0.53
+REAL="/run/systemd/resolve/resolv.conf"      # full upstreams (older dists)
 
 echo "[info] Backing up DNS state into ${BACKUP_DIR}"
 cp -a /etc/systemd/resolved.conf "${BACKUP_DIR}/resolved.conf.bak" 2>/dev/null || true
@@ -82,7 +82,7 @@ for ip in ${CANDIDATES}; do
 done
 
 # Ensure we have at least one upstream
-if [[ -z "${VALID// }" ]]; then
+if [[ -z "${VALID// /}" ]]; then
   VALID="${FALLBACK1} ${FALLBACK2}"
 fi
 echo "[info] Selected upstream DNS: ${VALID}"
@@ -122,7 +122,7 @@ fi
   done
   # Reasonable defaults; ndots lowers false-positive suffix expansions; timeout/retries conservative
   echo "options timeout:2 attempts:2 rotate"
-} > "${RESOLV}"
+} >"${RESOLV}"
 
 chmod 644 "${RESOLV}"
 

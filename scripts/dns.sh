@@ -80,16 +80,15 @@ run_host_dns_setup() {
   msg "🔧 Running host DNS setup helper (--setup-host-dns)"
 
   if (
-    cd "$ARR_STACK_DIR" 2>/dev/null &&
-      LAN_IP="${LAN_IP}" \
-      LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
-      UPSTREAM_DNS_1="${UPSTREAM_DNS_1}" \
-      UPSTREAM_DNS_2="${UPSTREAM_DNS_2}" \
-      bash "$helper_script"
+    cd "$ARR_STACK_DIR" 2>/dev/null \
+      && LAN_IP="${LAN_IP}" \
+        LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
+        UPSTREAM_DNS_1="${UPSTREAM_DNS_1}" \
+        UPSTREAM_DNS_2="${UPSTREAM_DNS_2}" \
+        bash "$helper_script"
   ); then
     msg "✅ Host DNS setup helper completed"
   else
     warn "Host DNS setup helper reported an error; review the output above or run scripts/host-dns-setup.sh manually."
   fi
 }
-

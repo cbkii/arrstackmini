@@ -61,10 +61,16 @@ reload_shell_rc() {
   if [ -n "$rc" ] && [ -r "$rc" ]; then
     local had_nounset=0 had_errexit=0
     case $- in
-      *u*) had_nounset=1; set +u ;;
+      *u*)
+        had_nounset=1
+        set +u
+        ;;
     esac
     case $- in
-      *e*) had_errexit=1; set +e ;;
+      *e*)
+        had_errexit=1
+        set +e
+        ;;
     esac
 
     # shellcheck disable=SC1090
@@ -94,4 +100,3 @@ reload_shell_rc() {
 
   return 1
 }
-

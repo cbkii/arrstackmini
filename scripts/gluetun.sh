@@ -107,7 +107,10 @@ gluetun_public_ip_location() {
     return 1
   fi
 
-  (IFS=', '; printf '%s' "${parts[*]}")
+  (
+    IFS=', '
+    printf '%s' "${parts[*]}"
+  )
 }
 
 gluetun_public_ip_summary() {
@@ -193,8 +196,7 @@ gluetun_port_forward_summary() {
     fi
     if [[ -n "$GLUETUN_PORT_FORWARD_STATUS" ]]; then
       case "$GLUETUN_PORT_FORWARD_STATUS" in
-        ''|ok|OK|active|Active|open|OPEN)
-          ;;
+        '' | ok | OK | active | Active | open | OPEN) ;;
         *)
           extras+=("status ${GLUETUN_PORT_FORWARD_STATUS}")
           ;;
@@ -202,7 +204,10 @@ gluetun_port_forward_summary() {
     fi
     if ((${#extras[@]} > 0)); then
       local extras_str
-      extras_str=$(IFS='; '; printf '%s' "${extras[*]}")
+      extras_str=$(
+        IFS='; '
+        printf '%s' "${extras[*]}"
+      )
       summary+=" (${extras_str})"
     fi
   else
@@ -216,7 +221,10 @@ gluetun_port_forward_summary() {
     fi
     if ((${#extras[@]} > 0)); then
       local extras_str
-      extras_str=$(IFS='; '; printf '%s' "${extras[*]}")
+      extras_str=$(
+        IFS='; '
+        printf '%s' "${extras[*]}"
+      )
       summary+=" (${extras_str})"
     fi
   fi

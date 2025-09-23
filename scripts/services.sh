@@ -483,4 +483,3 @@ start_stack() {
   msg "Services started - they may take a minute to be fully ready"
   show_service_status
 }
-
