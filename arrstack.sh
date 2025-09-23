@@ -42,6 +42,7 @@ Options:
   --setup-host-dns      Run the host DNS takeover helper during installation
   --auto-disable-local-dns
                         Automatically disable the local dnsmasq container when port 53 is occupied
+  --refresh-aliases     Regenerate helper aliases and reload your shell
   --help                Show this help message
 USAGE
 }
@@ -77,6 +78,10 @@ main() {
         AUTO_DISABLE_LOCAL_DNS=1
         shift
         ;;
+      --refresh-aliases)
+        REFRESH_ALIASES=1
+        shift
+        ;;
       --help | -h)
         help
         exit 0
@@ -86,6 +91,11 @@ main() {
         ;;
     esac
   done
+
+  if [[ "${REFRESH_ALIASES:-0}" -eq 1 ]]; then
+    refresh_aliases
+    return 0
+  fi
 
   # Initialize logging first
   init_logging

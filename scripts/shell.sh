@@ -59,8 +59,32 @@ reload_shell_rc() {
   fi
 
   if [ -n "$rc" ] && [ -r "$rc" ]; then
+    local had_nounset=0 had_errexit=0
+    case $- in
+      *u*) had_nounset=1; set +u ;;
+    esac
+    case $- in
+      *e*) had_errexit=1; set +e ;;
+    esac
+
     # shellcheck disable=SC1090
-    . "$rc" || return 1
+    if ! . "$rc"; then
+      local status=$?
+      if [ "$had_nounset" -eq 1 ]; then
+        set -u
+      fi
+      if [ "$had_errexit" -eq 1 ]; then
+        set -e
+      fi
+      return $status
+    fi
+
+    if [ "$had_nounset" -eq 1 ]; then
+      set -u
+    fi
+    if [ "$had_errexit" -eq 1 ]; then
+      set -e
+    fi
     return 0
   fi
 

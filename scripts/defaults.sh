@@ -37,6 +37,7 @@ arrstack_setup_defaults() {
   : "${ENABLE_LOCAL_DNS:=1}"
   : "${SETUP_HOST_DNS:=0}"
   : "${AUTO_DISABLE_LOCAL_DNS:=0}"
+  : "${REFRESH_ALIASES:=0}"
 
   LAN_IP_AUTODETECTED_IFACE=""
   LAN_IP_AUTODETECTED_METHOD=""
