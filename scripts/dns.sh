@@ -1,4 +1,9 @@
 # shellcheck shell=bash
+
+if [[ -n "${SCRIPT_LIB_DIR:-}" && -f "${SCRIPT_LIB_DIR}/network.sh" ]]; then
+  # shellcheck source=scripts/network.sh
+  . "${SCRIPT_LIB_DIR}/network.sh"
+fi
 configure_local_dns_entries() {
   msg "🧭 Ensuring local DNS entries exist for Caddy hostnames"
 

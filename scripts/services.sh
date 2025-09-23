@@ -268,10 +268,22 @@ sync_qbt_password_from_logs() {
 wait_for_vpn_connection() {
   local max_wait="${1:-60}"
   local elapsed=0
-  local check_interval=2
-  local host="${LOCALHOST_IP:-localhost}"
+  local check_interval=5
+  local host="${LOCALHOST_IP:-127.0.0.1}"
   local vpn_status_url
   local public_ip_url
+
+  msg "Waiting for VPN connection (max ${max_wait}s)..."
+
+  while ((elapsed < 30)); do
+    local status
+    status="$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
+    if [[ "$status" == "running" ]]; then
+      break
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
 
   if [[ $host == *:* && $host != [* ]]; then
     vpn_status_url="http://[$host]:${GLUETUN_CONTROL_PORT}/v1/openvpn/status"
@@ -281,37 +293,41 @@ wait_for_vpn_connection() {
     public_ip_url="http://${host}:${GLUETUN_CONTROL_PORT}/v1/publicip/ip"
   fi
 
-  msg "Waiting for VPN connection (max ${max_wait}s)..."
+  elapsed=0
+  local reported_healthy=0
+  local -a curl_cmd=(curl -fsS --max-time 5)
+  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+    curl_cmd+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
+  fi
 
   while ((elapsed < max_wait)); do
     local health
     health="$(docker inspect gluetun --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)"
 
     if [[ "$health" == "healthy" ]]; then
-      msg "  ✅ Gluetun is healthy"
-      return 0
-    fi
-
-    local -a curl_cmd=(curl -fsS --max-time 5)
-    if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
-      curl_cmd+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
-    fi
-
-    if "${curl_cmd[@]}" "$vpn_status_url" >/dev/null 2>&1; then
-      msg "  ✅ VPN API responding"
-      local ip_payload=""
-      ip_payload="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
-      if [[ -n "$ip_payload" ]]; then
-        local ip_summary
-        if ip_summary="$(gluetun_public_ip_summary "$ip_payload" 2>/dev/null || true)" && [[ -n "$ip_summary" ]]; then
-          msg "  🌐 Public IP: ${ip_summary}"
-        else
-          msg "  🌐 Public IP response: ${ip_payload}"
-        fi
-      else
-        msg "  🌐 Public IP: (pending)"
+      if ((reported_healthy == 0)); then
+        msg "  ✅ Gluetun is healthy"
+        reported_healthy=1
       fi
-      return 0
+
+      if "${curl_cmd[@]}" "$vpn_status_url" >/dev/null 2>&1; then
+        msg "  ✅ VPN API responding"
+
+        local ip_payload
+        ip_payload="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
+        if [[ -n "$ip_payload" ]]; then
+          local ip_summary
+          if ip_summary="$(gluetun_public_ip_summary "$ip_payload" 2>/dev/null || true)" && [[ -n "$ip_summary" ]]; then
+            msg "  🌐 Public IP: ${ip_summary}"
+          else
+            msg "  🌐 Public IP response: ${ip_payload}"
+          fi
+        else
+          msg "  🌐 Public IP: (pending)"
+        fi
+
+        return 0
+      fi
     fi
 
     sleep "$check_interval"
@@ -349,43 +365,36 @@ start_stack() {
 
   install_vuetorrent
 
-  local gluetun_attempts=0
-  local gluetun_max_attempts=3
-  local gluetun_started=0
-  local output=""
+  msg "Starting Gluetun VPN container..."
+  if ! "${DOCKER_COMPOSE_CMD[@]}" up -d gluetun 2>&1; then
+    warn "Initial Gluetun start failed"
+  fi
 
-  while ((gluetun_attempts < gluetun_max_attempts)); do
-    local attempt=$((gluetun_attempts + 1))
-    msg "Starting Gluetun VPN container (attempt ${attempt}/${gluetun_max_attempts})..."
+  sleep 10
 
-    if output="$("${DOCKER_COMPOSE_CMD[@]}" up -d gluetun 2>&1)"; then
-      if [[ -n "$output" ]]; then
-        while IFS= read -r line; do
-          printf '  %s\n' "$line"
-        done <<<"$output"
-      fi
-      gluetun_started=1
+  local restart_count=0
+  local gluetun_status=""
+  while ((restart_count < 5)); do
+    gluetun_status="$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "unknown")"
+
+    if [[ "$gluetun_status" == "running" ]]; then
       break
-    fi
-
-    warn "Failed to start Gluetun${output:+:}"
-    if [[ -n "$output" ]]; then
-      while IFS= read -r line; do
-        printf '  %s\n' "$line"
-      done <<<"$output"
-    fi
-
-    gluetun_attempts=$((gluetun_attempts + 1))
-    if ((gluetun_attempts < gluetun_max_attempts)); then
-      warn "Failed to start Gluetun, retrying in 10s..."
+    elif [[ "$gluetun_status" == "restarting" ]]; then
+      warn "Gluetun is restarting (attempt $((restart_count + 1))/5)"
+      docker logs --tail 10 gluetun 2>&1 | grep -i error || true
       sleep 10
+      restart_count=$((restart_count + 1))
     else
-      warn "Failed to start Gluetun after ${gluetun_max_attempts} attempts"
+      break
     fi
   done
 
-  if ((gluetun_started == 0)); then
-    warn "Gluetun may not have started successfully"
+  if ((restart_count >= 5)); then
+    die "Gluetun stuck in restart loop. Check credentials and network connectivity."
+  fi
+
+  if [[ "$gluetun_status" != "running" ]]; then
+    warn "Gluetun status after startup: ${gluetun_status}"
   fi
 
   msg "Waiting for VPN connection..."
@@ -475,6 +484,23 @@ start_stack() {
 
     sleep 3
   done
+
+  sleep 5
+  local -a created_services=()
+  for service in "${services[@]}"; do
+    local status
+    status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
+    if [[ "$status" == "created" ]]; then
+      created_services+=("$service")
+    fi
+  done
+
+  if ((${#created_services[@]} > 0)); then
+    msg "Force-starting services that were stuck in 'created' state..."
+    for service in "${created_services[@]}"; do
+      docker start "$service" 2>/dev/null || true
+    done
+  fi
 
   if ((qb_started)); then
     sync_qbt_password_from_logs

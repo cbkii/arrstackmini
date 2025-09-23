@@ -12,6 +12,23 @@ ARRCONF_DIR=${ARRCONF_DIR:-__ARRCONF_DIR__}
 : "${ARRCONF_DIR:=${ARR_STACK_DIR}/arrconf}"
 export ARR_STACK_DIR ARR_ENV_FILE ARR_DOCKER_DIR ARRCONF_DIR
 
+if [ -f "$ARR_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$ARR_ENV_FILE" 2>/dev/null || true
+  set +a
+
+  if [ -z "${GLUETUN_API_KEY:-}" ]; then
+    export GLUETUN_API_KEY="$(grep '^GLUETUN_API_KEY=' "$ARR_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d '\r')"
+  fi
+  if [ -z "${GLUETUN_CONTROL_PORT:-}" ]; then
+    export GLUETUN_CONTROL_PORT="$(grep '^GLUETUN_CONTROL_PORT=' "$ARR_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d '\r')"
+  fi
+  if [ -z "${LOCALHOST_IP:-}" ]; then
+    export LOCALHOST_IP="$(grep '^LOCALHOST_IP=' "$ARR_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d '\r')"
+  fi
+fi
+
 _arr_alias_source_if_present(){
   local file="$1"
   [ -f "$file" ] && . "$file"
