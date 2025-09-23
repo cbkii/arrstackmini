@@ -102,8 +102,6 @@ preflight() {
 
   show_configuration_preview
 
-  check_required_ports
-
   if [[ "$ASSUME_YES" != 1 ]]; then
     local response=""
 

@@ -4,23 +4,7 @@ show_summary() {
   msg "🎉 Setup complete!!"
   warn "Check these details and revisit the README for any manual steps you may need to perform from here"
 
-  local lan_binding_summary="LAN binding target: ${LAN_IP:-<unset>}"
-  if [[ -n "${LAN_IP_EFFECTIVE_IFACE:-}" ]]; then
-    lan_binding_summary+=" on ${LAN_IP_EFFECTIVE_IFACE}"
-  fi
-  if [[ -n "${LAN_IP_EFFECTIVE_METHOD:-}" ]]; then
-    lan_binding_summary+=" (${LAN_IP_EFFECTIVE_METHOD})"
-  fi
-  msg "$lan_binding_summary"
-
-  case "${LOCAL_DNS_SERVICE_REASON}" in
-    auto-disabled-port-conflict)
-      warn "Local DNS container disabled automatically because ${LOCAL_DNS_AUTO_DISABLED_REASON}. Free port 53 and rerun without --auto-disable-local-dns (or set AUTO_DISABLE_LOCAL_DNS=0) to restore it."
-      ;;
-    invalid-ip)
-      warn "Local DNS container skipped because LAN_IP (${LAN_IP:-<unset>}) is not a specific address. Update arrconf/userconf.sh and rerun."
-      ;;
-  esac
+  msg "LAN binding target: ${LAN_IP:-<unset>}"
 
   # Always show qBittorrent access information prominently
   local qbt_pass_msg=""
@@ -78,28 +62,6 @@ WARNING
 
 WARNING
   fi
-
-  local helper_script_path="${REPO_ROOT}/scripts/setup-lan-dns.sh"
-  case "${LOCAL_DNS_HELPER_STATUS}" in
-    skipped-missing-ip)
-      warn "Local DNS host entries were not updated because LAN_IP was unavailable. Provide a valid LAN_IP and rerun arrstack.sh --setup-host-dns if needed."
-      ;;
-    skipped-unassigned)
-      warn "Local DNS host entries were not updated because LAN_IP ${LAN_IP:-<unset>} is not assigned on this host."
-      ;;
-    missing-script)
-      warn "Local DNS helper script not found at ${helper_script_path}; host entries were not configured."
-      ;;
-    not-executable)
-      warn "Local DNS helper script at ${helper_script_path} is not executable; run chmod +x to allow host entry updates."
-      ;;
-    failed-invalid-ip)
-      warn "Local DNS helper skipped because LAN_IP is 0.0.0.0; update LAN_IP and rerun."
-      ;;
-    failed)
-      warn "Local DNS helper could not update /etc/hosts; rerun arrstack.sh with sudo if host entries are desired."
-      ;;
-  esac
 
   cat <<SUMMARY
 Access your services via Caddy:

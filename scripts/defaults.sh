@@ -1,33 +1,5 @@
 # shellcheck shell=bash
 
-detect_lan_cidrs_default() {
-  local -a baseline=("127.0.0.1/32" "::1/128" "172.16.0.0/12" "192.168.0.0/16" "10.0.0.0/8")
-  local -A seen=()
-  local -a detected=()
-
-  local entry=""
-  for entry in "${baseline[@]}"; do
-    [[ -z "$entry" ]] && continue
-    if [[ -z "${seen[$entry]:-}" ]]; then
-      seen[$entry]=1
-      detected+=("$entry")
-    fi
-  done
-
-  if command -v ip >/dev/null 2>&1; then
-    local lan_routes
-    lan_routes="$(ip route 2>/dev/null | awk '/^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/ {print $1}' || true)"
-    for entry in $lan_routes; do
-      if [[ "$entry" =~ /[0-9]+$ ]] && [[ -z "${seen[$entry]:-}" ]]; then
-        seen[$entry]=1
-        detected+=("$entry")
-      fi
-    done
-  fi
-
-  printf '%s' "${detected[*]}"
-}
-
 arrstack_setup_defaults() {
   ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT}/arrconf}"
 
@@ -64,22 +36,13 @@ arrstack_setup_defaults() {
   : "${UPSTREAM_DNS_2:=1.0.0.1}"
   : "${ENABLE_LOCAL_DNS:=1}"
   : "${SETUP_HOST_DNS:=0}"
-  : "${AUTO_DISABLE_LOCAL_DNS:=0}"
   : "${REFRESH_ALIASES:=0}"
 
-  LAN_IP_AUTODETECTED_IFACE=""
-  LAN_IP_AUTODETECTED_METHOD=""
-  LAN_IP_EFFECTIVE_IFACE=""
-  LAN_IP_EFFECTIVE_METHOD=""
   LOCAL_DNS_SERVICE_ENABLED=0
-  LOCAL_DNS_SERVICE_REASON="pending"
-  LOCAL_DNS_HELPER_STATUS="not-run"
-  LOCAL_DNS_AUTO_DISABLED=0
-  LOCAL_DNS_AUTO_DISABLED_REASON=""
 
   : "${FORCE_REGEN_CADDY_AUTH:=0}"
   : "${CADDY_IMAGE:=caddy:2.8.4}"
-  : "${CADDY_LAN_CIDRS:=$(detect_lan_cidrs_default)}"
+  : "${CADDY_LAN_CIDRS:=127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
   : "${CADDY_BASIC_AUTH_USER:=user}"
   : "${CADDY_BASIC_AUTH_HASH:=}"
 
