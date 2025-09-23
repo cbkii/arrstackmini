@@ -81,7 +81,21 @@ ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
 
 unescape_env_value_from_compose() {
   local value="${1-}"
-  value="${value//\$\$/\$}"
+  local sentinel=$'\001__ARRSTACK_DOLLAR__\002'
+
+  value="${value//$'\r'/}"
+
+  if [[ "$value" =~ ^".*"$ ]]; then
+    value="${value:1:${#value}-2}"
+    value="${value//\$\$/${sentinel}}"
+    value="$(printf '%b' "$value")"
+    value="${value//${sentinel}/\$}"
+    printf '%s' "$value"
+    return
+  fi
+
+  value="${value//\$\$/${sentinel}}"
+  value="${value//${sentinel}/\$}"
   printf '%s' "$value"
 }
 

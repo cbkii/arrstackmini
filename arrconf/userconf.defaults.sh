@@ -78,6 +78,9 @@ FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3
 # - Default uses upstream Alpine and installs curl at runtime (robust path)
 # - If you want a pre-baked local image, set: PORT_SYNC_IMAGE=local/port-sync:alpine-curl
 PORT_SYNC_IMAGE="${PORT_SYNC_IMAGE:-alpine:3.20.3}"
+PORT_UPDATE_MIN_INTERVAL="${PORT_UPDATE_MIN_INTERVAL:-30}"
+PORT_STATUS_MAX_AGE="${PORT_STATUS_MAX_AGE:-300}"
+PORT_SYNC_STARTUP_DELAY="${PORT_SYNC_STARTUP_DELAY:-30}"
 
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"

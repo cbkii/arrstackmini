@@ -68,6 +68,9 @@ arrstack_setup_defaults() {
   : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
   : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
   : "${PORT_SYNC_IMAGE:=alpine:3.20.3}"
+  : "${PORT_UPDATE_MIN_INTERVAL:=30}"
+  : "${PORT_STATUS_MAX_AGE:=300}"
+  : "${PORT_SYNC_STARTUP_DELAY:=30}"
 
   if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"

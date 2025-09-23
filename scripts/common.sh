@@ -150,19 +150,48 @@ escape_sed_replacement() {
 
 escape_env_value_for_compose() {
   local value="${1-}"
-  value="${value//\$/\$\$}"
-  printf '%s' "$value"
+
+  value="${value//$'\r'/}"  # Strip carriage returns to avoid CRLF churn
+
+  if [[ "$value" == *$'\n'* ]]; then
+    die "Environment values cannot contain newline characters"
+  fi
+
+  local escaped="${value//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  escaped="${escaped//\$/\$\$}"
+
+  printf '"%s"' "$escaped"
 }
 
 unescape_env_value_from_compose() {
   local value="${1-}"
-  value="${value//\$\$/\$}"
+  local sentinel=$'\001__ARRSTACK_DOLLAR__\002'
+
+  value="${value//$'\r'/}"  # Normalize line endings
+
+  if [[ "$value" =~ ^".*"$ ]]; then
+    value="${value:1:${#value}-2}"
+    value="${value//\$\$/${sentinel}}"
+    value="$(printf '%b' "$value")"
+    value="${value//${sentinel}/\$}"
+    printf '%s' "$value"
+    return
+  fi
+
+  value="${value//\$\$/${sentinel}}"
+  value="${value//${sentinel}/\$}"
   printf '%s' "$value"
 }
 
 format_env_line() {
   local key="$1"
   local value="${2-}"
+
+  if [[ "$value" == *$'\n'* ]]; then
+    die "Environment value for ${key} contains newline characters"
+  fi
+
   printf '%s=%s\n' "$key" "$(escape_env_value_for_compose "$value")"
 }
 
@@ -201,6 +230,10 @@ persist_env_var() {
 
   if [ -z "$key" ]; then
     return
+  fi
+
+  if [[ "$value" == *$'\n'* ]]; then
+    die "Environment value for ${key} contains newline characters"
   fi
 
   local escaped_value

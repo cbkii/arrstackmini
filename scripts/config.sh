@@ -12,6 +12,10 @@ validate_proton_creds() {
     return 1
   fi
 
+  if [[ "$user" =~ [[:cntrl:]] ]] || [[ "$pass" =~ [[:cntrl:]] ]]; then
+    return 1
+  fi
+
   return 0
 }
 
