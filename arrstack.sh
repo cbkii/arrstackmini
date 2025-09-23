@@ -40,19 +40,17 @@ Options:
   --rotate-api-key      Force regeneration of the Gluetun API key
   --rotate-caddy-auth   Force regeneration of the Caddy basic auth credentials
   --setup-host-dns      Run the host DNS takeover helper during installation
-  --auto-disable-local-dns
-                        Automatically disable the local dnsmasq container when port 53 is occupied
   --refresh-aliases     Regenerate helper aliases and reload your shell
   --help                Show this help message
 USAGE
 }
 
 GLUETUN_LIB="${REPO_ROOT}/scripts/gluetun.sh"
-if [[ -f "$GLUETUN_LIB" ]]; then
+if [[ -f "${GLUETUN_LIB}" ]]; then
   # shellcheck source=scripts/gluetun.sh
-  . "$GLUETUN_LIB"
+  . "${GLUETUN_LIB}"
 else
-  warn "Gluetun helper library not found at $GLUETUN_LIB"
+  warn "Gluetun helper library not found at ${GLUETUN_LIB}"
 fi
 
 main() {
@@ -72,10 +70,6 @@ main() {
         ;;
       --setup-host-dns)
         SETUP_HOST_DNS=1
-        shift
-        ;;
-      --auto-disable-local-dns)
-        AUTO_DISABLE_LOCAL_DNS=1
         shift
         ;;
       --refresh-aliases)
@@ -127,18 +121,17 @@ main() {
   install_aliases
   start_stack
 
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 || ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
     local doctor_script="${REPO_ROOT}/scripts/doctor.sh"
-    if [[ -x "$doctor_script" ]]; then
+    if [[ -x "${doctor_script}" ]]; then
       msg "🩺 Running LAN diagnostics"
       if ! LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
         LAN_IP="${LAN_IP}" \
         ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS}" \
         LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED}" \
-        LOCAL_DNS_AUTO_DISABLED="${LOCAL_DNS_AUTO_DISABLED}" \
         LOCALHOST_IP="${LOCALHOST_IP}" \
         GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT}" \
-        bash "$doctor_script"; then
+        bash "${doctor_script}"; then
         warn "LAN diagnostics reported issues"
       fi
     else

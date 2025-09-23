@@ -106,53 +106,18 @@ write_env() {
 
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
-  if (( LOCAL_DNS_AUTO_DISABLED )); then
-    warn "Local DNS disabled automatically (${LOCAL_DNS_AUTO_DISABLED_REASON}). Update arrconf/userconf.sh or free the port to re-enable it."
-  fi
-
-  LAN_IP_EFFECTIVE_IFACE=""
-  LAN_IP_EFFECTIVE_METHOD=""
-
   if [[ -z "${LAN_IP:-}" ]]; then
     LAN_IP="$(detect_lan_ip)"
     if [[ "$LAN_IP" != "0.0.0.0" ]]; then
-      LAN_IP_EFFECTIVE_IFACE="${LAN_IP_AUTODETECTED_IFACE:-$(interface_for_ip "$LAN_IP")}" 
-      LAN_IP_EFFECTIVE_METHOD="auto-detected"
-      if [[ -n "$LAN_IP_AUTODETECTED_METHOD" ]]; then
-        LAN_IP_EFFECTIVE_METHOD+=" via ${LAN_IP_AUTODETECTED_METHOD}"
-      fi
-      local detection_msg="Detected LAN IP: $LAN_IP"
-      if [[ -n "$LAN_IP_EFFECTIVE_IFACE" ]]; then
-        detection_msg+=" (interface ${LAN_IP_EFFECTIVE_IFACE}"
-        if [[ -n "$LAN_IP_AUTODETECTED_METHOD" ]]; then
-          detection_msg+=", ${LAN_IP_AUTODETECTED_METHOD}"
-        fi
-        detection_msg+=")"
-      elif [[ -n "$LAN_IP_AUTODETECTED_METHOD" ]]; then
-        detection_msg+=" (${LAN_IP_AUTODETECTED_METHOD})"
-      fi
-      msg "$detection_msg"
+      msg "Detected LAN IP: $LAN_IP"
     else
-      LAN_IP_EFFECTIVE_METHOD="auto-detected (failed)"
-      warn "Using LAN_IP=0.0.0.0; services will listen on all interfaces"
+      warn "Unable to detect a private LAN IP automatically; services will listen on all interfaces"
     fi
   elif [[ "$LAN_IP" == "0.0.0.0" ]]; then
-    LAN_IP_EFFECTIVE_METHOD="wildcard (0.0.0.0)"
     warn "LAN_IP explicitly set to 0.0.0.0; services will bind to all interfaces"
     warn "Consider using a specific RFC1918 address to limit exposure"
   else
-    LAN_IP_EFFECTIVE_IFACE="$(interface_for_ip "$LAN_IP")"
-    LAN_IP_EFFECTIVE_METHOD="user-specified"
-    local configured_msg="Using configured LAN_IP: $LAN_IP"
-    if [[ -n "$LAN_IP_EFFECTIVE_IFACE" ]]; then
-      configured_msg+=" (interface ${LAN_IP_EFFECTIVE_IFACE})"
-    fi
-    msg "$configured_msg"
-  fi
-
-  LAN_IPV4_SUBNET=""
-  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
-    LAN_IPV4_SUBNET="${LAN_IP%.*}.0/24"
+    msg "Using configured LAN_IP: $LAN_IP"
   fi
 
   load_proton_credentials
@@ -171,7 +136,6 @@ write_env() {
     format_env_line "PGID" "$PGID"
     format_env_line "TIMEZONE" "$TIMEZONE"
     format_env_line "LAN_IP" "$LAN_IP"
-    format_env_line "LAN_IPV4_SUBNET" "$LAN_IPV4_SUBNET"
     format_env_line "LOCALHOST_IP" "$LOCALHOST_IP"
     format_env_line "EXPOSE_DIRECT_PORTS" "$EXPOSE_DIRECT_PORTS"
     printf '\n'
@@ -266,12 +230,10 @@ write_compose() {
   local compose_content
 
   LOCAL_DNS_SERVICE_ENABLED=0
-  if (( LOCAL_DNS_AUTO_DISABLED )); then
-    LOCAL_DNS_SERVICE_REASON="auto-disabled-port-conflict"
-  elif [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
-    LOCAL_DNS_SERVICE_REASON="disabled"
-  else
-    LOCAL_DNS_SERVICE_REASON="requested"
+
+  local dns_host_entry="${LAN_IP:-}"
+  if [[ -z "${dns_host_entry}" || "${dns_host_entry}" == "0.0.0.0" ]]; then
+    dns_host_entry="HOST_IP"
   fi
 
   local gluetun_direct_ports_block=""
@@ -369,13 +331,12 @@ services:
 YAML
 
       local include_local_dns=0
-      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_AUTO_DISABLED:-0} -eq 0 ]]; then
+      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
         include_local_dns=1
       fi
 
       if ((include_local_dns)); then
         LOCAL_DNS_SERVICE_ENABLED=1
-        LOCAL_DNS_SERVICE_REASON="enabled"
         if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
           warn "Local DNS will bind to all interfaces (0.0.0.0:53)"
         fi
@@ -397,7 +358,7 @@ YAML
       - --bogus-priv
       - --domain=${LAN_DOMAIN_SUFFIX}
       - --local=/${LAN_DOMAIN_SUFFIX}/
-      - --address=/${LAN_DOMAIN_SUFFIX}/${LAN_IP:-HOST_IP}
+      - --address=/${LAN_DOMAIN_SUFFIX}/${dns_host_entry}
     restart: unless-stopped
     logging:
       driver: json-file

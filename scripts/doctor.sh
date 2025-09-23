@@ -207,7 +207,6 @@ LAN_IP="${LAN_IP:-}"
 DNS_IP="${LAN_IP:-127.0.0.1}"
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
 LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED:-1}"
-LOCAL_DNS_AUTO_DISABLED="${LOCAL_DNS_AUTO_DISABLED:-0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
 
@@ -218,8 +217,6 @@ printf '[doctor] Using DNS server at: %s\n' "${DNS_IP}"
 if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
   if [[ "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
     echo "[doctor] Local DNS container: enabled"
-  elif [[ "${LOCAL_DNS_AUTO_DISABLED}" -eq 1 ]]; then
-    echo "[doctor][warn] Local DNS was auto-disabled because port 53 was already in use."
   else
     echo "[doctor][warn] Local DNS requested but the container is disabled."
   fi
@@ -249,10 +246,6 @@ else
   if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
     report_port "Local DNS" udp "$LAN_IP" 53
     report_port "Local DNS" tcp "$LAN_IP" 53
-  elif [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_AUTO_DISABLED}" -eq 1 ]]; then
-    echo "[doctor][warn] Local DNS is disabled due to a port 53 conflict; reporting current listeners."
-    report_port "Port 53" udp "$LAN_IP" 53
-    report_port "Port 53" tcp "$LAN_IP" 53
   else
     echo "[doctor][info] Skipping port 53 checks because local DNS is disabled."
   fi
@@ -274,8 +267,6 @@ if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; th
       echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res}"
     fi
   fi
-elif [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_AUTO_DISABLED}" -eq 1 ]]; then
-  echo "[doctor][warn] DNS checks skipped: local DNS was auto-disabled. Free port 53 or re-run with --auto-disable-local-dns to accept the fallback."
 else
   echo "[doctor][info] DNS checks skipped: local DNS is disabled."
 fi

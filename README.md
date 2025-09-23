@@ -148,7 +148,6 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | `PGID` | Current group ID (`id -g`) | Match the media group so containers can write to shared folders. |
 | `TIMEZONE` | `Australia/Sydney` | Align container logs and cron tasks with your local timezone. |
 | `LAN_IP` | Auto-detected (falls back to `0.0.0.0`) | Bind services to a specific RFC1918 address instead of all interfaces. |
-| `LAN_IPV4_SUBNET` | Derived from `LAN_IP` | Helps qBittorrent and Gluetun allow the detected LAN /24; rarely needs overriding. |
 | `LOCALHOST_IP` | `127.0.0.1` | Change where the Gluetun control API binds on the host (advanced). |
 | `VPN_SERVICE_PROVIDER` | `protonvpn` | Keep Gluetun pinned to ProtonVPN. Change only when migrating to a different supported provider. |
 | `VPN_TYPE` | `openvpn` | Force Gluetun to use Proton's OpenVPN stack (required for port forwarding). |
@@ -179,7 +178,7 @@ The tables below summarise every configurable input exposed by `arrstack.sh` tog
 | Variable | Default | Why change it? |
 | -------- | ------- | --------------- |
 | `CADDY_DOMAIN_SUFFIX` | `home.arpa` | Controls the hostnames served by Caddy (`qbittorrent.<suffix>`, `sonarr.<suffix>`, etc.). Inherits from `LAN_DOMAIN_SUFFIX` when unset. |
-| `CADDY_LAN_CIDRS` | Auto-detected (localhost + Docker + discovered RFC1918 routes) | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
+| `CADDY_LAN_CIDRS` | `127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
 | `CADDY_BASIC_AUTH_USER` | `user` | Username presented to non-LAN clients when Caddy prompts for credentials. |
 | `CADDY_BASIC_AUTH_HASH` | `$2b$12$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa` | Replace with your own bcrypt hash to secure remote Basic Auth access. |
 
