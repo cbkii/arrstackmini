@@ -66,10 +66,23 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    ./arrstack.sh
    ```
    - Review the summary shown before containers launch and confirm to proceed.
-   - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install.
-   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`, `--rotate-caddy-auth`, `--setup-host-dns` (automates the host DNS takeover helper), and `--refresh-aliases` (regenerates helper aliases and reloads your shell configuration).
+   - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install. It can be combined with other flags when you need hands-free upgrades.
+   - Flags such as `--rotate-api-key`, `--rotate-caddy-auth`, and `--setup-host-dns` can run together in a single invocation so long as you want those actions during the same pass. See [Installer flags](#installer-flags) for a full breakdown.
+   - Use `--refresh-aliases` on its own when you only want to regenerate helper aliases; it exits immediately after writing `.arraliases`.
 
-    The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
+The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
+
+### Installer flags
+
+| Flag | Description | Can it be combined? |
+| --- | --- | --- |
+| `--yes` | Assume confirmation prompts are approved. Mirrors `ASSUME_YES=1`. | ✅ Combine freely with other actions. |
+| `--rotate-api-key` | Regenerate the Gluetun API key before writing `.env`. Sets `FORCE_ROTATE_API_KEY=1`. | ✅ Safe alongside `--yes`, `--rotate-caddy-auth`, or `--setup-host-dns`. |
+| `--rotate-caddy-auth` | Rotate the Caddy Basic Auth username/password and update `${ARR_DOCKER_DIR}/caddy/credentials`. Sets `FORCE_REGEN_CADDY_AUTH=1`. | ✅ Can run with other install-time actions. |
+| `--setup-host-dns` | Run `scripts/host-dns-setup.sh` after the stack is written, using the current `LAN_IP`, suffix, and upstream DNS values. Sets `SETUP_HOST_DNS=1`. | ✅ Combine with other install flags once `LAN_IP` points at a local interface. |
+| `--refresh-aliases` | Regenerate `.arraliases`, update the repo copy, and exit without touching the rest of the installer. Sets `REFRESH_ALIASES=1`. | ⚠️ Should be run alone—other flags are ignored once aliases are refreshed. |
+
+You can combine the first four flags as needed—for example, `./arrstack.sh --yes --rotate-api-key --rotate-caddy-auth --setup-host-dns` applies all requested maintenance tasks in one pass. When you only need fresh helper functions, call `./arrstack.sh --refresh-aliases` by itself.
 
 ## Important notes
 
@@ -118,14 +131,85 @@ All secrets and config directories are created with restrictive permissions (`06
 To allow read-only collaboration, set `ARR_PERMISSION_PROFILE=collaborative` in `arrconf/userconf.sh`. This relaxes non-secret files to group-readable (`0640`) and data directories to `0750` while keeping secrets locked to `0600`.
 
 ### Environment variables
-`arrstack.sh` renders `.env` from `arrconf/userconf.defaults.sh` plus any overrides you place in `arrconf/userconf.sh`. Most setups can leave everything alone after adding Proton credentials, but if you need to tweak behaviour copy `arrconf/userconf.sh.example` and adjust a handful of values:
+`arrstack.sh` renders `.env` from `arrconf/userconf.defaults.sh` plus any overrides you place in `arrconf/userconf.sh`. Copy `arrconf/userconf.sh.example` and adjust the variables relevant to your environment—then rerun `./arrstack.sh` so Docker Compose picks up the changes.
 
-- **Paths** – update `ARR_BASE`, `DOWNLOADS_DIR`, `TV_DIR`, or `MOVIES_DIR` when your media lives on another volume.
-- **Identity** – set `PUID`, `PGID`, and `TIMEZONE` to match the user that owns your media files.
-- **Networking** – leave `LAN_IP` empty to bind on `0.0.0.0`, or set it to a specific RFC1918 address if you want to lock exposure down. `LAN_DOMAIN_SUFFIX` controls the hostnames that Caddy and the optional local DNS service publish. Adjust `GLUETUN_CONTROL_PORT` only when port 8000 is already taken.
-- **Credentials** – seed `QBT_USER`/`QBT_PASS` if you prefer something other than the defaults; the Gluetun hook reuses the same credentials when updating the forwarded port.
+#### Paths & storage
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARR_BASE` | `~/srv` | Root directory that holds the generated stack. |
+| `ARR_STACK_DIR` | `${ARR_BASE}/arrstack` | Location of the compose file, scripts, and helper aliases. |
+| `ARR_ENV_FILE` | `${ARR_STACK_DIR}/.env` | Rendered secrets/environment file. |
+| `ARR_DOCKER_DIR` | `${ARR_BASE}/docker-data` | Docker volumes and persistent application data. |
+| `ARRCONF_DIR` | `<repo>/arrconf` | Proton credential directory (move it outside the repo if you prefer). |
+| `DOWNLOADS_DIR` | `${HOME}/Downloads` | Active qBittorrent download folder. |
+| `COMPLETED_DIR` | `${DOWNLOADS_DIR}/completed` | Destination for completed downloads. |
+| `MEDIA_DIR` | `/media/mediasmb` | Root of the media library. |
+| `TV_DIR` | `${MEDIA_DIR}/Shows` | Sonarr library path. |
+| `MOVIES_DIR` | `${MEDIA_DIR}/Movies` | Radarr library path. |
+| `SUBS_DIR` | *(unset)* | Optional Bazarr subtitles directory (leave empty to disable). |
 
-After editing `arrconf/userconf.sh`, rerun `./arrstack.sh` so the generated `.env` and Docker Compose file pick up your changes.
+#### Identity & permissions
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PUID` / `PGID` | Current user/group IDs | Container processes run as this user so downloads inherit the right permissions. |
+| `TIMEZONE` | `Australia/Sydney` | Controls cron schedules and timestamps inside the containers. |
+| `ARR_PERMISSION_PROFILE` | `strict` | `strict` keeps secrets at `600/700`; `collaborative` relaxes non-secret files/dirs to `640/750`. |
+
+#### Networking & DNS
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LAN_IP` | `0.0.0.0` (auto-detected) | Bind services to a specific LAN interface instead of all addresses. |
+| `LOCALHOST_IP` | `127.0.0.1` | Loopback used by the Gluetun control API. |
+| `LAN_DOMAIN_SUFFIX` | `home.arpa` | Suffix used for generated hostnames and optional local DNS records. |
+| `CADDY_DOMAIN_SUFFIX` | `LAN_DOMAIN_SUFFIX` | Override just the Caddy hostname suffix if you diverge from LAN DNS. |
+| `ENABLE_LOCAL_DNS` | `1` | Turn the bundled dnsmasq container on/off. |
+| `UPSTREAM_DNS_1` / `UPSTREAM_DNS_2` | `1.1.1.1` / `1.0.0.1` | Public resolvers local DNS forwards to. |
+| `CADDY_LAN_CIDRS` | `127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Networks allowed to bypass Caddy Basic Auth. |
+| `GLUETUN_CONTROL_PORT` | `8000` | Host port that exposes the Gluetun HTTP control server. |
+| `SERVER_COUNTRIES` | `Switzerland,…,Netherlands` | ProtonVPN exit countries Gluetun rotates through. |
+| `PVPN_ROTATE_COUNTRIES` | `SERVER_COUNTRIES` | Override the rotation order used by `arr.vpn.switch`. |
+| `EXPOSE_DIRECT_PORTS` | `0` | Publish application ports directly on the LAN alongside Caddy for troubleshooting. |
+
+#### Credentials & security
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GLUETUN_API_KEY` | *(generated)* | API key for Gluetun’s control server (auto-generated when blank). |
+| `QBT_USER` / `QBT_PASS` | `admin` / `adminadmin` | Initial qBittorrent credentials—change them after first login. |
+| `QBT_DOCKER_MODS` | `ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest` | Alternate WebUI image injected into the qBittorrent container. |
+| `QBT_AUTH_WHITELIST` | `127.0.0.1/8,::1/128` | CIDRs allowed to skip the qBittorrent login prompt. |
+| `CADDY_BASIC_AUTH_USER` | `user` | Username non-LAN clients must supply to reach services via Caddy. |
+| `CADDY_BASIC_AUTH_HASH` | *(generated)* | Bcrypt hash stored in `.env`; leave empty to rotate credentials automatically. |
+
+#### Service ports
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `QBT_HTTP_PORT_HOST` | `8080` | qBittorrent WebUI port exposed on the LAN. |
+| `SONARR_PORT` | `8989` | Sonarr WebUI port. |
+| `RADARR_PORT` | `7878` | Radarr WebUI port. |
+| `PROWLARR_PORT` | `9696` | Prowlarr WebUI port. |
+| `BAZARR_PORT` | `6767` | Bazarr WebUI port. |
+| `FLARESOLVERR_PORT` | `8191` | FlareSolverr service port. |
+
+#### Container images
+| Variable | Default |
+| --- | --- |
+| `GLUETUN_IMAGE` | `qmcgaw/gluetun:v3.39.1` |
+| `QBITTORRENT_IMAGE` | `lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415` |
+| `SONARR_IMAGE` | `lscr.io/linuxserver/sonarr:4.0.15.2941-ls291` |
+| `RADARR_IMAGE` | `lscr.io/linuxserver/radarr:5.27.5.10198-ls283` |
+| `PROWLARR_IMAGE` | `lscr.io/linuxserver/prowlarr:latest` |
+| `BAZARR_IMAGE` | `lscr.io/linuxserver/bazarr:latest` |
+| `FLARESOLVERR_IMAGE` | `ghcr.io/flaresolverr/flaresolverr:v3.3.21` |
+| `CADDY_IMAGE` | `caddy:2.8.4` |
+
+#### Behaviour toggles
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ASSUME_YES` | `0` | Skip confirmation prompts (equivalent to passing `--yes`). |
+| `FORCE_ROTATE_API_KEY` | `0` | Force a new Gluetun API key on the next run. |
+| `FORCE_REGEN_CADDY_AUTH` | `0` | Rotate the Caddy Basic Auth credentials on the next run. |
+| `SETUP_HOST_DNS` | `0` | Trigger the host DNS takeover helper automatically (also available via `--setup-host-dns`). |
+| `REFRESH_ALIASES` | `0` | Regenerate helper aliases and exit without running the full installer. |
 
 ### Service hostnames
 Caddy is the primary entrypoint on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. When `local_dns` is enabled, dnsmasq already resolves each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to `LAN_IP`; otherwise point your LAN DNS (or `/etc/hosts`) at the host manually. Enable `EXPOSE_DIRECT_PORTS=1` if you need Gluetun to expose each application on its native port (8080, 8989, 7878, 9696, 6767) as a fallback during troubleshooting.
