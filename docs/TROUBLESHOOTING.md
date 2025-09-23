@@ -47,7 +47,7 @@ If the API key query fails, regenerate credentials with:
   docker compose up -d qbittorrent
   docker logs qbittorrent | grep "password"
   ```
-- Update `.env` with the new `QBT_USER`/`QBT_PASS` values so the port-sync helper and Gluetun hook can authenticate whenever the WebUI requires it.
+- Update `.env` with the new `QBT_USER`/`QBT_PASS` values so the Gluetun hook can authenticate whenever the WebUI requires it.
 
 ### Port forwarding not updating
 ```bash
@@ -59,10 +59,10 @@ curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
 curl -fsS -H "X-Api-Key: $GLUETUN_API_KEY" \
   "http://${LOCALHOST_IP:-127.0.0.1}:${GLUETUN_CONTROL_PORT:-8000}/v1/openvpn/portforwarded" | jq '.port'
 
-# Review port-sync logs inside the shared Gluetun namespace
-docker logs port-sync --tail 50
+# Tail Gluetun logs to confirm the hook runs
+docker logs gluetun --tail 50 | grep update-qbt-port
 ```
-If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials. LAN browsers traverse Caddy, so the qBittorrent “bypass” checkboxes are optional. Gluetun also executes `/gluetun/hooks/update-qbt-port.sh` whenever Proton allocates a new port—if the hook is missing or not executable, rerun the installer.
+If the hook reports authentication failures, confirm that `QBT_USER`/`QBT_PASS` in `.env` match the WebUI credentials. LAN browsers traverse Caddy, so the qBittorrent “bypass” checkboxes are optional. Gluetun executes `/gluetun/hooks/update-qbt-port.sh` whenever Proton allocates a new port—if the hook is missing or not executable, rerun the installer.
 
 #### Control API unreachable inside the Gluetun namespace
 - Make sure `HTTP_CONTROL_SERVER_ADDRESS` in `docker-compose.yml` is bound to `0.0.0.0`. Recent releases of the installer do this automatically—rerun `./arrstack.sh --yes` to regenerate Compose files if you still see `127.0.0.1`.
@@ -86,7 +86,7 @@ If the helper reports authentication failures, confirm that `QBT_USER`/`QBT_PASS
 - Confirm `.env` still contains a Proton username with the `+pmp` suffix. The installer adds it automatically, but edits to `.env` can remove it and prevent Proton from enabling port forwarding.
 - Ensure `/gluetun/hooks/update-qbt-port.sh` exists and is executable inside the Gluetun container (rerun the installer if it is missing). The hook uses the qBittorrent Web API directly, so keep `.env` credentials accurate for seamless authentication.
 - Switch to another Proton exit in `arrconf/userconf.sh` by adjusting `SERVER_COUNTRIES`. Busy servers are more likely to drop the UDP 5351 NAT-PMP handshake. Narrowing the list to a single country (for example, `SERVER_COUNTRIES="Netherlands"`) usually makes Proton assign a port faster.
-- Give the tunnel time to settle. Port-sync uses exponential backoff (up to five minutes) and will automatically apply the forwarded port as soon as Gluetun reports it.
+- Give the tunnel time to settle. Proton can take a couple of minutes to hand out a port, and the hook will reapply it as soon as Gluetun reports success.
 - Keep the control API locked down: `GLUETUN_API_KEY` must be present and `LOCALHOST_IP` should stay on a loopback or other trusted address. Gluetun 3.40+ enforces authentication on `/v1/openvpn/portforwarded`, and the stack already ships with API-key protection—regenerate the key with `./arrstack.sh --rotate-api-key --yes` if required.
 - If Proton still never assigns a port, double-check that nothing on the host blocks outbound UDP 5351 to 10.16.0.1.
 

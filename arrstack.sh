@@ -107,7 +107,6 @@ main() {
   ensure_caddy_auth
   write_caddy_assets
   sync_gluetun_library
-  write_port_sync_script
   write_qbt_helper_script
   write_qbt_config
   if ! write_aliases_file; then

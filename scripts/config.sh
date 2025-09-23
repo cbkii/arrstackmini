@@ -19,90 +19,6 @@ validate_proton_creds() {
   return 0
 }
 
-calculate_qbt_auth_whitelist() {
-  local auth_whitelist=""
-  local -A seen_cidrs=()
-
-  append_whitelist_entry() {
-    local entry="${1-}"
-    entry="${entry//[[:space:]]/}"
-    if [[ -z "$entry" ]]; then
-      return
-    fi
-
-    local normalized="$entry"
-    local is_valid=0
-
-    if [[ "$normalized" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]{1,2})$ ]]; then
-      local ipv4="${normalized%/*}"
-      local cidr="${normalized##*/}"
-      if validate_ipv4 "$ipv4" && [[ "$cidr" =~ ^[0-9]+$ ]] && (( cidr >= 0 && cidr <= 32 )); then
-        is_valid=1
-      fi
-    elif [[ "$normalized" =~ ^[0-9A-Fa-f:]+(/[0-9]{1,3})?$ ]]; then
-      if [[ "$normalized" =~ :: ]] || [[ "$normalized" =~ : ]]; then
-        local mask="${normalized##*/}"
-        if [[ "$normalized" != */* ]] || ( [[ "$mask" =~ ^[0-9]+$ ]] && (( mask >= 0 && mask <= 128 )) ); then
-          is_valid=1
-        fi
-      fi
-    fi
-
-    if (( ! is_valid )); then
-      warn "Invalid CIDR: $entry"
-      return
-    fi
-
-    if [[ -n "${seen_cidrs[$normalized]:-}" ]]; then
-      return
-    fi
-
-    seen_cidrs[$normalized]=1
-    if [[ -z "$auth_whitelist" ]]; then
-      auth_whitelist="$normalized"
-    else
-      auth_whitelist="${auth_whitelist},${normalized}"
-    fi
-  }
-
-  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
-    append_whitelist_entry "${LAN_IP%.*}.0/24"
-  fi
-
-  if [[ -n "${QBT_AUTH_WHITELIST:-}" ]]; then
-    local sanitized="${QBT_AUTH_WHITELIST//[[:space:]]/}"
-    if [[ -n "$sanitized" ]]; then
-      local -a entries=()
-      IFS=',' read -ra entries <<<"$sanitized"
-      local entry
-      for entry in "${entries[@]}"; do
-        append_whitelist_entry "$entry"
-      done
-    fi
-  fi
-
-  if [[ -n "${CADDY_LAN_CIDRS:-}" ]]; then
-    local lan_entries
-    lan_entries="${CADDY_LAN_CIDRS//,/ }"
-    lan_entries="${lan_entries//$'\n'/ }"
-    local entry
-    for entry in $lan_entries; do
-      append_whitelist_entry "$entry"
-    done
-  fi
-
-  append_whitelist_entry "127.0.0.1/32"
-  append_whitelist_entry "127.0.0.0/8"
-  append_whitelist_entry "::1/128"
-
-  if [[ -z "$auth_whitelist" ]]; then
-    auth_whitelist="127.0.0.1/32,127.0.0.0/8,::1/128"
-  fi
-
-  printf '%s' "$auth_whitelist"
-  unset -f append_whitelist_entry || true
-}
-
 load_proton_credentials() {
   local proton_file="${ARRCONF_DIR}/proton.auth"
 
@@ -161,13 +77,11 @@ show_configuration_preview() {
     gluetun_api_key_display="(will be generated during setup)"
   fi
 
-  local qbt_auth_whitelist_preview
-  qbt_auth_whitelist_preview="$(calculate_qbt_auth_whitelist)"
   local lan_ip_display
   if [[ -n "${LAN_IP:-}" ]]; then
     lan_ip_display="$LAN_IP"
   else
-    lan_ip_display="(auto-detect during setup)"
+    lan_ip_display="(binds to 0.0.0.0 by default)"
   fi
 
   cat <<CONFIG
@@ -197,7 +111,7 @@ Credentials & secrets
   • Gluetun API key: ${gluetun_api_key_display}
   • qBittorrent username: ${QBT_USER}
   • qBittorrent password: ${qbt_pass_display}
-  • qBittorrent auth whitelist (final): ${qbt_auth_whitelist_preview}
+  • qBittorrent auth whitelist (final): ${QBT_AUTH_WHITELIST}
   • qBittorrent auth whitelist: ${QBT_AUTH_WHITELIST}
 
 Ports
@@ -221,7 +135,6 @@ CONFIG
 validate_config() {
   if [ -n "${LAN_IP:-}" ] && [ "${LAN_IP}" != "0.0.0.0" ]; then
     validate_ipv4 "$LAN_IP" || die "Invalid LAN_IP: ${LAN_IP}"
-    assert_ip_assigned "$LAN_IP"
   fi
   validate_port "$GLUETUN_CONTROL_PORT" || die "Invalid GLUETUN_CONTROL_PORT: ${GLUETUN_CONTROL_PORT}"
   validate_port "$QBT_HTTP_PORT_HOST" || die "Invalid QBT_HTTP_PORT_HOST: ${QBT_HTTP_PORT_HOST}"

@@ -107,15 +107,10 @@ write_env() {
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
   if [[ -z "${LAN_IP:-}" ]]; then
-    LAN_IP="$(detect_lan_ip)"
-    if [[ "$LAN_IP" != "0.0.0.0" ]]; then
-      msg "Detected LAN IP: $LAN_IP"
-    else
-      warn "Unable to detect a private LAN IP automatically; services will listen on all interfaces"
-    fi
+    LAN_IP="0.0.0.0"
+    msg "LAN_IP not set; binding services to 0.0.0.0"
   elif [[ "$LAN_IP" == "0.0.0.0" ]]; then
-    warn "LAN_IP explicitly set to 0.0.0.0; services will bind to all interfaces"
-    warn "Consider using a specific RFC1918 address to limit exposure"
+    msg "LAN_IP configured as 0.0.0.0; services will listen on all interfaces"
   else
     msg "Using configured LAN_IP: $LAN_IP"
   fi
@@ -148,9 +143,6 @@ write_env() {
     printf '\n'
 
     # Derived, so downstream tools (and developers) can reference the normalized suffix directly
-    format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
-    printf '\n'
-
     printf '# ProtonVPN OpenVPN credentials\n'
     format_env_line "OPENVPN_USER" "$PU"
     format_env_line "OPENVPN_PASSWORD" "$PW"
@@ -210,13 +202,6 @@ write_env() {
     format_env_line "BAZARR_IMAGE" "$BAZARR_IMAGE"
     format_env_line "FLARESOLVERR_IMAGE" "$FLARESOLVERR_IMAGE"
     format_env_line "CADDY_IMAGE" "$CADDY_IMAGE"
-    format_env_line "PORT_SYNC_IMAGE" "$PORT_SYNC_IMAGE"
-    printf '\n'
-
-    printf '# Port sync tuning\n'
-    format_env_line "PORT_UPDATE_MIN_INTERVAL" "$PORT_UPDATE_MIN_INTERVAL"
-    format_env_line "PORT_STATUS_MAX_AGE" "$PORT_STATUS_MAX_AGE"
-    format_env_line "PORT_SYNC_STARTUP_DELAY" "$PORT_SYNC_STARTUP_DELAY"
   })"
 
   atomic_write "$ARR_ENV_FILE" "$env_content" 600
@@ -289,20 +274,16 @@ services:
       HTTP_CONTROL_SERVER_ADDRESS: 0.0.0.0:${GLUETUN_CONTROL_PORT}
       HTTP_CONTROL_SERVER_AUTH: "apikey"
       HTTP_CONTROL_SERVER_APIKEY: ${GLUETUN_API_KEY}
-      VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
       VPN_PORT_FORWARDING_UP_COMMAND: "/gluetun/hooks/update-qbt-port.sh {{PORTS}}"
       QBT_USER: ${QBT_USER}
       QBT_PASS: ${QBT_PASS}
       QBITTORRENT_ADDR: "http://127.0.0.1:8080"
       PORT_FORWARD_ONLY: "yes"
-      PORT_UPDATE_MIN_INTERVAL: ${PORT_UPDATE_MIN_INTERVAL}
-      PORT_STATUS_MAX_AGE: ${PORT_STATUS_MAX_AGE}
       HEALTH_TARGET_ADDRESS: "1.1.1.1:443"
       HEALTH_VPN_DURATION_INITIAL: "30s"
       HEALTH_VPN_DURATION_ADDITION: "10s"
       HEALTH_SUCCESS_WAIT_DURATION: "10s"
       DNS_KEEP_NAMESERVER: "off"
-      PORT_FORWARDING_STATUS_FILE_CLEANUP: "off"
       FIREWALL_OUTBOUND_SUBNETS: "__GLUETUN_FIREWALL_OUTBOUND__"
       FIREWALL_INPUT_PORTS: "80,443,8080,8989,7878,9696,6767,8191"
       UPDATER_PERIOD: "24h"
@@ -536,55 +517,6 @@ __BAZARR_OPTIONAL_SUBS__
         max-size: "1m"
         max-file: "2"
 
-  port-sync:
-    image: ${PORT_SYNC_IMAGE}
-    container_name: port-sync
-    network_mode: "service:gluetun"
-    environment:
-      GLUETUN_API_KEY: ${GLUETUN_API_KEY}
-      GLUETUN_ADDR: "http://127.0.0.1:${GLUETUN_CONTROL_PORT}"
-      QBITTORRENT_ADDR: "http://127.0.0.1:8080"
-      UPDATE_INTERVAL: 300
-      BACKOFF_MAX: 900
-      QBT_USER: ${QBT_USER}
-      QBT_PASS: ${QBT_PASS}
-      VPN_PORT_FORWARDING_STATUS_FILE: /tmp/gluetun/forwarded_port
-      PORT_UPDATE_MIN_INTERVAL: ${PORT_UPDATE_MIN_INTERVAL}
-      PORT_STATUS_MAX_AGE: ${PORT_STATUS_MAX_AGE}
-      PORT_SYNC_STARTUP_DELAY: ${PORT_SYNC_STARTUP_DELAY}
-    volumes:
-      - ./scripts/port-sync.sh:/port-sync.sh:ro
-    command: /port-sync.sh
-    depends_on:
-      gluetun:
-        condition: service_healthy
-      qbittorrent:
-        condition: service_healthy
-    restart: unless-stopped
-    init: true
-    logging:
-      driver: json-file
-      options:
-        max-size: "1m"
-        max-file: "2"
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          if command -v curl >/dev/null 2>&1; then
-            curl -fsS --max-time 5 http://127.0.0.1:8080/api/v2/app/version >/dev/null 2>&1 && \
-            { [ -z "${GLUETUN_API_KEY}" ] && curl -fsS --max-time 5 http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/openvpn/status >/dev/null 2>&1 || curl -fsS --max-time 5 -H "X-Api-Key: ${GLUETUN_API_KEY}" http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/openvpn/status >/dev/null 2>&1; };
-          elif command -v wget >/dev/null 2>&1; then
-            wget -qO- http://127.0.0.1:8080/api/v2/app/version >/dev/null 2>&1 && \
-            { [ -z "${GLUETUN_API_KEY}" ] && wget -qO- http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/openvpn/status >/dev/null 2>&1 || wget -qO- --header="X-Api-Key: ${GLUETUN_API_KEY}" http://127.0.0.1:${GLUETUN_CONTROL_PORT}/v1/openvpn/status >/dev/null 2>&1; };
-          else
-            exit 1;
-          fi
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
   caddy:
     image: ${CADDY_IMAGE}
     container_name: caddy
@@ -656,286 +588,56 @@ write_gluetun_control_assets() {
 set -eu
 
 log() {
-    printf '[%s] [update-qbt-port] %s
-' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >&2
+    printf '[%s] [update-qbt-port] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >&2
 }
 
-QBITTORRENT_ADDR="${QBITTORRENT_ADDR:-http://127.0.0.1:8080}"
-PORT_SPEC="${1:-}"
-LOCK_FILE="/tmp/gluetun/port-update.lock"
-STATE_FILE="/tmp/gluetun/port-update.state"
-STATUS_FILE="${VPN_PORT_FORWARDING_STATUS_FILE:-/tmp/gluetun/forwarded_port}"
-MIN_INTERVAL="${PORT_UPDATE_MIN_INTERVAL:-30}"
-
-if [ -z "$PORT_SPEC" ]; then
-    log "No port specification provided"
+if ! command -v curl >/dev/null 2>&1; then
+    log "curl not available inside Gluetun; skipping port update"
     exit 0
 fi
 
+PORT_SPEC="${1:-}"
 PORT_VALUE="${PORT_SPEC%%,*}"
 PORT_VALUE="${PORT_VALUE%%:*}"
 
 case "$PORT_VALUE" in
     ''|*[!0-9]*)
-        log "Ignoring non-numeric port payload: $PORT_SPEC"
+        log "Ignoring non-numeric port payload: ${PORT_SPEC}"
         exit 0
         ;;
 esac
 
-LOCK_HELD=0
-COOKIE_JAR="/tmp/qbt.cookies.hook.$$"
+QBITTORRENT_ADDR="${QBITTORRENT_ADDR:-http://127.0.0.1:8080}"
+PAYLOAD=$(printf 'json={\"listen_port\":%s,\"random_port\":false}' "$PORT_VALUE")
 
-if ! command -v curl >/dev/null 2>&1; then
-    log "curl binary not available; skipping port update"
+if curl -fsS --max-time 8 \
+    --data "$PAYLOAD" \
+    "${QBITTORRENT_ADDR%/}/api/v2/app/setPreferences" >/dev/null 2>&1; then
+    log "Updated qBittorrent listen port to ${PORT_VALUE}"
     exit 0
 fi
 
-mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
-if [ -n "$STATUS_FILE" ]; then
-    mkdir -p "$(dirname "$STATUS_FILE")" 2>/dev/null || true
-fi
-
-cleanup() {
-    if [ "$LOCK_HELD" -eq 1 ] 2>/dev/null; then
-        rm -f "$LOCK_FILE"
-        LOCK_HELD=0
-    fi
-    rm -f "$COOKIE_JAR"
-}
-
-trap 'cleanup' INT TERM EXIT
-
-if ! touch "$COOKIE_JAR" 2>/dev/null; then
-    log "Unable to create cookie jar"
-    exit 0
-fi
-chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-
-acquire_lock() {
-    hook_lock_attempt=0
-    hook_lock_max_attempts=40
-    hook_lock_sleep=0.25
-
-    while [ "$hook_lock_attempt" -lt "$hook_lock_max_attempts" ]; do
-        if ( set -C; : >"$LOCK_FILE" ) 2>/dev/null; then
-            printf '%s:%s
-' "$$" "$(date +%s)" >"$LOCK_FILE" 2>/dev/null || true
-            LOCK_HELD=1
-            unset hook_lock_attempt hook_lock_max_attempts hook_lock_sleep
-            return 0
+if [ -n "${QBT_USER:-}" ] && [ -n "${QBT_PASS:-}" ]; then
+    COOKIE="$(mktemp)"
+    trap 'rm -f "$COOKIE"' INT TERM EXIT
+    if curl -fsS --max-time 5 -c "$COOKIE" \
+        --data-urlencode "username=${QBT_USER}" \
+        --data-urlencode "password=${QBT_PASS}" \
+        "${QBITTORRENT_ADDR%/}/api/v2/auth/login" >/dev/null 2>&1; then
+        if curl -fsS --max-time 8 -b "$COOKIE" \
+            --data "$PAYLOAD" \
+            "${QBITTORRENT_ADDR%/}/api/v2/app/setPreferences" >/dev/null 2>&1; then
+            log "Updated qBittorrent listen port to ${PORT_VALUE} after authentication"
+        else
+            log "Authenticated but failed to apply port update"
         fi
-        hook_lock_attempt=$((hook_lock_attempt + 1))
-        sleep "$hook_lock_sleep"
-    done
-
-    unset hook_lock_attempt hook_lock_max_attempts hook_lock_sleep
-    return 1
-}
-
-should_skip_update() {
-    ssu_now="$1"
-    [ -f "$STATE_FILE" ] || { unset ssu_now; return 1; }
-
-    ssu_last_port=""
-    ssu_last_ts=""
-    ssu_old_ifs="$IFS"
-    IFS=' '
-    if ! read -r ssu_last_port ssu_last_ts _ <"$STATE_FILE" 2>/dev/null; then
-        IFS="$ssu_old_ifs"
-        unset ssu_now ssu_last_port ssu_last_ts ssu_old_ifs
-        return 1
-    fi
-    IFS="$ssu_old_ifs"
-
-    case "$ssu_last_port" in
-        ''|*[!0-9]*) unset ssu_now ssu_last_port ssu_last_ts ssu_old_ifs; return 1 ;;
-    esac
-
-    case "$ssu_last_ts" in
-        ''|*[!0-9]*) unset ssu_now ssu_last_port ssu_last_ts ssu_old_ifs; return 1 ;;
-    esac
-
-    if [ "$ssu_last_port" = "$PORT_VALUE" ]; then
-        if [ $((ssu_now - ssu_last_ts)) -lt "$MIN_INTERVAL" ]; then
-            unset ssu_now ssu_last_port ssu_last_ts ssu_old_ifs
-            return 0
-        fi
-    fi
-
-    unset ssu_now ssu_last_port ssu_last_ts ssu_old_ifs
-    return 1
-}
-
-write_state_file() {
-    wsf_port="$1"
-    wsf_ts="$2"
-    wsf_tmp="$(mktemp "${STATE_FILE}.XXXXXX" 2>/dev/null || printf '')"
-    if [ -z "$wsf_tmp" ]; then
-        unset wsf_port wsf_ts wsf_tmp
-        return 1
-    fi
-
-    if ! printf '%s %s
-' "$wsf_port" "$wsf_ts" >"$wsf_tmp" 2>/dev/null; then
-        rm -f "$wsf_tmp"
-        unset wsf_port wsf_ts wsf_tmp
-        return 1
-    fi
-
-    chmod 600 "$wsf_tmp" 2>/dev/null || true
-
-    if ! mv -f "$wsf_tmp" "$STATE_FILE" 2>/dev/null; then
-        rm -f "$wsf_tmp"
-        unset wsf_port wsf_ts wsf_tmp
-        return 1
-    fi
-
-    unset wsf_port wsf_ts wsf_tmp
-    return 0
-}
-
-write_status_file() {
-    wstatus_port="$1"
-    wstatus_ts="$2"
-
-    if [ -z "$STATUS_FILE" ]; then
-        unset wstatus_port wstatus_ts
-        return 0
-    fi
-
-    wstatus_tmp="$(mktemp "${STATUS_FILE}.XXXXXX" 2>/dev/null || printf '')"
-    if [ -z "$wstatus_tmp" ]; then
-        unset wstatus_port wstatus_ts wstatus_tmp
-        return 1
-    fi
-
-    if ! printf '%s %s
-' "$wstatus_port" "$wstatus_ts" >"$wstatus_tmp" 2>/dev/null; then
-        rm -f "$wstatus_tmp"
-        unset wstatus_port wstatus_ts wstatus_tmp
-        return 1
-    fi
-
-    chmod 600 "$wstatus_tmp" 2>/dev/null || true
-
-    if ! mv -f "$wstatus_tmp" "$STATUS_FILE" 2>/dev/null; then
-        rm -f "$wstatus_tmp"
-        unset wstatus_port wstatus_ts wstatus_tmp
-        return 1
-    fi
-
-    unset wstatus_port wstatus_ts wstatus_tmp
-    return 0
-}
-
-check_qbt_ready() {
-    cqr_attempt=0
-    cqr_max_attempts=6
-    cqr_delay=2
-    cqr_max_delay=16
-    cqr_version_url="${QBITTORRENT_ADDR%/}/api/v2/app/version"
-
-    while [ "$cqr_attempt" -lt "$cqr_max_attempts" ]; do
-        if curl -fsS --max-time 5 "$cqr_version_url" >/dev/null 2>&1; then
-            unset cqr_attempt cqr_max_attempts cqr_delay cqr_max_delay cqr_version_url
-            return 0
-        fi
-
-        sleep "$cqr_delay"
-        cqr_attempt=$((cqr_attempt + 1))
-        if [ "$cqr_delay" -lt "$cqr_max_delay" ]; then
-            cqr_delay=$((cqr_delay * 2))
-            if [ "$cqr_delay" -gt "$cqr_max_delay" ]; then
-                cqr_delay="$cqr_max_delay"
-            fi
-        fi
-    done
-
-    unset cqr_attempt cqr_max_attempts cqr_delay cqr_max_delay cqr_version_url
-    return 1
-}
-
-setprefs_payload="$(printf 'json={"listen_port":%s,"random_port":false}' "$PORT_VALUE")"
-
-post_setprefs_unauth() {
-    curl --silent --show-error --max-time 8         --data "$setprefs_payload"         --output /dev/null "${QBITTORRENT_ADDR%/}/api/v2/app/setPreferences"
-}
-
-post_setprefs_auth() {
-    if [ -z "${QBT_USER:-}" ] || [ -z "${QBT_PASS:-}" ]; then
-        return 1
-    fi
-
-    : >"$COOKIE_JAR"
-
-    if ! curl -fsS --max-time 5 -c "$COOKIE_JAR"         --data-urlencode "username=${QBT_USER}"         --data-urlencode "password=${QBT_PASS}"         "${QBITTORRENT_ADDR%/}/api/v2/auth/login" >/dev/null 2>&1; then
-        return 1
-    fi
-
-    if ! curl -fsS --max-time 5 -b "$COOKIE_JAR"         "${QBITTORRENT_ADDR%/}/api/v2/app/version" >/dev/null 2>&1; then
-        return 1
-    fi
-
-    curl --silent --show-error --max-time 8 -b "$COOKIE_JAR"         --data "$setprefs_payload"         --output /dev/null "${QBITTORRENT_ADDR%/}/api/v2/app/setPreferences"
-}
-
-apply_port_update() {
-    apu_attempt=0
-    apu_max_attempts=5
-    apu_delay=1
-    apu_max_delay=16
-
-    while [ "$apu_attempt" -lt "$apu_max_attempts" ]; do
-        if post_setprefs_unauth; then
-            unset apu_attempt apu_max_attempts apu_delay apu_max_delay
-            return 0
-        fi
-        if post_setprefs_auth; then
-            unset apu_attempt apu_max_attempts apu_delay apu_max_delay
-            return 0
-        fi
-
-        apu_attempt=$((apu_attempt + 1))
-        sleep "$apu_delay"
-        if [ "$apu_delay" -lt "$apu_max_delay" ]; then
-            apu_delay=$((apu_delay * 2))
-            if [ "$apu_delay" -gt "$apu_max_delay" ]; then
-                apu_delay="$apu_max_delay"
-            fi
-        fi
-    done
-
-    unset apu_attempt apu_max_attempts apu_delay apu_max_delay
-    return 1
-}
-
-if ! acquire_lock; then
-    log "Could not acquire port update lock"
-    exit 0
-fi
-
-now_ts="$(date +%s)"
-
-if ! should_skip_update "$now_ts"; then
-    log "Processing forwarded port ${PORT_VALUE}"
-
-    if ! check_qbt_ready; then
-        log "qBittorrent API not responding; skipping update"
-        exit 0
-    fi
-
-    if apply_port_update; then
-        write_state_file "$PORT_VALUE" "$now_ts" || true
-        write_status_file "$PORT_VALUE" "$now_ts" || true
-        log "qBittorrent port updated to ${PORT_VALUE}"
     else
-        log "Failed to push port ${PORT_VALUE} into qBittorrent"
+        log "qBittorrent authentication failed"
     fi
+    rm -f "$COOKIE"
 else
-    log "Skipping duplicate port update for ${PORT_VALUE}"
+    log "Skipping authenticated update: QBT_USER/QBT_PASS not provided"
 fi
-
-exit 0
 HOOK
 
   chmod 700 "${hooks_dir}/update-qbt-port.sh" 2>/dev/null || true
@@ -1166,733 +868,6 @@ sync_gluetun_library() {
   chmod 644 "$ARR_STACK_DIR/scripts/gluetun.sh"
 }
 
-write_port_sync_script() {
-  msg "📜 Writing port sync script"
-
-  ensure_dir "$ARR_STACK_DIR/scripts"
-
-  cat >"$ARR_STACK_DIR/scripts/port-sync.sh" <<'SCRIPT'
-#!/bin/sh
-set -eu
-
-log() {
-    printf '[%s] [port-sync] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >&2
-}
-
-warn() {
-    log "warn: $1"
-}
-
-ensure_curl() {
-    if command -v curl >/dev/null 2>&1; then
-        return
-    fi
-
-    warn "curl not found, attempting to install..."
-
-    if command -v apk >/dev/null 2>&1; then
-        if apk update >/dev/null 2>&1 && apk add --no-cache curl ca-certificates >/dev/null 2>&1; then
-            log "curl installed successfully"
-            return
-        fi
-        warn "apk update/add failed; retrying simple add..."
-        if apk add --no-cache curl >/dev/null 2>&1; then
-            log "curl installed successfully (without update)"
-            return
-        fi
-    fi
-
-    if command -v wget >/dev/null 2>&1; then
-        warn "curl unavailable; using wget shim as fallback"
-        curl() {
-            set -- "$@"
-            headers=""
-            url=""
-            post_data=""
-            method="GET"
-            load_cookies=""
-            save_cookies=""
-            output_target="-"
-            newline_store="$(printf '\n_')"
-            newline="${newline_store%_}"
-
-            while [ $# -gt 0 ]; do
-                case "$1" in
-                    -H)
-                        [ $# -ge 2 ] || break
-                        if [ -z "$headers" ]; then
-                            headers="$2"
-                        else
-                            headers="${headers}${newline}$2"
-                        fi
-                        shift 2
-                        ;;
-                    -b)
-                        [ $# -ge 2 ] || break
-                        load_cookies="$2"
-                        shift 2
-                        ;;
-                    -c)
-                        [ $# -ge 2 ] || break
-                        save_cookies="$2"
-                        shift 2
-                        ;;
-                    --data|-d|--data-raw)
-                        [ $# -ge 2 ] || break
-                        method="POST"
-                        post_data="$2"
-                        shift 2
-                        ;;
-                    --data-urlencode)
-                        [ $# -ge 2 ] || break
-                        method="POST"
-                        if [ -n "$post_data" ]; then
-                            post_data="${post_data}&$2"
-                        else
-                            post_data="$2"
-                        fi
-                        shift 2
-                        ;;
-                    --output|-o)
-                        [ $# -ge 2 ] || break
-                        output_target="$2"
-                        shift 2
-                        ;;
-                    --max-time)
-                        shift
-                        [ $# -gt 0 ] && shift
-                        ;;
-                    -fsS|-f|-s|-S|--silent|--show-error)
-                        shift
-                        ;;
-                    -* )
-                        shift
-                        ;;
-                    *)
-                        if [ -z "$url" ]; then
-                            url="$1"
-                        fi
-                        shift
-                        ;;
-                esac
-            done
-
-            if [ -z "$url" ]; then
-                return 22
-            fi
-
-            set -- --quiet
-            if [ "$output_target" = "-" ]; then
-                set -- "$@" -O -
-            else
-                set -- "$@" -O "$output_target"
-            fi
-            if [ "$method" = "POST" ]; then
-                set -- "$@" --post-data="$post_data"
-            fi
-            if [ -n "$load_cookies" ]; then
-                set -- "$@" --load-cookies="$load_cookies"
-            fi
-            if [ -n "$save_cookies" ]; then
-                set -- "$@" --save-cookies="$save_cookies"
-            fi
-
-            old_ifs=$IFS
-            IFS="$newline"
-            for header in $headers; do
-                [ -n "$header" ] || continue
-                set -- "$@" --header="$header"
-            done
-            IFS=$old_ifs
-            unset newline_store newline
-
-            set -- "$@" "$url"
-            wget "$@"
-        }
-        export -f curl 2>/dev/null || true
-        return
-    fi
-
-    log "ERROR: Neither curl nor wget available, and installation failed"
-    exit 1
-}
-
-LOCK_FILE="/tmp/gluetun/port-update.lock"
-STATE_FILE="/tmp/gluetun/port-update.state"
-
-: "${GLUETUN_ADDR:=http://127.0.0.1:8000}"
-: "${GLUETUN_API_KEY:=}"
-: "${QBITTORRENT_ADDR:=http://127.0.0.1:8080}"
-: "${UPDATE_INTERVAL:=300}"
-: "${BACKOFF_MAX:=900}"
-: "${QBT_USER:=}"
-: "${QBT_PASS:=}"
-: "${VPN_PORT_FORWARDING_STATUS_FILE:=/tmp/gluetun/forwarded_port}"
-: "${PORT_UPDATE_MIN_INTERVAL:=30}"
-: "${PORT_STATUS_MAX_AGE:=300}"
-: "${STARTUP_DELAY:=30}"
-
-STATUS_FILE="$VPN_PORT_FORWARDING_STATUS_FILE"
-COOKIE_JAR="/tmp/qbt.cookies.$$"
-
-case "$PORT_UPDATE_MIN_INTERVAL" in
-    ''|*[!0-9]*) PORT_UPDATE_MIN_INTERVAL=30 ;;
-esac
-case "$PORT_STATUS_MAX_AGE" in
-    ''|*[!0-9]*) PORT_STATUS_MAX_AGE=300 ;;
-esac
-case "$STARTUP_DELAY" in
-    ''|*[!0-9]*) STARTUP_DELAY=30 ;;
-esac
-case "$UPDATE_INTERVAL" in
-    ''|*[!0-9]*) UPDATE_INTERVAL=300 ;;
-esac
-case "$BACKOFF_MAX" in
-    ''|*[!0-9]*) BACKOFF_MAX=900 ;;
-esac
-
-if [ "$PORT_UPDATE_MIN_INTERVAL" -le 0 ]; then
-    PORT_UPDATE_MIN_INTERVAL=30
-fi
-if [ "$PORT_STATUS_MAX_AGE" -le 0 ]; then
-    PORT_STATUS_MAX_AGE=300
-fi
-if [ "$STARTUP_DELAY" -lt 0 ]; then
-    STARTUP_DELAY=0
-fi
-if [ "$UPDATE_INTERVAL" -le 0 ]; then
-    UPDATE_INTERVAL=300
-fi
-if [ "$BACKOFF_MAX" -le 0 ]; then
-    BACKOFF_MAX=900
-fi
-
-mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
-if [ -n "$STATUS_FILE" ]; then
-    mkdir -p "$(dirname "$STATUS_FILE")" 2>/dev/null || true
-fi
-
-if ! touch "$COOKIE_JAR" 2>/dev/null; then
-    log "ERROR: Unable to create cookie jar"
-    exit 1
-fi
-chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-
-LOCK_HELD=0
-
-release_lock() {
-    if [ "$LOCK_HELD" -eq 1 ] 2>/dev/null; then
-        rm -f "$LOCK_FILE"
-        LOCK_HELD=0
-    fi
-}
-
-cleanup() {
-    release_lock
-    rm -f "$COOKIE_JAR"
-}
-
-trap 'cleanup' EXIT INT TERM
-
-acquire_lock() {
-    attempt=0
-    max_attempts=40
-    sleep_seconds=0.25
-
-    while [ $attempt -lt $max_attempts ]; do
-        if ( set -C; : >"$LOCK_FILE" ) 2>/dev/null; then
-            printf '%s:%s\n' "$$" "$(date +%s)" >"$LOCK_FILE" 2>/dev/null || true
-            LOCK_HELD=1
-            return 0
-        fi
-        attempt=$((attempt + 1))
-        sleep "$sleep_seconds"
-    done
-
-    return 1
-}
-
-write_state_file() {
-    port="$1"
-    ts="$2"
-    tmp=
-
-    tmp="$(mktemp "${STATE_FILE}.XXXXXX" 2>/dev/null || printf '')"
-    if [ -z "$tmp" ]; then
-        return 1
-    fi
-
-    if ! printf '%s %s\n' "$port" "$ts" >"$tmp" 2>/dev/null; then
-        rm -f "$tmp"
-        return 1
-    fi
-
-    chmod 600 "$tmp" 2>/dev/null || true
-
-    if ! mv -f "$tmp" "$STATE_FILE" 2>/dev/null; then
-        rm -f "$tmp"
-        return 1
-    fi
-
-    return 0
-}
-
-write_status_file() {
-    port="$1"
-    ts="$2"
-    tmp=
-
-    if [ -z "$STATUS_FILE" ]; then
-        return 0
-    fi
-
-    tmp="$(mktemp "${STATUS_FILE}.XXXXXX" 2>/dev/null || printf '')"
-    if [ -z "$tmp" ]; then
-        return 1
-    fi
-
-    if ! printf '%s %s\n' "$port" "$ts" >"$tmp" 2>/dev/null; then
-        rm -f "$tmp"
-        return 1
-    fi
-
-    chmod 600 "$tmp" 2>/dev/null || true
-
-    if ! mv -f "$tmp" "$STATUS_FILE" 2>/dev/null; then
-        rm -f "$tmp"
-        return 1
-    fi
-
-    return 0
-}
-
-should_skip_update() {
-    port="$1"
-    now="$2"
-
-    if [ ! -f "$STATE_FILE" ]; then
-        return 1
-    fi
-
-    last_port=
-    last_ts=
-    IFS=' ' read -r last_port last_ts _ <"$STATE_FILE" 2>/dev/null || return 1
-
-    case "$last_port" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    case "$last_ts" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    if [ "$port" = "$last_port" ] && [ $((now - last_ts)) -lt "$PORT_UPDATE_MIN_INTERVAL" ]; then
-        return 0
-    fi
-
-    return 1
-}
-
-read_status_port() {
-    if [ -z "$STATUS_FILE" ] || [ ! -r "$STATUS_FILE" ]; then
-        return 1
-    fi
-
-    port=
-    ts=
-    extra=
-    IFS=' ' read -r port ts extra <"$STATUS_FILE" 2>/dev/null || return 1
-
-    case "$port" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    now=
-    now="$(date +%s)"
-
-    case "$ts" in
-        ''|*[!0-9]*)
-            ts=""
-            ;;
-    esac
-
-    if [ -n "$ts" ]; then
-        if [ $((now - ts)) -gt "$PORT_STATUS_MAX_AGE" ]; then
-            warn "forwarded port status file stale"
-            return 1
-        fi
-        printf '%s' "$port"
-        return 0
-    fi
-
-    if command -v stat >/dev/null 2>&1; then
-        mtime=
-        mtime=$(stat -c %Y "$STATUS_FILE" 2>/dev/null || stat -f %m "$STATUS_FILE" 2>/dev/null || printf '')
-        if [ -n "$mtime" ] && [ $((now - mtime)) -le "$PORT_STATUS_MAX_AGE" ]; then
-            printf '%s' "$port"
-            return 0
-        fi
-    fi
-
-    warn "forwarded port status file missing timestamp; treating as stale"
-    return 1
-}
-
-api_get() {
-    path="$1"
-    url="${GLUETUN_ADDR}${path}"
-
-    if [ -n "$GLUETUN_API_KEY" ]; then
-        if ! curl -fsS --max-time 5 -H "X-Api-Key: $GLUETUN_API_KEY" "$url"; then
-            warn "API call failed to $url (with API key)"
-            return 1
-        fi
-    else
-        warn "No API key provided, trying without authentication"
-        if ! curl -fsS --max-time 5 "$url"; then
-            warn "API call failed to $url (without API key)"
-            return 1
-        fi
-    fi
-}
-
-login_qbt() {
-    if [ -z "$QBT_USER" ] || [ -z "$QBT_PASS" ]; then
-        return 1
-    fi
-
-    : >"$COOKIE_JAR"
-    chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-
-    if ! curl -fsS --max-time 5 -c "$COOKIE_JAR" \
-        --data-urlencode "username=${QBT_USER}" \
-        --data-urlencode "password=${QBT_PASS}" \
-        "${QBITTORRENT_ADDR}/api/v2/auth/login" >/dev/null 2>&1; then
-        rm -f "$COOKIE_JAR"
-        touch "$COOKIE_JAR" 2>/dev/null || true
-        chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-        return 1
-    fi
-
-    if ! curl -fsS --max-time 5 -b "$COOKIE_JAR" \
-        "${QBITTORRENT_ADDR}/api/v2/app/preferences" >/dev/null 2>&1; then
-        rm -f "$COOKIE_JAR"
-        touch "$COOKIE_JAR" 2>/dev/null || true
-        chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-        return 1
-    fi
-
-    return 0
-}
-
-ensure_qbt_session() {
-    if [ -s "$COOKIE_JAR" ]; then
-        return 0
-    fi
-
-    if login_qbt; then
-        return 0
-    fi
-
-    return 1
-}
-
-get_qbt_listen_port() {
-    response=""
-
-    if ensure_qbt_session; then
-        response="$(curl -fsS --max-time 5 -b "$COOKIE_JAR" "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
-    fi
-
-    if [ -z "$response" ]; then
-        response="$(curl -fsS --max-time 5 "${QBITTORRENT_ADDR}/api/v2/app/preferences" 2>/dev/null || true)"
-    fi
-
-    if [ -z "$response" ]; then
-        rm -f "$COOKIE_JAR"
-        touch "$COOKIE_JAR" 2>/dev/null || true
-        chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-        return 1
-    fi
-
-    printf '%s' "$response" | tr -d '\r\n' | awk -F'"listen_port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}'
-    return 0
-}
-
-set_qbt_listen_port() {
-    port="$1"
-    payload="json={\"listen_port\":${port},\"random_port\":false}"
-
-    if curl -fsS --max-time 5 -b "$COOKIE_JAR" \
-        --data-raw "$payload" "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if curl -fsS --max-time 5 \
-        --data-raw "$payload" "${QBITTORRENT_ADDR}/api/v2/app/setPreferences" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    rm -f "$COOKIE_JAR"
-    touch "$COOKIE_JAR" 2>/dev/null || true
-    chmod 600 "$COOKIE_JAR" 2>/dev/null || true
-    return 1
-}
-
-wait_for_gluetun() {
-    attempts=0
-    max_attempts=8
-    sleep_seconds=2
-    status_url="${GLUETUN_ADDR}/v1/openvpn/status"
-    response=""
-
-    log "Waiting for Gluetun OpenVPN status endpoint (max ~$((max_attempts * sleep_seconds))s)..."
-
-    while [ $attempts -lt $max_attempts ]; do
-        if [ -n "$GLUETUN_API_KEY" ]; then
-            response="$(curl -fsS --max-time 3 -H "X-Api-Key: $GLUETUN_API_KEY" "$status_url" 2>/dev/null || true)"
-        else
-            response="$(curl -fsS --max-time 3 "$status_url" 2>/dev/null || true)"
-        fi
-
-        if [ -n "$response" ]; then
-            case "$response" in
-                *"status":"connected"*|*"status":"completed"*)
-                    log "Gluetun reports OpenVPN status: connected"
-                    return 0
-                    ;;
-            esac
-        fi
-
-        attempts=$((attempts + 1))
-        if [ $attempts -lt $max_attempts ]; then
-            sleep "$sleep_seconds"
-        fi
-    done
-
-    log "ERROR: Gluetun OpenVPN status endpoint unavailable after ~$((max_attempts * sleep_seconds))s"
-    return 1
-}
-
-wait_for_qbittorrent() {
-    attempts=0
-    max_attempts=10
-    delay=3
-    max_delay=20
-    version_url="${QBITTORRENT_ADDR}/api/v2/app/version"
-
-    while [ $attempts -lt $max_attempts ]; do
-        if curl -fsS --max-time 5 "$version_url" >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep "$delay"
-        attempts=$((attempts + 1))
-        if [ "$delay" -lt "$max_delay" ]; then
-            delay=$((delay * 2))
-        fi
-    done
-
-    return 1
-}
-
-update_qbt_port() {
-    port="$1"
-    now=
-    now="$(date +%s)"
-
-    if ! acquire_lock; then
-        warn "unable to acquire port update lock"
-        return 1
-    fi
-
-    if ! should_skip_update "$port" "$now"; then
-        ensure_qbt_session >/dev/null 2>&1 || true
-        if set_qbt_listen_port "$port"; then
-            write_state_file "$port" "$now" || true
-            write_status_file "$port" "$now" || true
-            release_lock
-            return 0
-        fi
-        warn "failed to apply port ${port}"
-        release_lock
-        return 1
-    fi
-
-    release_lock
-    log "Skipping duplicate port update for ${port}"
-    return 0
-}
-
-log "starting port-sync against ${GLUETUN_ADDR} -> ${QBITTORRENT_ADDR}"
-
-ensure_curl
-
-if ! wait_for_gluetun; then
-    log "FATAL: Cannot proceed without Gluetun API"
-    exit 1
-fi
-
-if [ "$STARTUP_DELAY" -gt 0 ]; then
-    log "Startup delay ${STARTUP_DELAY}s to allow qBittorrent initialization"
-    sleep "$STARTUP_DELAY"
-fi
-
-while ! wait_for_qbittorrent; do
-    warn "qBittorrent API not ready; retrying in 10s"
-    sleep 10
-done
-
-if [ -n "$QBT_USER" ] && [ -n "$QBT_PASS" ]; then
-    if login_qbt; then
-        log "Authenticated with qBittorrent API"
-    else
-        warn "Failed to authenticate with provided qBittorrent credentials"
-    fi
-fi
-
-last_reported=""
-backoff=30
-consecutive_failures=0
-max_consecutive_failures=5
-extended_backoff=300
-
-while :; do
-    pf=""
-    if port_file_value="$(read_status_port)"; then
-        pf="$port_file_value"
-    fi
-
-    if [ -z "$pf" ] || [ "$pf" = "0" ]; then
-        pf="$(api_get '/v1/forwardedport' 2>/dev/null | tr -d '[:space:]' || printf '')"
-    fi
-
-    if [ -z "$pf" ] || [ "$pf" = "0" ]; then
-        response="$(api_get '/v1/openvpn/portforwarded' 2>/dev/null || true)"
-        if [ -n "$response" ]; then
-            pf="$(printf '%s' "$response" | awk -F'"port":' 'NF>1 {sub(/[^0-9].*/, "", $2); if ($2 != "") {print $2; exit}}')"
-        fi
-    fi
-
-    if [ -z "$pf" ] || [ "$pf" = "0" ]; then
-        consecutive_failures=$((consecutive_failures + 1))
-
-        if [ $consecutive_failures -ge $max_consecutive_failures ]; then
-            warn "Multiple failures detected, using extended backoff (${extended_backoff}s)"
-            sleep "$extended_backoff"
-            consecutive_failures=0
-            backoff=30
-        else
-            sleep "$backoff"
-            backoff=$((backoff * 2))
-            if [ "$backoff" -gt "$BACKOFF_MAX" ]; then
-                backoff="$BACKOFF_MAX"
-            fi
-        fi
-
-        continue
-    fi
-
-    consecutive_failures=0
-    if [ "$pf" != "$last_reported" ]; then
-        log "Updating qBittorrent listen port to $pf"
-        if update_qbt_port "$pf"; then
-            last_reported="$pf"
-            backoff=30
-        else
-            warn "failed to update qBittorrent port"
-        fi
-    fi
-
-    sleep "$UPDATE_INTERVAL"
-
-done
-SCRIPT
-
-  chmod 755 "$ARR_STACK_DIR/scripts/port-sync.sh"
-
-  msg "🆘 Writing version recovery script"
-
-  cat >"$ARR_STACK_DIR/scripts/fix-versions.sh" <<'FIXVER'
-#!/usr/bin/env bash
-set -euo pipefail
-
-msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
-warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
-die() { warn "$1"; exit 1; }
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${STACK_DIR}/.env"
-
-update_env_entry() {
-  local key="$1"
-  local value="$2"
-  local tmp
-
-  tmp="$(mktemp "${ENV_FILE}.XXXXXX.tmp")" || die "Failed to create temp file for ${key}"
-  chmod 600 "$tmp" 2>/dev/null || true
-
-  if sed "s|^${key}=.*|${key}=${value}|" "$ENV_FILE" >"$tmp" 2>/dev/null; then
-    mv "$tmp" "$ENV_FILE"
-  else
-    rm -f "$tmp"
-    die "Failed to update ${key} in ${ENV_FILE}"
-  fi
-}
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  die ".env file not found at ${ENV_FILE}"
-fi
-
-if ! command -v docker >/dev/null 2>&1; then
-  die "Docker CLI not found on PATH"
-fi
-
-msg "🔧 Fixing Docker image versions..."
-
-USE_LATEST=(
-  "lscr.io/linuxserver/prowlarr"
-  "lscr.io/linuxserver/bazarr"
-)
-
-backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
-cp "$ENV_FILE" "$backup"
-msg "Backed up .env to $backup"
-
-for base_image in "${USE_LATEST[@]}"; do
-  msg "Checking $base_image..."
-
-  case "$base_image" in
-    *prowlarr) var_name="PROWLARR_IMAGE" ;;
-    *bazarr) var_name="BAZARR_IMAGE" ;;
-    *) continue ;;
-  esac
-
-  current_image="$(grep "^${var_name}=" "$ENV_FILE" | cut -d= -f2- || true)"
-
-  if [[ -z "$current_image" ]]; then
-    warn "  No ${var_name} entry found in .env; skipping"
-    continue
-  fi
-
-  if ! docker manifest inspect "$current_image" >/dev/null 2>&1; then
-    warn "  Current tag doesn't exist: $current_image"
-    latest_image="${base_image}:latest"
-    msg "  Updating to: $latest_image"
-    update_env_entry "$var_name" "$latest_image"
-  else
-    msg "  ✅ Current tag is valid: $current_image"
-  fi
-done
-
-msg "✅ Version fixes complete"
-msg "Run './arrstack.sh --yes' to apply changes"
-FIXVER
-
-  chmod 755 "$ARR_STACK_DIR/scripts/fix-versions.sh"
-
-}
-
 write_qbt_helper_script() {
   msg "🧰 Writing qBittorrent helper script"
 
@@ -1925,7 +900,7 @@ write_qbt_config() {
     rm -f "$legacy_conf"
   fi
   local auth_whitelist
-  auth_whitelist="$(calculate_qbt_auth_whitelist)"
+  auth_whitelist="${QBT_AUTH_WHITELIST:-127.0.0.1/32,::1/128}"
   msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
 
   if [[ ! -f "$conf_file" ]]; then
