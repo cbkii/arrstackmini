@@ -52,6 +52,23 @@ QBT_INFO
    Update arrconf/userconf.sh with a specific LAN_IP to limit exposure.
 
 WARNING
+
+    cat <<'MANUAL_ACCESS'
+
+⚠️  MANUAL ACCESS REQUIRED
+Since services are bound to 0.0.0.0, you need to:
+
+1. Find your Pi's IP address:
+   ip addr show | grep "inet " | grep -v 127.0.0.1
+
+2. Access services directly via IP:
+   http://<YOUR_PI_IP>:80  (Caddy proxy)
+
+3. Or add to your computer's /etc/hosts:
+   <YOUR_PI_IP> qbittorrent.home.arpa sonarr.home.arpa radarr.home.arpa
+   <YOUR_PI_IP> prowlarr.home.arpa bazarr.home.arpa flaresolverr.home.arpa
+
+MANUAL_ACCESS
   fi
 
   if [[ "${QBT_USER}" == "admin" && "${QBT_PASS}" == "adminadmin" ]]; then

@@ -56,6 +56,10 @@ mkdirs() {
     warn "Creating it now (may fail if parent directory is missing)"
     mkdir -p "$SUBS_DIR" 2>/dev/null || warn "Could not create subtitles directory"
   fi
+
+  if [[ -n "${PUID:-}" && -n "${PGID:-}" ]]; then
+    chown -R "${PUID}:${PGID}" "$ARR_DOCKER_DIR" 2>/dev/null || true
+  fi
 }
 
 generate_api_key() {
@@ -106,11 +110,14 @@ write_env() {
 
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
-  if [[ -z "${LAN_IP:-}" ]]; then
-    LAN_IP="0.0.0.0"
-    msg "LAN_IP not set; binding services to 0.0.0.0"
-  elif [[ "$LAN_IP" == "0.0.0.0" ]]; then
-    msg "LAN_IP configured as 0.0.0.0; services will listen on all interfaces"
+  if [[ -z "${LAN_IP:-}" || "$LAN_IP" == "0.0.0.0" ]]; then
+    if detected_ip="$(detect_lan_ip 2>/dev/null)"; then
+      LAN_IP="$detected_ip"
+      msg "Auto-detected LAN_IP: $LAN_IP"
+    else
+      LAN_IP="0.0.0.0"
+      msg "LAN_IP not set; binding services to 0.0.0.0"
+    fi
   else
     msg "Using configured LAN_IP: $LAN_IP"
   fi
@@ -216,8 +223,8 @@ write_compose() {
 
   LOCAL_DNS_SERVICE_ENABLED=0
 
-  local dns_host_entry="${LAN_IP:-}"
-  if [[ -z "${dns_host_entry}" || "${dns_host_entry}" == "0.0.0.0" ]]; then
+  local dns_host_entry="${LAN_IP:-0.0.0.0}"
+  if [[ "${dns_host_entry}" == "0.0.0.0" ]]; then
     dns_host_entry="HOST_IP"
   fi
 
@@ -236,22 +243,13 @@ YAML
 
   local -a outbound_candidates=("192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12")
   if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
-    outbound_candidates=("${LAN_IP%.*}.0/24" "${outbound_candidates[@]}")
+    local subnet
+    subnet="${LAN_IP%.*}.0/24"
+    outbound_candidates=("$subnet" "${outbound_candidates[@]}")
   fi
 
-  local -A outbound_seen=()
-  local -a outbound_unique=()
-  local outbound_entry=""
-  for outbound_entry in "${outbound_candidates[@]}"; do
-    [[ -z "$outbound_entry" ]] && continue
-    if [[ -z "${outbound_seen[$outbound_entry]:-}" ]]; then
-      outbound_seen[$outbound_entry]=1
-      outbound_unique+=("$outbound_entry")
-    fi
-  done
-
-  local gluetun_firewall_outbound="${outbound_unique[*]}"
-  gluetun_firewall_outbound="${gluetun_firewall_outbound// /,}"
+  local gluetun_firewall_outbound
+  gluetun_firewall_outbound="$(printf '%s\n' "${outbound_candidates[@]}" | sort -u | paste -sd, -)"
 
   compose_content="$(
     {
@@ -269,6 +267,8 @@ services:
       VPN_TYPE: openvpn
       OPENVPN_USER: ${OPENVPN_USER}
       OPENVPN_PASSWORD: ${OPENVPN_PASSWORD}
+      OPENVPN_CUSTOM_CONFIG: ""
+      FREE_ONLY: "off"
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
       VPN_PORT_FORWARDING: "on"
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
@@ -301,9 +301,9 @@ services:
     healthcheck:
       test: /gluetun-entrypoint healthcheck
       interval: 30s
-      timeout: 20s
-      retries: 5
-      start_period: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 120s
     restart: unless-stopped
     logging:
       driver: json-file
@@ -315,6 +315,22 @@ YAML
       local include_local_dns=0
       if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
         include_local_dns=1
+      fi
+
+      if ((include_local_dns)); then
+        if command -v ss >/dev/null 2>&1; then
+          if ss -tuln | grep -q ':53 ' 2>/dev/null; then
+            warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled."
+            include_local_dns=0
+            LOCAL_DNS_SERVICE_ENABLED=0
+          fi
+        elif command -v netstat >/dev/null 2>&1; then
+          if netstat -tuln | grep -q ':53 ' 2>/dev/null; then
+            warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled."
+            include_local_dns=0
+            LOCAL_DNS_SERVICE_ENABLED=0
+          fi
+        fi
       fi
 
       if ((include_local_dns)); then
@@ -340,7 +356,7 @@ YAML
       - --bogus-priv
       - --domain=${LAN_DOMAIN_SUFFIX}
       - --local=/${LAN_DOMAIN_SUFFIX}/
-      - --address=/${LAN_DOMAIN_SUFFIX}/${dns_host_entry}
+      - --address=/${LAN_DOMAIN_SUFFIX}/__DNS_HOST_ENTRY__
     restart: unless-stopped
     logging:
       driver: json-file
@@ -411,6 +427,7 @@ YAML
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     logging:
       driver: json-file
@@ -435,6 +452,7 @@ YAML
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     logging:
       driver: json-file
@@ -456,6 +474,7 @@ YAML
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     logging:
       driver: json-file
@@ -480,6 +499,7 @@ __BAZARR_OPTIONAL_SUBS__
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     logging:
       driver: json-file
@@ -496,6 +516,7 @@ __BAZARR_OPTIONAL_SUBS__
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -529,6 +550,7 @@ __BAZARR_OPTIONAL_SUBS__
     depends_on:
       gluetun:
         condition: service_healthy
+        restart: true
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -564,6 +586,8 @@ YAML
   fi
 
   compose_content="${compose_content/__GLUETUN_FIREWALL_OUTBOUND__/$gluetun_firewall_outbound}"
+  compose_content="${compose_content/__DNS_HOST_ENTRY__/$dns_host_entry}"
+  compose_content="${compose_content//\${dns_host_entry}/$dns_host_entry}"
 
   local bazarr_subs_volume=""
   if [[ -n "${SUBS_DIR:-}" ]]; then
