@@ -254,10 +254,16 @@ fi
 echo "[doctor] Testing HTTPS endpoint"
 if ! have_command curl; then
   echo "[doctor][warn] 'curl' command not found; skipping HTTPS probe."
-elif curl -k --silent --max-time 5 "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
-  echo "[doctor][ok] HTTPS endpoint reachable"
 else
-  echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
+  local -a curl_args=(-k --silent --max-time 5)
+  if [[ -n "$LAN_IP" && "$LAN_IP" != "0.0.0.0" ]]; then
+    curl_args+=(--resolve "qbittorrent.${SUFFIX}:443:${LAN_IP}" --resolve "qbittorrent.${SUFFIX}:80:${LAN_IP}")
+  fi
+  if curl "${curl_args[@]}" "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
+    echo "[doctor][ok] HTTPS endpoint reachable"
+  else
+    echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
+  fi
 fi
 
 exit 0

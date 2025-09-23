@@ -300,10 +300,17 @@ wait_for_vpn_connection() {
 
     if "${curl_cmd[@]}" "$vpn_status_url" >/dev/null 2>&1; then
       msg "  ✅ VPN API responding"
-      local ip=""
-      ip="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
-      if [[ -n "$ip" ]]; then
-        msg "  🌐 Public IP: $ip"
+      local ip_payload=""
+      ip_payload="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
+      if [[ -n "$ip_payload" ]]; then
+        local ip_summary
+        if ip_summary="$(gluetun_public_ip_summary "$ip_payload" 2>/dev/null || true)" && [[ -n "$ip_summary" ]]; then
+          msg "  🌐 Public IP: ${ip_summary}"
+        else
+          msg "  🌐 Public IP response: ${ip_payload}"
+        fi
+      else
+        msg "  🌐 Public IP: (pending)"
       fi
       return 0
     fi
