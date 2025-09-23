@@ -126,6 +126,44 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+parse_public_ip_payload() {
+  local payload="${1-}"
+  local normalized
+  local ip=""
+
+  normalized="${payload//$'\r'/}"
+  normalized="${normalized//$'\n'/}"
+
+  if [[ -z "$normalized" || "$normalized" == "null" ]]; then
+    printf ''
+    return 0
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    ip="$(printf '%s' "$normalized" | jq -r 'if type == "string" then (select(length>0)) else (.public_ip // .ip // empty) end' 2>/dev/null || printf '')"
+  fi
+
+  if [[ -z "$ip" ]]; then
+    case "$normalized" in
+      \"*\")
+        ip="${normalized#\"}"
+        ip="${ip%\"}"
+        ;;
+      \{*)
+        ip="$(printf '%s' "$normalized" | sed -n 's/.*"public_ip"[[:space:]]*:[[:space:]]*"\([^"[:space:]]*\)".*/\1/p' | head -n1)"
+        if [[ -z "$ip" ]]; then
+          ip="$(printf '%s' "$normalized" | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\([^"[:space:]]*\)".*/\1/p' | head -n1)"
+        fi
+        ;;
+      *)
+        ip="$normalized"
+        ;;
+    esac
+  fi
+
+  printf '%s' "$ip"
+}
+
 init_logging() {
   local log_dir="${ARR_STACK_DIR}/logs"
   mkdir -p "$log_dir"
@@ -3142,10 +3180,14 @@ wait_for_vpn_connection() {
 
     if "${curl_cmd[@]}" "$vpn_status_url" >/dev/null 2>&1; then
       msg "  ✅ VPN API responding"
+      local ip_payload=""
       local ip=""
-      ip="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
+      ip_payload="$("${curl_cmd[@]}" "$public_ip_url" 2>/dev/null || true)"
+      ip="$(parse_public_ip_payload "$ip_payload")"
       if [[ -n "$ip" ]]; then
         msg "  🌐 Public IP: $ip"
+      elif [[ -n "$ip_payload" ]]; then
+        msg "  🌐 Public IP: not yet assigned"
       fi
       return 0
     fi

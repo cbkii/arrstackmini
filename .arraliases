@@ -176,6 +176,82 @@ _arr_gluetun_key(){
   fi
 }
 
+_arr_has_jq(){ command -v jq >/dev/null 2>&1; }
+
+_arr_strip_newlines(){
+  local value="${1-}"
+  value="${value//$'\r'/}"
+  value="${value//$'\n'/}"
+  printf '%s' "$value"
+}
+
+_arr_parse_public_ip(){
+  local payload="${1-}"
+  local normalized
+  local ip=""
+
+  normalized="$(_arr_strip_newlines "$payload")"
+  if [ -z "$normalized" ] || [ "$normalized" = "null" ]; then
+    printf ''
+    return 0
+  fi
+
+  if _arr_has_jq; then
+    ip="$(printf '%s' "$normalized" | jq -r 'if type == "string" then (select(length>0)) else (.public_ip // .ip // empty) end' 2>/dev/null || printf '')"
+  fi
+
+  if [ -z "$ip" ]; then
+    case "$normalized" in
+      \"*\")
+        ip="${normalized#\"}"
+        ip="${ip%\"}"
+        ;;
+      \{*)
+        ip="$(printf '%s' "$normalized" | sed -n 's/.*"public_ip"[[:space:]]*:[[:space:]]*"\([^"[:space:]]*\)".*/\1/p' | head -n1)"
+        if [ -z "$ip" ]; then
+          ip="$(printf '%s' "$normalized" | sed -n 's/.*"ip"[[:space:]]*:[[:space:]]*"\([^"[:space:]]*\)".*/\1/p' | head -n1)"
+        fi
+        ;;
+      *)
+        ip="$normalized"
+        ;;
+    esac
+  fi
+
+  printf '%s' "$ip"
+}
+
+_arr_parse_forwarded_port(){
+  local payload="${1-}"
+  local normalized
+  local port=""
+
+  normalized="$(_arr_strip_newlines "$payload")"
+  if [ -z "$normalized" ]; then
+    printf ''
+    return 0
+  fi
+
+  if _arr_has_jq; then
+    port="$(printf '%s' "$normalized" | jq -r 'if type == "number" then tostring elif type == "string" then (select(test("^[0-9]+$"))) elif type == "object" then (.port // empty) else empty end' 2>/dev/null || printf '')"
+  fi
+
+  if [ -z "$port" ]; then
+    if printf '%s' "$normalized" | grep -qE '^[0-9]+$'; then
+      port="$normalized"
+    elif printf '%s' "$normalized" | grep -q '"port"'; then
+      port="$(printf '%s' "$normalized" | sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1)"
+    fi
+  fi
+
+  if [ -n "$port" ] && [ "$port" != "null" ]; then
+    printf '%s' "$port"
+    return 0
+  fi
+
+  printf ''
+}
+
 _arr_gluetun_api(){
   local endpoint="$1"
   local key="$(_arr_gluetun_key)"
@@ -263,10 +339,15 @@ arr.shell(){
   fi
 }
 arr.health(){
-  local svc
+  local svc status
   for svc in "${_arr_services[@]}"; do
     if docker inspect "$svc" >/dev/null 2>&1; then
-      printf '%s: %s\n' "$svc" "$(docker inspect --format '{{.State.Health.Status}}' "$svc" 2>/dev/null || echo unknown)"
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$svc" 2>/dev/null || printf 'unknown')"
+      status="$(_arr_strip_newlines "$status")"
+      if [ -z "$status" ]; then
+        status="unknown"
+      fi
+      printf '%s: %s\n' "$svc" "$status"
     else
       printf '%s: not running\n' "$svc"
     fi
@@ -478,10 +559,31 @@ arr.vpn.connect(){ (cd "$ARR_STACK_DIR" && docker compose up -d gluetun qbittorr
 arr.vpn.reconnect(){ docker restart gluetun "$@"; }
 
 arr.vpn.status(){
-  _arr_gluetun_api /v1/publicip/ip && printf '\n'
-  local type="$(_arr_env_get VPN_TYPE)"
+  local payload ip type port_payload port
+
+  if ! payload="$(_arr_gluetun_api /v1/publicip/ip 2>/dev/null)"; then
+    return 1
+  fi
+
+  ip="$(_arr_parse_public_ip "$payload")"
+  if [ -n "$ip" ]; then
+    printf 'Public IP: %s\n' "$ip"
+  else
+    echo 'Public IP: not assigned'
+  fi
+
+  type="$(_arr_env_get VPN_TYPE)"
   if [ "${type:-openvpn}" = "openvpn" ]; then
-    _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'
+    if port_payload="$(_arr_gluetun_api /v1/openvpn/portforwarded 2>/dev/null)"; then
+      port="$(_arr_parse_forwarded_port "$port_payload")"
+      if [ -n "$port" ] && [ "$port" != "0" ]; then
+        printf 'Forwarded port: %s\n' "$port"
+      else
+        echo 'Forwarded port: not assigned'
+      fi
+    else
+      echo 'Forwarded port: unavailable'
+    fi
   fi
 }
 
@@ -493,13 +595,36 @@ arr.vpn.port(){
     echo 'Port forwarding is only available for OpenVPN configurations.'
     return 1
   fi
-  _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'
+  local payload port
+  if ! payload="$(_arr_gluetun_api /v1/openvpn/portforwarded 2>/dev/null)"; then
+    return 1
+  fi
+  port="$(_arr_parse_forwarded_port "$payload")"
+  if [ -n "$port" ]; then
+    printf '%s\n' "$port"
+    return 0
+  fi
+  echo '0'
+  return 1
 }
 
 arr.vpn.paths(){ printf 'Config: %s\nAuth: %s\n' "${ARRCONF_DIR}" "${ARR_DOCKER_DIR}/gluetun"; }
 
 arr.vpn.logs(){ docker logs -f gluetun; }
-arr.vpn.ip(){ _arr_gluetun_api /v1/publicip/ip && printf '\n'; }
+arr.vpn.ip(){
+  local payload ip
+  if ! payload="$(_arr_gluetun_api /v1/publicip/ip 2>/dev/null)"; then
+    return 1
+  fi
+  ip="$(_arr_parse_public_ip "$payload")"
+  if [ -n "$ip" ]; then
+    printf '%s\n' "$ip"
+    return 0
+  fi
+  echo 'Public IP not available.'
+  return 1
+}
+
 arr.vpn.pf(){ _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'; }
 arr.vpn.health(){ docker inspect --format '{{.State.Health.Status}}' gluetun 2>/dev/null || echo unknown; }
 
@@ -666,9 +791,12 @@ arr.qbt.port.set(){
   printf 'Requested port set to %s\n' "$1"
 }
 arr.qbt.port.sync(){
-  local port
-  port=$(_arr_gluetun_api /v1/openvpn/portforwarded 2>/dev/null | grep -oE '[0-9]+' || true)
-  if [ -z "$port" ]; then
+  local payload port
+  if ! payload="$(_arr_gluetun_api /v1/openvpn/portforwarded 2>/dev/null)"; then
+    return 1
+  fi
+  port="$(_arr_parse_forwarded_port "$payload")"
+  if [ -z "$port" ] || [ "$port" = "0" ]; then
     echo 'No forwarded port available.'
     return 1
   fi

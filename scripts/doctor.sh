@@ -254,10 +254,20 @@ fi
 echo "[doctor] Testing HTTPS endpoint"
 if ! have_command curl; then
   echo "[doctor][warn] 'curl' command not found; skipping HTTPS probe."
-elif curl -k --silent --max-time 5 "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
-  echo "[doctor][ok] HTTPS endpoint reachable"
+elif [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
+  if curl -k --silent --max-time 5 "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
+    echo "[doctor][ok] HTTPS endpoint reachable"
+  else
+    echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
+  fi
+elif [[ -n "${LAN_IP}" && "${LAN_IP}" != "0.0.0.0" ]]; then
+  if curl -k --silent --max-time 5 --resolve "qbittorrent.${SUFFIX}:443:${LAN_IP}" "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
+    echo "[doctor][ok] HTTPS endpoint reachable via forced LAN_IP (${LAN_IP})"
+  else
+    echo "[doctor][warn] HTTPS endpoint not reachable even when forcing LAN_IP ${LAN_IP}. Check Caddy and firewall settings."
+  fi
 else
-  echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
+  echo "[doctor][info] HTTPS probe skipped: local DNS is disabled and LAN_IP is unset."
 fi
 
 exit 0
