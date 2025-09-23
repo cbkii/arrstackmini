@@ -70,7 +70,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    ```
    - Review the summary shown before containers launch and confirm to proceed.
    - `--yes` skips the confirmation prompt but is meant for scripted or repeat runs—leave it off on your first install.
-   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`, `--rotate-caddy-auth`, and `--setup-host-dns` (automates the host DNS takeover helper).
+   - Run `./arrstack.sh --help` for flags such as `--rotate-api-key`, `--rotate-caddy-auth`, `--setup-host-dns` (automates the host DNS takeover helper), and `--refresh-aliases` (regenerates helper aliases and reloads your shell configuration).
 
     The script installs Docker Compose prerequisites when needed, creates the required directory tree under `${ARR_STACK_DIR}`, generates secrets (including `.env`), waits for Gluetun health/port forwarding, then launches the remaining containers. Any blockers surface as warnings when safe fallbacks exist, so first-time installs should still complete.
 
@@ -96,7 +96,7 @@ After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 2. **Rotate the Caddy Basic Auth credentials.** Run `./arrstack.sh --rotate-caddy-auth` (or set `FORCE_REGEN_CADDY_AUTH=1 ./arrstack.sh --yes`) to mint a fresh username/password pair. The plaintext is written to `${ARR_DOCKER_DIR}/caddy/credentials`, and the bcrypt hash is saved to `.env`. Prefer manual control? You can still generate a hash yourself with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and update `.env` accordingly.
 3. **Decide how LAN DNS resolves the stack.** Leave `ENABLE_LOCAL_DNS=1` and point routers/devices at `${LAN_IP}` so dnsmasq serves `*.${LAN_DOMAIN_SUFFIX}` automatically, or disable it and create manual DNS/`/etc/hosts` entries that map each service (`qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc.) to `LAN_IP`.
 4. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
-5. **Reload aliases.** `source ${ARR_STACK_DIR}/.arraliases` to gain `arr.vpn.status`, `arr.help`, `arr.logs`, and other useful aliased quick commands.
+5. **Reload aliases.** Run `./arrstack.sh --refresh-aliases` to regenerate the helper file and reload your shell (or `source ${ARR_STACK_DIR}/.arraliases` manually) to gain `arr.vpn.status`, `arr.help`, `arr.logs`, and other useful aliased quick commands.
 6. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
 7. **Review version guidance when upgrading.** Refer to [docs/VERSION_MANAGEMENT.md](docs/VERSION_MANAGEMENT.md) for image pinning strategy and manual upgrade steps.
 

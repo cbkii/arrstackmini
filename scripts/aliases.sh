@@ -193,3 +193,22 @@ DIAG
   msg "Diagnostic script: ${diag_script}"
 }
 
+refresh_aliases() {
+  msg "🔄 Refreshing helper aliases"
+
+  ensure_dir "$ARR_STACK_DIR"
+
+  if ! write_aliases_file; then
+    warn "Unable to regenerate helper aliases"
+    return 1
+  fi
+
+  if reload_shell_rc; then
+    msg "♻️ Shell configuration reloaded"
+  else
+    local alias_path="${ARR_STACK_DIR}/.arraliases"
+    warn "Could not automatically reload your shell configuration"
+    warn "Run 'source ${alias_path}' manually to pick up the latest aliases"
+  fi
+}
+
