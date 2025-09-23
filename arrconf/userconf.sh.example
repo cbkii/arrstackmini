@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034
 # Copy to arrconf/userconf.sh and edit as needed, overrides defaults.
 
 # --- Stack paths ---
@@ -27,9 +28,16 @@ TIMEZONE="Australia/Sydney"            # Timezone for container logs and schedul
 # --- Networking ---
 LAN_IP=""                              # Bind services to one LAN IP (leave blank to listen on all)
 LOCALHOST_IP="127.0.0.1"               # Loopback used by the Gluetun control API
+LAN_DOMAIN_SUFFIX="home.arpa"          # Suffix appended to service hostnames (RFC 8375 default)
+CADDY_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}"  # Override Caddy hostname suffix independently of LAN DNS
 SERVER_COUNTRIES="Switzerland,Iceland,Romania,Czech Republic,Netherlands"  # ProtonVPN exit country list
 PVPN_ROTATE_COUNTRIES="${SERVER_COUNTRIES},France,Germany"  # Optional rotation order for arr.vpn switch (always includes SERVER_COUNTRIES)
 GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API
+ENABLE_LOCAL_DNS="1"                   # Enable the bundled dnsmasq container on LAN_IP
+UPSTREAM_DNS_1="1.1.1.1"               # First upstream resolver when local DNS is enabled
+UPSTREAM_DNS_2="1.0.0.1"               # Second upstream resolver when local DNS is enabled
+CADDY_LAN_CIDRS="127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # Clients allowed to skip Caddy auth
+EXPOSE_DIRECT_PORTS="0"                # Publish raw app ports on the LAN alongside Caddy (troubleshooting aid)
 
 # --- Credentials ---
 QBT_USER="admin"                       # Initial qBittorrent username (change after first login)
@@ -37,6 +45,8 @@ QBT_PASS="adminadmin"                  # Initial qBittorrent password (update im
 GLUETUN_API_KEY=""                     # Pre-seed a Gluetun API key or leave empty to auto-generate
 # QBT_DOCKER_MODS="ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest"  # Alternate qBittorrent WebUI mod image
 QBT_AUTH_WHITELIST="127.0.0.1/8,::1/128"  # CIDRs allowed to bypass the qBittorrent login prompt
+CADDY_BASIC_AUTH_USER="user"           # Username clients outside CADDY_LAN_CIDRS must use
+CADDY_BASIC_AUTH_HASH=""               # Bcrypt hash for the Basic Auth password (regen when empty)
 
 # --- Service ports ---
 QBT_HTTP_PORT_HOST="8080"              # qBittorrent WebUI port exposed on the LAN
@@ -58,3 +68,6 @@ FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on th
 # --- Behaviour toggles ---
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs
 # FORCE_ROTATE_API_KEY="0"               # Force regeneration of the Gluetun API key on next run
+# FORCE_REGEN_CADDY_AUTH="0"             # Rotate the Caddy username/password on next run
+# SETUP_HOST_DNS="0"                      # Automate host DNS takeover helper (or call with --setup-host-dns)
+# REFRESH_ALIASES="0"                     # Regenerate helper aliases without running the installer

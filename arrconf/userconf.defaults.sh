@@ -67,6 +67,10 @@ UPSTREAM_DNS_2="${UPSTREAM_DNS_2:-1.0.0.1}"
 # Enable internal local DNS resolver service
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
 
+# Reverse proxy hostnames (Caddy defaults to LAN suffix when unset)
+CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX:-${LAN_DOMAIN_SUFFIX}}"
+CADDY_LAN_CIDRS="${CADDY_LAN_CIDRS:-127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
+
 # Gluetun control server
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
 GLUETUN_API_KEY="${GLUETUN_API_KEY:-}"
@@ -90,6 +94,10 @@ QBT_DOCKER_MODS="${QBT_DOCKER_MODS:-ghcr.io/vuetorrent/vuetorrent-lsio-mod:lates
 # Comma-separated CIDR list that can bypass the qBittorrent WebUI login
 QBT_AUTH_WHITELIST="${QBT_AUTH_WHITELIST:-127.0.0.1/8,::1/128}"
 
+# Caddy Basic Auth credentials (bcrypt hash generated automatically when empty)
+CADDY_BASIC_AUTH_USER="${CADDY_BASIC_AUTH_USER:-user}"
+CADDY_BASIC_AUTH_HASH="${CADDY_BASIC_AUTH_HASH:-}"
+
 # Images
 GLUETUN_IMAGE="${GLUETUN_IMAGE:-qmcgaw/gluetun:v3.39.1}"
 QBITTORRENT_IMAGE="${QBITTORRENT_IMAGE:-lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
@@ -98,7 +106,11 @@ RADARR_IMAGE="${RADARR_IMAGE:-lscr.io/linuxserver/radarr:5.27.5.10198-ls283}"
 PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}"
 BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:latest}"
 FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
+CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 #
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
+FORCE_REGEN_CADDY_AUTH="${FORCE_REGEN_CADDY_AUTH:-0}"
+SETUP_HOST_DNS="${SETUP_HOST_DNS:-0}"
+REFRESH_ALIASES="${REFRESH_ALIASES:-0}"
