@@ -1,5 +1,24 @@
 # shellcheck shell=bash
 
+if ! declare -f arrstack_var_is_readonly >/dev/null 2>&1; then
+  arrstack_var_is_readonly() {
+    local var="$1"
+    local declaration=""
+
+    if ! declaration=$(declare -p "$var" 2>/dev/null); then
+      return 1
+    fi
+
+    case $declaration in
+      declare\ -r*)
+        return 0
+        ;;
+    esac
+
+    return 1
+  }
+fi
+
 arrstack_setup_defaults() {
   ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT}/arrconf}"
 
@@ -87,28 +106,36 @@ arrstack_setup_defaults() {
   ARRSTACK_LOCKFILE=""
   LOG_FILE=""
 
-  ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
+  local requested_permission_profile="${ARR_PERMISSION_PROFILE:-}"
+  local permission_profile="${requested_permission_profile:-strict}"
   SECRET_FILE_MODE=600
   LOCK_FILE_MODE=644
   NONSECRET_FILE_MODE=600
   DATA_DIR_MODE=700
 
-  case "${ARR_PERMISSION_PROFILE}" in
+  case "${permission_profile}" in
     collaborative)
       umask 0027
       NONSECRET_FILE_MODE=640
       DATA_DIR_MODE=750
       ;;
-    strict | "")
+    strict)
       umask 0077
-      ARR_PERMISSION_PROFILE="strict"
       ;;
     *)
-      warn "Unknown ARR_PERMISSION_PROFILE='${ARR_PERMISSION_PROFILE}' - defaulting to strict"
-      ARR_PERMISSION_PROFILE="strict"
+      warn "Unknown ARR_PERMISSION_PROFILE='${requested_permission_profile}' - defaulting to strict"
+      permission_profile="strict"
       umask 0077
       ;;
   esac
+
+  if arrstack_var_is_readonly ARR_PERMISSION_PROFILE; then
+    if [[ "${ARR_PERMISSION_PROFILE:-}" != "${permission_profile}" ]]; then
+      die "ARR_PERMISSION_PROFILE is read-only with value '${ARR_PERMISSION_PROFILE:-}', expected '${permission_profile}'"
+    fi
+  else
+    ARR_PERMISSION_PROFILE="${permission_profile}"
+  fi
 
   readonly ARR_PERMISSION_PROFILE SECRET_FILE_MODE LOCK_FILE_MODE NONSECRET_FILE_MODE DATA_DIR_MODE
 

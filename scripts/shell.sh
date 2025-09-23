@@ -3,14 +3,18 @@ detect_shell_kind() {
   local kind="other"
   local omz=0
 
-  if [ -n "${ZSH_VERSION:-}" ] || printf '%s' "${SHELL:-}" | grep -q 'zsh'; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
     kind="zsh"
     if [ -n "${ZSH:-}" ] && [ -d "$ZSH" ] && [ -f "$ZSH/oh-my-zsh.sh" ]; then
       omz=1
     elif [ -d "$HOME/.oh-my-zsh" ] && [ -f "$HOME/.oh-my-zsh/oh-my-zsh.sh" ]; then
       omz=1
     fi
-  elif [ -n "${BASH_VERSION:-}" ] || printf '%s' "${SHELL:-}" | grep -q 'bash'; then
+  elif [ -n "${BASH_VERSION:-}" ]; then
+    kind="bash"
+  elif printf '%s' "${SHELL:-}" | grep -q 'zsh'; then
+    kind="zsh"
+  elif printf '%s' "${SHELL:-}" | grep -q 'bash'; then
     kind="bash"
   fi
 
@@ -29,10 +33,18 @@ reload_shell_rc() {
   [ -n "$kind" ] || kind="other"
   [ -n "$omz" ] || omz=0
 
-  if [ "$kind" = "zsh" ] && [ "$omz" -eq 1 ] && have_command omz; then
+  if [ "$kind" = "zsh" ] && [ -n "${ZSH_VERSION:-}" ] && [ "$omz" -eq 1 ] && have_command omz; then
     if omz reload; then
       return 0
     fi
+  fi
+
+  if [ "$kind" = "zsh" ] && [ -z "${ZSH_VERSION:-}" ]; then
+    warn "Detected zsh login shell but running under bash; skipping automatic zsh reload"
+    if [ "$force" -eq 1 ]; then
+      return 0
+    fi
+    return 1
   fi
 
   local rc=""
