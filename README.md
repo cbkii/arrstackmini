@@ -25,7 +25,6 @@ Minimal, reproducible ARR stack routed through Gluetun with ProtonVPN port forwa
 
 - Gluetun (Proton OpenVPN with native port forwarding)
 - qBittorrent (Vuetorrent-compatible WebUI)
-- port-sync (Alpine helper that keeps qBittorrent aligned with the forwarded port)
 - Caddy (reverse proxy inside the Gluetun namespace that fronts every service on LAN ports 80/443)
 - Sonarr, Radarr, Prowlarr, Bazarr
 - FlareSolverr
@@ -37,7 +36,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - **Opinionated defaults** – all configuration inputs inherit from `arrconf/userconf.defaults.sh`, allowing simple overrides in `arrconf/userconf.sh` (ignored by Git) without editing the script.
 - **Alias-driven operations** – `.arraliases` exposes helper commands (`arr.up`, `arr.logs`, `arr.vpn.status`, `arr.help`, etc.) for routine management.
 - **Unified reverse proxy** – Caddy shares the Gluetun network namespace and is the only container publishing LAN ports (80/443). LAN clients bypass credentials while non-LAN clients authenticate via Basic Auth before reaching the apps.
-- **Native port forwarding** – OpenVPN Proton credentials are massaged into the `+pmp` form and Gluetun's `VPN_PORT_FORWARDING_UP_COMMAND` immediately pushes the assigned port into qBittorrent's Web API. A lightweight `port-sync` container still polls the control server as a watchdog so qBittorrent stays aligned even after reconnects.
+- **Native port forwarding** – OpenVPN Proton credentials are massaged into the `+pmp` form and Gluetun's `VPN_PORT_FORWARDING_UP_COMMAND` now updates qBittorrent directly. No sidecar containers or watchdog scripts are required.
 
 ## Requirements
 - 64-bit Debian Bookworm host with at least 4 CPU cores, 4 GB RAM, and fast storage for downloads.
@@ -62,8 +61,6 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
    ```
    Replace the placeholders with your Proton VPN username and password (the installer tightens the file permissions automatically).
 3. **(Optional) Adjust defaults before installation.** Copy `arrconf/userconf.sh.example` to `arrconf/userconf.sh` and tweak values such as `LAN_IP`, `SERVER_COUNTRIES`, `PVPN_ROTATE_COUNTRIES`, media directories, or host port overrides. Skip this if the defaults suit you—the installer can be rerun whenever you want to apply changes.
-4. **(Optional) Customize the port-sync helper image.**
-   The default `alpine:3.20.3` boots fine and installs `curl` on the fly. If you prefer a pre-baked image (for example one built with `curl`/CA bundles already present), publish it to your registry of choice and set `PORT_SYNC_IMAGE=your/image:tag` in `arrconf/userconf.sh` (a minimal Dockerfile just needs `FROM alpine:3.20` plus `apk add --no-cache curl ca-certificates`).
 5. **Run the installer.**
    ```bash
    ./arrstack.sh
@@ -80,7 +77,7 @@ Only the Caddy reverse proxy is published on the LAN (ports 80/443). Every appli
 - 🆘 **Recovery helper** – `${ARR_STACK_DIR}/scripts/fix-versions.sh` repairs `.env` if an old LinuxServer tag is removed. It creates a timestamped backup and replaces missing images with the safe fallback before rerunning the installer.
 - ⚠️ **Warnings over failures** – the installer continues when it cannot detect a LAN IP or when default credentials remain. Read the summary at the end of the run and remediate highlighted risks.
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `arr.vpn.*`, `arr.help`, `arr.health`, and other shortcuts.
-- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook and port-sync authenticate with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
+- ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook authenticates with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
 - 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). Point your router or client DNS to `${LAN_IP}` for automatic hostnames, or disable it with `ENABLE_LOCAL_DNS=0` and manage `/etc/hosts` yourself. Import the Caddy internal CA from `${ARR_DOCKER_DIR}/caddy/data/caddy/pki/authorities/local/root.crt`, download it via `https://ca.${LAN_DOMAIN_SUFFIX}/root.crt`, or run `./scripts/export-caddy-ca.sh` to copy it into `~/arrstack-ca.crt` so browsers trust the default HTTPS endpoints. Set `EXPOSE_DIRECT_PORTS=1` if you want Gluetun to publish the raw application ports on the LAN alongside Caddy for troubleshooting.
   Debian Bookworm binds port 53 with `systemd-resolved` by default; pass `--setup-host-dns` to `arrstack.sh` to back up the current resolver state, disable the stub non-destructively, write a static `/etc/resolv.conf`, and restart the `local_dns` container automatically. You can rerun the helper later with `./scripts/host-dns-setup.sh` and undo the change any time with `./scripts/host-dns-rollback.sh`.
@@ -121,86 +118,14 @@ All secrets and config directories are created with restrictive permissions (`06
 To allow read-only collaboration, set `ARR_PERMISSION_PROFILE=collaborative` in `arrconf/userconf.sh`. This relaxes non-secret files to group-readable (`0640`) and data directories to `0750` while keeping secrets locked to `0600`.
 
 ### Environment variables
-`arrstack.sh` writes `.env` during installation by reading `arrconf/userconf.defaults.sh` and applying any overrides from `arrconf/userconf.sh`. Beginners can copy `arrconf/userconf.sh.example`, adjust values, and rerun `./arrstack.sh` whenever they want the stack to pick up new settings.
+`arrstack.sh` renders `.env` from `arrconf/userconf.defaults.sh` plus any overrides you place in `arrconf/userconf.sh`. Most setups can leave everything alone after adding Proton credentials, but if you need to tweak behaviour copy `arrconf/userconf.sh.example` and adjust a handful of values:
 
-The tables below summarise every configurable input exposed by `arrstack.sh` together with practical reasons to change them.
+- **Paths** – update `ARR_BASE`, `DOWNLOADS_DIR`, `TV_DIR`, or `MOVIES_DIR` when your media lives on another volume.
+- **Identity** – set `PUID`, `PGID`, and `TIMEZONE` to match the user that owns your media files.
+- **Networking** – leave `LAN_IP` empty to bind on `0.0.0.0`, or set it to a specific RFC1918 address if you want to lock exposure down. `LAN_DOMAIN_SUFFIX` controls the hostnames that Caddy and the optional local DNS service publish. Adjust `GLUETUN_CONTROL_PORT` only when port 8000 is already taken.
+- **Credentials** – seed `QBT_USER`/`QBT_PASS` if you prefer something other than the defaults; the Gluetun hook reuses the same credentials when updating the forwarded port.
 
-#### Paths and storage
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `ARR_BASE` | `~/srv` | Move the entire stack to a different root without editing every path individually. `ARR_STACK_DIR` and `ARR_DOCKER_DIR` inherit from this value. |
-| `ARR_STACK_DIR` | `${ARR_BASE}/arrstack` | Relocate the generated `docker-compose.yml`, scripts, and `.arraliases`. Useful when storing the stack on another disk. |
-| `ARR_ENV_FILE` | `${ARR_STACK_DIR}/.env` | Keep the generated `.env` in a separate secrets vault or version-controlled directory. |
-| `ARR_DOCKER_DIR` | `${ARR_BASE}/docker-data` | Choose where Docker volumes live (e.g. move to a large external drive). |
-| `ARRCONF_DIR` | `<repo>/arrconf` | Relocate Proton credentials and user config if you want them outside the repo tree. |
-| `DOWNLOADS_DIR` | `~/Downloads` | Set the root for active qBittorrent downloads. |
-| `COMPLETED_DIR` | `${DOWNLOADS_DIR}/completed` | Control where finished downloads are moved. |
-| `MEDIA_DIR` | `/media/mediasmb` | Point to the base of your media library share. |
-| `TV_DIR` | `${MEDIA_DIR}/Shows` | Tell Sonarr where your TV library lives. |
-| `MOVIES_DIR` | `${MEDIA_DIR}/Movies` | Tell Radarr where your movie library lives. |
-
-> Tip: The defaults already place the stack under `~/srv`, but you can set `ARR_BASE` to another path (for example `/mnt/fastdisk`) and the inherited values for `ARR_STACK_DIR` and `ARR_DOCKER_DIR` will follow automatically.
-
-#### Identity and networking
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `PUID` | Current user ID (`id -u`) | Run containers as another user (e.g. a dedicated media account). |
-| `PGID` | Current group ID (`id -g`) | Match the media group so containers can write to shared folders. |
-| `TIMEZONE` | `Australia/Sydney` | Align container logs and cron tasks with your local timezone. |
-| `LAN_IP` | Auto-detected (falls back to `0.0.0.0`) | Bind services to a specific RFC1918 address instead of all interfaces. |
-| `LOCALHOST_IP` | `127.0.0.1` | Change where the Gluetun control API binds on the host (advanced). |
-| `VPN_SERVICE_PROVIDER` | `protonvpn` | Keep Gluetun pinned to ProtonVPN. Change only when migrating to a different supported provider. |
-| `VPN_TYPE` | `openvpn` | Force Gluetun to use Proton's OpenVPN stack (required for port forwarding). |
-| `SERVER_COUNTRIES` | `Switzerland,Iceland,Romania,Czech Republic,Netherlands` | Limit ProtonVPN exits to countries that support port forwarding or suit your latency. |
-| `PVPN_ROTATE_COUNTRIES` | `Switzerland,Iceland,Romania,Czech Republic,Netherlands` | Optional ProtonVPN rotation list used by `arr.vpn switch`. Any extra countries you add are merged with `SERVER_COUNTRIES` automatically. |
-| `GLUETUN_CONTROL_PORT` | `8000` | Adjust the host port for the Gluetun control API when 8000 is taken. |
-
-#### Credentials and WebUI access
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `GLUETUN_API_KEY` | Generated on first run | Reuse an existing key when migrating installs. Leave blank to auto-generate. |
-| `QBT_USER` | `admin` | Set your desired qBittorrent username before the first login. |
-| `QBT_PASS` | `adminadmin` | Seed a temporary qBittorrent password (update in WebUI afterwards). |
-| `QBT_DOCKER_MODS` | `ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest` | Swap to a different qBittorrent WebUI mod or remove mods entirely. |
-| `QBT_AUTH_WHITELIST` | `127.0.0.1/32,127.0.0.0/8,::1/128` | Allow extra CIDR ranges to bypass the qBittorrent login page (useful on trusted LANs). |
-
-#### LAN DNS
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `LAN_DOMAIN_SUFFIX` | `home.arpa` | Choose a different private suffix (e.g. `lan`) for Caddy hostnames if your network already uses one. |
-| `ENABLE_LOCAL_DNS` | `1` | Set to `0` to skip running the `local_dns` dnsmasq container and manage name resolution manually. |
-| `UPSTREAM_DNS_1` | `1.1.1.1` | Point dnsmasq at your preferred upstream resolver (e.g. router, Pi-hole). |
-| `UPSTREAM_DNS_2` | `1.0.0.1` | Secondary upstream resolver for redundancy. |
-
-> **Note:** `.home.arpa` is reserved for private residential networks by [RFC 8375](https://datatracker.ietf.org/doc/html/rfc8375). You can still set `LAN_DOMAIN_SUFFIX=lan` for legacy behaviour, but it is not guaranteed to stay collision-free on public DNS.
-
-#### Reverse proxy
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `CADDY_DOMAIN_SUFFIX` | `home.arpa` | Controls the hostnames served by Caddy (`qbittorrent.<suffix>`, `sonarr.<suffix>`, etc.). Inherits from `LAN_DOMAIN_SUFFIX` when unset. |
-| `CADDY_LAN_CIDRS` | `127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Expand or tighten which client IP ranges bypass Caddy Basic Auth. |
-| `CADDY_BASIC_AUTH_USER` | `user` | Username presented to non-LAN clients when Caddy prompts for credentials. |
-| `CADDY_BASIC_AUTH_HASH` | `$2b$12$ciwhuBgBxJQrQQuNieDrT.9n4keVPlYFO/uCK/Tfw/MSsRwKYSDfa` | Replace with your own bcrypt hash to secure remote Basic Auth access. |
-
-#### Behaviour toggles
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `ARR_PERMISSION_PROFILE` | `strict` | Switch to `collaborative` to make non-secret files group-readable (`0640`/`0750`) when sharing the host with other users. |
-| `ASSUME_YES` | `0` | Set to `1` for unattended installs that must skip prompts (avoid enabling on first run). |
-| `FORCE_ROTATE_API_KEY` | `0` | Set to `1` to regenerate the Gluetun API key on the next run (useful if the key leaked). |
-| `EXPOSE_DIRECT_PORTS` | `0` | Set to `1` to publish qBittorrent/Sonarr/Radarr/etc. on their native LAN ports in addition to the Caddy reverse proxy. |
-
-#### Container images
-| Variable | Default | Why change it? |
-| -------- | ------- | --------------- |
-| `GLUETUN_IMAGE` | `qmcgaw/gluetun:v3.39.1` | Pin to a newer Gluetun tag after validating compatibility. |
-| `QBITTORRENT_IMAGE` | `lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415` | Track a newer qBittorrent release. |
-| `SONARR_IMAGE` | `lscr.io/linuxserver/sonarr:4.0.15.2941-ls291` | Upgrade/downgrade Sonarr carefully when required. |
-| `RADARR_IMAGE` | `lscr.io/linuxserver/radarr:5.27.5.10198-ls283` | Change Radarr tag once confirmed stable. |
-| `PROWLARR_IMAGE` | `lscr.io/linuxserver/prowlarr:latest` | Pin to a specific version to avoid unexpected updates. |
-| `BAZARR_IMAGE` | `lscr.io/linuxserver/bazarr:latest` | Pin to a specific version to avoid unexpected updates. |
-| `FLARESOLVERR_IMAGE` | `ghcr.io/flaresolverr/flaresolverr:v3.3.21` | Track newer FlareSolverr releases when needed. |
-| `CADDY_IMAGE` | `caddy:2.8.4` | Pin the reverse proxy to a tested version or upgrade deliberately. |
+After editing `arrconf/userconf.sh`, rerun `./arrstack.sh` so the generated `.env` and Docker Compose file pick up your changes.
 
 ### Service hostnames
 Caddy is the primary entrypoint on the LAN, terminating HTTP/HTTPS on 80/443 and proxying to each application by hostname. When `local_dns` is enabled, dnsmasq already resolves each `<service>.${CADDY_DOMAIN_SUFFIX}` entry to `LAN_IP`; otherwise point your LAN DNS (or `/etc/hosts`) at the host manually. Enable `EXPOSE_DIRECT_PORTS=1` if you need Gluetun to expose each application on its native port (8080, 8989, 7878, 9696, 6767) as a fallback during troubleshooting.
@@ -235,7 +160,7 @@ arr.health     # Summarise container health checks
 arr.open       # Print (or open) service URLs in your browser
 ```
 
-The installer also drops `/gluetun/hooks/update-qbt-port.sh`, which Gluetun executes whenever Proton assigns a new port so qBittorrent's listen socket is updated immediately. The `port-sync` helper container keeps polling the control API as a fallback to catch any missed updates.
+The installer also drops `/gluetun/hooks/update-qbt-port.sh`, which Gluetun executes whenever Proton assigns a new port so qBittorrent's listen socket is updated immediately.
 
 Manage the stack directly with Docker Compose commands from `${ARR_STACK_DIR}` if you prefer finer-grained control.
 
@@ -264,7 +189,7 @@ curl -fsS -H "X-API-Key: $GLUETUN_API_KEY" \
 - Re-run the installer with `--rotate-api-key` to regenerate credentials if needed.
 - Use `docker logs gluetun` (or the `arrstack-logs` alias) to monitor VPN connectivity.
 - `docker compose ps` from `${ARR_STACK_DIR}` surfaces container state and health checks.
-- `docker logs port-sync --tail 50` shows the helper container polling Gluetun and pushing the forwarded port into qBittorrent.
+- `docker logs gluetun --tail 50 | grep update-qbt-port` shows the hook applying Proton's forwarded port to qBittorrent.
 - Run `${ARR_STACK_DIR}/diagnose-vpn.sh` from the stack root to execute the autogenerated diagnostics (checks Gluetun health, validates the forwarded port, and restarts the VPN container when required).
 
 ## Troubleshooting

@@ -225,7 +225,7 @@ gluetun_port_forward_summary() {
 }
 
 fetch_forwarded_port() {
-  local response port status_file
+  local response port
 
   if response=$(gluetun_control_get "/v1/forwardedport" 2>/dev/null); then
     port=$(printf '%s' "$response" | tr -d '[:space:]')
@@ -239,37 +239,6 @@ fetch_forwarded_port() {
     if gluetun_port_forward_details "$response" && [[ -n "$GLUETUN_PORT_FORWARD_PORT" ]]; then
       printf '%s' "$GLUETUN_PORT_FORWARD_PORT"
       return 0
-    fi
-  fi
-
-  status_file="${VPN_PORT_FORWARDING_STATUS_FILE:-/tmp/gluetun/forwarded_port}"
-  if [[ -f "$status_file" ]]; then
-    local status_max_age=300
-    if [[ -n "${PORT_STATUS_MAX_AGE:-}" && "${PORT_STATUS_MAX_AGE}" =~ ^[0-9]+$ ]]; then
-      status_max_age="${PORT_STATUS_MAX_AGE}"
-    fi
-
-    local now file_port file_ts
-    now="$(date +%s)"
-
-    if IFS=' ' read -r file_port file_ts _ <"$status_file" 2>/dev/null; then
-      if [[ "$file_port" =~ ^[0-9]+$ ]]; then
-        if [[ -n "$file_ts" && "$file_ts" =~ ^[0-9]+$ ]]; then
-          if (( now - file_ts <= status_max_age )); then
-            printf '%s' "$file_port"
-            return 0
-          fi
-        else
-          local mtime=""
-          mtime="$(stat -c '%Y' "$status_file" 2>/dev/null || stat -f '%m' "$status_file" 2>/dev/null || printf '')"
-          if [[ -n "$mtime" && "$mtime" =~ ^[0-9]+$ ]]; then
-            if (( now - mtime <= status_max_age )); then
-              printf '%s' "$file_port"
-              return 0
-            fi
-          fi
-        fi
-      fi
     fi
   fi
 

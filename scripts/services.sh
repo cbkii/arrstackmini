@@ -156,7 +156,6 @@ validate_images() {
     BAZARR_IMAGE
     FLARESOLVERR_IMAGE
     CADDY_IMAGE
-    PORT_SYNC_IMAGE
   )
 
   local failed_images=()
@@ -330,7 +329,6 @@ show_service_status() {
   if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
     services+=(local_dns)
   fi
-  services+=(port-sync)
 
   local service
   for service in "${services[@]}"; do
@@ -480,23 +478,6 @@ start_stack() {
 
   if ((qb_started)); then
     sync_qbt_password_from_logs
-  fi
-
-  msg "Starting port synchronization..."
-  local port_sync_output=""
-  if port_sync_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d port-sync 2>&1)"; then
-    if [[ -n "$port_sync_output" ]]; then
-      while IFS= read -r line; do
-        printf '  %s\n' "$line"
-      done <<<"$port_sync_output"
-    fi
-  else
-    warn "Port-sync failed to start (non-critical)"
-    if [[ -n "$port_sync_output" ]]; then
-      while IFS= read -r line; do
-        printf '  %s\n' "$line"
-      done <<<"$port_sync_output"
-    fi
   fi
 
   msg "Services started - they may take a minute to be fully ready"

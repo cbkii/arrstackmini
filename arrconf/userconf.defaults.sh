@@ -30,7 +30,7 @@ PGID="${PGID:-$(id -g)}"
 
 # Location
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
-LAN_IP="${LAN_IP:-}"
+LAN_IP="${LAN_IP:-0.0.0.0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
 PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
@@ -77,14 +77,6 @@ PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}"
 BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:latest}"
 FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
 #
-# Port-sync helper sidecar image:
-# - Default uses upstream Alpine and installs curl at runtime (robust path)
-# - If you want a pre-baked local image, set: PORT_SYNC_IMAGE=local/port-sync:alpine-curl
-PORT_SYNC_IMAGE="${PORT_SYNC_IMAGE:-alpine:3.20.3}"
-PORT_UPDATE_MIN_INTERVAL="${PORT_UPDATE_MIN_INTERVAL:-30}"
-PORT_STATUS_MAX_AGE="${PORT_STATUS_MAX_AGE:-300}"
-PORT_SYNC_STARTUP_DELAY="${PORT_SYNC_STARTUP_DELAY:-30}"
-
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"

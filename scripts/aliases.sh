@@ -174,7 +174,7 @@ else
       msg "✅ Port forwarding recovered: Port $PF_PORT"
     else
       warn "Port forwarding still not working"
-      warn "Review 'docker logs gluetun' and 'docker logs port-sync' for details"
+      warn "Review 'docker logs gluetun --tail 100 | grep update-qbt-port' for details"
     fi
   else
     warn "Docker restart command failed; restart Gluetun manually."
