@@ -101,7 +101,7 @@ port_in_use_with_netstat() {
   fi
 
   local output
-  output="$(${cmd[@]} 2>/dev/null || true)"
+  output="$("${cmd[@]}" 2>/dev/null || true)"
   if [[ -z "$output" ]]; then
     return 1
   fi
@@ -171,6 +171,35 @@ report_port() {
   else
     printf '[doctor][ok] %s port %s/%s is free on %s.\n' "$label" "$port" "${proto^^}" "$bind_ip"
   fi
+}
+
+test_lan_connectivity() {
+  echo "[doctor] Testing LAN accessibility..."
+
+  if [[ -z "$LAN_IP" || "$LAN_IP" == "0.0.0.0" ]]; then
+    echo "[doctor][warn] LAN_IP unset or 0.0.0.0; skipping LAN connectivity checks."
+    return
+  fi
+
+  if ! have_command curl; then
+    echo "[doctor][warn] 'curl' not available; cannot probe LAN HTTP endpoints."
+    return
+  fi
+
+  if curl -fsS -m 5 "http://${LAN_IP}/healthz" >/dev/null 2>&1; then
+    echo "[doctor][ok] Caddy responds on http://${LAN_IP}/healthz"
+  else
+    echo "[doctor][error] Caddy not accessible on http://${LAN_IP}/healthz"
+  fi
+
+  local service
+  for service in qbittorrent sonarr radarr prowlarr bazarr; do
+    if curl -fsS -m 5 -H "Host: ${service}.${SUFFIX}" "http://${LAN_IP}/" >/dev/null 2>&1; then
+      echo "[doctor][ok] ${service} accessible via Caddy on ${LAN_IP}"
+    else
+      echo "[doctor][warn] ${service} not accessible via Caddy on ${LAN_IP}"
+    fi
+  done
 }
 
 SUFFIX="${LAN_DOMAIN_SUFFIX:-}"
@@ -255,7 +284,7 @@ echo "[doctor] Testing HTTPS endpoint"
 if ! have_command curl; then
   echo "[doctor][warn] 'curl' command not found; skipping HTTPS probe."
 else
-  local -a curl_args=(-k --silent --max-time 5)
+  curl_args=(-k --silent --max-time 5)
   if [[ -n "$LAN_IP" && "$LAN_IP" != "0.0.0.0" ]]; then
     curl_args+=(--resolve "qbittorrent.${SUFFIX}:443:${LAN_IP}" --resolve "qbittorrent.${SUFFIX}:80:${LAN_IP}")
   fi
@@ -265,5 +294,7 @@ else
     echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
   fi
 fi
+
+test_lan_connectivity
 
 exit 0

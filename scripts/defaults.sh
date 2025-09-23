@@ -1,5 +1,33 @@
 # shellcheck shell=bash
 
+detect_lan_cidrs_default() {
+  local -a baseline=("127.0.0.1/32" "::1/128" "172.16.0.0/12" "192.168.0.0/16" "10.0.0.0/8")
+  local -A seen=()
+  local -a detected=()
+
+  local entry=""
+  for entry in "${baseline[@]}"; do
+    [[ -z "$entry" ]] && continue
+    if [[ -z "${seen[$entry]:-}" ]]; then
+      seen[$entry]=1
+      detected+=("$entry")
+    fi
+  done
+
+  if command -v ip >/dev/null 2>&1; then
+    local lan_routes
+    lan_routes="$(ip route 2>/dev/null | awk '/^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/ {print $1}' || true)"
+    for entry in $lan_routes; do
+      if [[ "$entry" =~ /[0-9]+$ ]] && [[ -z "${seen[$entry]:-}" ]]; then
+        seen[$entry]=1
+        detected+=("$entry")
+      fi
+    done
+  fi
+
+  printf '%s' "${detected[*]}"
+}
+
 arrstack_setup_defaults() {
   ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT}/arrconf}"
 
@@ -51,7 +79,7 @@ arrstack_setup_defaults() {
 
   : "${FORCE_REGEN_CADDY_AUTH:=0}"
   : "${CADDY_IMAGE:=caddy:2.8.4}"
-  : "${CADDY_LAN_CIDRS:=192.168.0.0/16 10.0.0.0/8 172.16.0.0/12}"
+  : "${CADDY_LAN_CIDRS:=$(detect_lan_cidrs_default)}"
   : "${CADDY_BASIC_AUTH_USER:=user}"
   : "${CADDY_BASIC_AUTH_HASH:=}"
 
@@ -68,6 +96,10 @@ arrstack_setup_defaults() {
   : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
   : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
   : "${PORT_SYNC_IMAGE:=alpine:3.20.3}"
+  : "${PORT_UPDATE_MIN_INTERVAL:=30}"
+  : "${PORT_STATUS_MAX_AGE:=300}"
+  : "${PORT_SYNC_STARTUP_DELAY:=30}"
+  : "${EXPOSE_DIRECT_PORTS:=0}"
 
   if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"
