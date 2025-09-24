@@ -17,7 +17,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 
 ### DNS and networking
 - **`ENABLE_LOCAL_DNS`** – `1` keeps the dnsmasq container running. Set `0` only if you plan to manage DNS manually.
-- **`DNS_DISTRIBUTION_MODE`** – choose `router` or `per-device` (see [LAN DNS distribution](lan-dns.md)).
+- **`DNS_DISTRIBUTION_MODE`** – choose `router` or `per-device` (see [LAN DNS & network pre-start](lan-dns-network-setup.md)).
 - **`UPSTREAM_DNS_1` / `UPSTREAM_DNS_2`** – public resolvers used when the Pi forwards queries. Defaults work for most homes.
 - **`GLUETUN_CONTROL_PORT`** – keep `8000` unless another local service uses it.
 - **`EXPOSE_DIRECT_PORTS`** – leave at `0` so Caddy is the only LAN entry point. Set `1` only if you need direct ports for testing.
@@ -49,6 +49,6 @@ Review the printed configuration table before containers start. Cancel with `Ctr
 
 ## See also
 - [Quick start](../README.md)
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Host DNS helper](host-dns-helper.md)
 - [Version management](VERSION_MANAGEMENT.md)

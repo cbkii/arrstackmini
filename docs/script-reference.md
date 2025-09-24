@@ -52,6 +52,6 @@ Check the printed summary and URLs. If a service fails to start, run `scripts/do
 ## See also
 - [Quick start](../README.md)
 - [Config reference](config.md)
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Local HTTPS and CA trust](https-and-ca.md)
 - [Troubleshooting](troubleshooting.md)

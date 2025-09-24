@@ -43,7 +43,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    ./scripts/host-dns-setup.sh
    ```
    Re-run the helper whenever you change LAN IPs or DNS upstreams; it safely records backups each time.
-7. **Choose how clients learn the DNS server.** Follow [LAN DNS distribution](docs/lan-dns.md) to configure router DHCP or per-device DNS.
+7. **Choose how clients learn the DNS server.** Follow [LAN DNS & network pre-start](docs/lan-dns-network-setup.md) to delegate DNS through your router (Option 6 / RDNSS) or evaluate per-device overrides.
 8. **Open qBittorrent to confirm access.** Visit `https://qbittorrent.home.arpa` (replace the suffix if you changed it) and change the default password.
 
 **Verify:**
@@ -61,13 +61,12 @@ You should see the Pi’s IP in the answer. If not, revisit steps 6–7.
 - `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
 
 ## Docs
-- [LAN DNS distribution](docs/lan-dns.md)
+- [LAN DNS & network pre-start](docs/lan-dns-network-setup.md)
 - [Host DNS helper](docs/host-dns-helper.md)
 - [Local HTTPS and CA trust](docs/https-and-ca.md)
 - [Service overview](docs/services.md)
 - [Script reference](docs/script-reference.md)
 - [Config reference](docs/config.md)
-- [Router configuration examples](docs/router-examples.md)
 - [Security notes](docs/security-notes.md)
 - [FAQ](docs/faq.md)
 - [Glossary](docs/glossary.md)

@@ -42,7 +42,7 @@ The response should show `HTTP/1.1 200 OK` (or `301` if Caddy redirects you to H
 If you still see warnings, confirm the certificate was imported into the correct trust store and that the device is using the LAN DNS resolver.
 
 ## See also
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Security notes](security-notes.md)
 - [Troubleshooting](troubleshooting.md)
-- [Router examples](router-examples.md)
+- [Router UI quick reference](lan-dns-network-setup.md#router-ui-quick-reference)

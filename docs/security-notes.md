@@ -31,4 +31,4 @@ Expect to see Caddy on 80/443 and dnsmasq on 53 bound to `192.168.1.50`. Anythin
 - [Config reference](config.md)
 - [Local HTTPS and CA trust](https-and-ca.md)
 - [Troubleshooting](troubleshooting.md)
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
