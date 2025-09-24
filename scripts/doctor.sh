@@ -209,10 +209,33 @@ ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
 LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED:-1}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
+DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE:-router}"
+
+echo "[doctor] Checking if port 53 is free (or already bound):"
+if have_command ss; then
+  if ss -tulpn 2>/dev/null | grep -q ':53 '; then
+    echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
+    if have_command systemctl && systemctl is-active --quiet systemd-resolved; then
+      echo "[doctor][hint] systemd-resolved is active and commonly owns :53 on Bookworm."
+      echo "[doctor][hint] Run: ./scripts/host-dns-setup.sh (safe takeover with backup & rollback)."
+    fi
+  else
+    echo "[doctor][ok] Port 53 appears free."
+  fi
+elif have_command netstat; then
+  if netstat -tulpn 2>/dev/null | grep -q ':53 '; then
+    echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
+  else
+    echo "[doctor][ok] Port 53 appears free."
+  fi
+else
+  echo "[doctor][warn] Cannot test port 53 status (missing 'ss' and 'netstat')."
+fi
 
 printf '[doctor] LAN domain suffix: %s\n' "${SUFFIX:-<unset>}"
 printf '[doctor] LAN IP: %s\n' "${LAN_IP:-<unset>}"
 printf '[doctor] Using DNS server at: %s\n' "${DNS_IP}"
+printf '[doctor] DNS distribution mode: %s\n' "${DNS_DISTRIBUTION_MODE}"
 
 if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
   if [[ "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
@@ -260,15 +283,33 @@ if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; th
   if ! have_command dig; then
     echo "[doctor][warn] 'dig' command not found; skipping DNS lookup."
   else
-    res="$(dig +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
-    if [[ -z "$res" ]]; then
-      echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP}"
+    res_udp="$(dig +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
+    if [[ -z "$res_udp" ]]; then
+      echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP} (UDP)"
     else
-      echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res}"
+      echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res_udp} (UDP)"
+    fi
+
+    res_tcp="$(dig +tcp +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
+    if [[ -z "$res_tcp" ]]; then
+      echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP} (TCP)"
+    else
+      echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res_tcp} (TCP)"
     fi
   fi
 else
   echo "[doctor][info] DNS checks skipped: local DNS is disabled."
+fi
+
+echo "[doctor] Testing CA fetch over HTTP (bootstrap)"
+if have_command curl && have_command openssl; then
+  if cert_output="$(curl -fsS "http://ca.${SUFFIX}/root.crt" 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null)"; then
+    printf '[doctor][ok] CA download succeeded:%s%s\n' "${cert_output:+\n}" "${cert_output}"
+  else
+    echo "[doctor][warn] Could not fetch CA over HTTP"
+  fi
+else
+  echo "[doctor][warn] Skipping CA fetch test: missing 'curl' or 'openssl'."
 fi
 
 echo "[doctor] Testing HTTPS endpoint"
@@ -287,5 +328,17 @@ else
 fi
 
 test_lan_connectivity
+
+case "$DNS_DISTRIBUTION_MODE" in
+  router)
+    echo "[doctor][info] DNS distribution mode 'router': set DHCP Option 6 (DNS server) on your router to ${LAN_IP}."
+    ;;
+  per-device)
+    echo "[doctor][info] DNS distribution mode 'per-device': point important clients at ${LAN_IP} and keep Android Private DNS Off/Automatic."
+    ;;
+  *)
+    echo "[doctor][warn] Unknown DNS_DISTRIBUTION_MODE='${DNS_DISTRIBUTION_MODE}'. Expected 'router' or 'per-device'."
+    ;;
+esac
 
 exit 0

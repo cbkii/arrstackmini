@@ -54,6 +54,7 @@ arrstack_setup_defaults() {
   : "${UPSTREAM_DNS_1:=1.1.1.1}"
   : "${UPSTREAM_DNS_2:=1.0.0.1}"
   : "${ENABLE_LOCAL_DNS:=1}"
+  : "${DNS_DISTRIBUTION_MODE:=router}"
   : "${SETUP_HOST_DNS:=0}"
   : "${REFRESH_ALIASES:=0}"
 

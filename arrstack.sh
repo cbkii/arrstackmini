@@ -129,6 +129,7 @@ main() {
         ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS}" \
         LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED}" \
         LOCALHOST_IP="${LOCALHOST_IP}" \
+        DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE}" \
         GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT}" \
         bash "${doctor_script}"; then
         warn "LAN diagnostics reported issues"
