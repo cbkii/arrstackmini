@@ -4,6 +4,77 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+ss_port_bound() {
+  local proto="$1"
+  local port="$2"
+
+  if ! have_command ss; then
+    return 2
+  fi
+
+  local flag
+  case "$proto" in
+    udp)
+      flag="u"
+      ;;
+    tcp)
+      flag="t"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+
+  if ss -H -ln${flag} "sport = :${port}" 2>/dev/null | awk 'NR>0 {exit 0} END {exit 1}'; then
+    return 0
+  fi
+
+  return 1
+}
+
+lsof_port_bound() {
+  local proto="$1"
+  local port="$2"
+
+  if ! have_command lsof; then
+    return 2
+  fi
+
+  local spec
+  case "$proto" in
+    udp)
+      spec=(-iUDP:"${port}")
+      ;;
+    tcp)
+      spec=(-iTCP:"${port}" -sTCP:LISTEN)
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+
+  if lsof -nP "${spec[@]}" 2>/dev/null | awk 'NR>0 {exit 0} END {exit 1}'; then
+    return 0
+  fi
+
+  return 1
+}
+
+port_bound_any() {
+  local proto="$1"
+  local port="$2"
+
+  if ss_port_bound "$proto" "$port"; then
+    return 0
+  fi
+
+  if lsof_port_bound "$proto" "$port"; then
+    return 0
+  fi
+
+  return 1
+}
+
 compose() {
   if ((${#DOCKER_COMPOSE_CMD[@]} == 0)); then
     die "Docker Compose command not detected; run preflight first"
@@ -119,6 +190,19 @@ atomic_write() {
   fi
 }
 
+escape_env_value_for_compose() {
+  local value="${1-}"
+
+  if [[ -z "$value" ]]; then
+    printf '%s' ""
+    return
+  fi
+
+  value="${value//\$/\$\$}"
+
+  printf '%s' "$value"
+}
+
 write_env_kv() {
   local key="$1"
   local value="${2-}"
@@ -131,7 +215,10 @@ write_env_kv() {
     die "Environment value for ${key} contains newline characters"
   fi
 
-  printf '%s=%s\n' "$key" "$value"
+  local escaped
+  escaped="$(escape_env_value_for_compose "$value")"
+
+  printf '%s=%s\n' "$key" "$escaped"
 }
 
 trim_string() {
@@ -295,9 +382,11 @@ persist_env_var() {
   fi
 
   if [ -f "${ARR_ENV_FILE}" ]; then
+    local compose_safe
+    compose_safe="$(escape_env_value_for_compose "$value")"
     if grep -q "^${key}=" "${ARR_ENV_FILE}"; then
       local escaped
-      escaped="$(escape_sed_replacement "$value")"
+      escaped="$(escape_sed_replacement "$compose_safe")"
       portable_sed "s/^${key}=.*/${key}=${escaped}/" "${ARR_ENV_FILE}"
     else
       write_env_kv "$key" "$value" >>"${ARR_ENV_FILE}"

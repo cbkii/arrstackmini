@@ -60,7 +60,7 @@ port_in_use_with_ss() {
   fi
 
   local output
-  output="$(ss -H -ln${flag} 2>/dev/null || true)"
+  output="$(ss -H -ln${flag} "sport = :${port}" 2>/dev/null || true)"
   if [[ -z "$output" ]]; then
     return 1
   fi
@@ -88,16 +88,16 @@ port_in_use_with_ss() {
   return 1
 }
 
-port_in_use_with_netstat() {
+port_in_use_with_lsof() {
   local proto="$1"
   local bind_ip="$2"
   local port="$3"
 
-  local -a cmd
+  local -a cmd=(lsof -nP)
   if [[ "$proto" == "udp" ]]; then
-    cmd=(netstat -lnu)
+    cmd+=(-iUDP:"${port}")
   else
-    cmd=(netstat -lnt)
+    cmd+=(-iTCP:"${port}" -sTCP:LISTEN)
   fi
 
   local output
@@ -109,14 +109,16 @@ port_in_use_with_netstat() {
   local line
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^(Active|Proto) ]] && continue
-    local local_field
-    local_field="$(awk '{print $4}' <<<"$line")"
-    [[ -z "$local_field" ]] && continue
-    local_field="${local_field//\[/}"
-    local_field="${local_field//\]/}"
-    local host="${local_field%:*}"
-    local port_field="${local_field##*:}"
+    [[ "$line" =~ ^COMMAND ]] && continue
+    local name
+    name="$(awk '{print $9}' <<<"$line" 2>/dev/null || true)"
+    [[ -z "$name" ]] && continue
+    name="${name%%->*}"
+    name="${name% (LISTEN)}"
+    local host="${name%:*}"
+    local port_field="${name##*:}"
+    port_field="${port_field%%[^0-9]*}"
+    host="${host##*@}"
     if [[ "$port_field" != "$port" ]]; then
       continue
     fi
@@ -131,8 +133,8 @@ port_in_use_with_netstat() {
 PORT_TOOL=""
 if have_command ss; then
   PORT_TOOL="ss"
-elif have_command netstat; then
-  PORT_TOOL="netstat"
+elif have_command lsof; then
+  PORT_TOOL="lsof"
 fi
 
 port_in_use() {
@@ -145,8 +147,8 @@ port_in_use() {
       port_in_use_with_ss "$proto" "$bind_ip" "$port"
       return $?
       ;;
-    netstat)
-      port_in_use_with_netstat "$proto" "$bind_ip" "$port"
+    lsof)
+      port_in_use_with_lsof "$proto" "$bind_ip" "$port"
       return $?
       ;;
     *)
@@ -162,7 +164,7 @@ report_port() {
   local port="$4"
 
   if [[ -z "$PORT_TOOL" ]]; then
-    printf '[doctor][warn] Cannot check %s (%s %s:%s): missing \"ss\"/\"netstat\".\n' "$label" "${proto^^}" "$bind_ip" "$port"
+    printf '[doctor][warn] Cannot check %s (%s %s:%s): missing \"ss\"/\"lsof\".\n' "$label" "${proto^^}" "$bind_ip" "$port"
     return
   fi
 
@@ -213,7 +215,7 @@ DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE:-router}"
 
 echo "[doctor] Checking if port 53 is free (or already bound):"
 if have_command ss; then
-  if ss -tulpn 2>/dev/null | grep -q ':53 '; then
+  if [[ -n "$(ss -H -lnu 'sport = :53' 2>/dev/null)" ]] || [[ -n "$(ss -H -lnt 'sport = :53' 2>/dev/null)" ]]; then
     echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
     if have_command systemctl && systemctl is-active --quiet systemd-resolved; then
       echo "[doctor][hint] systemd-resolved is active and commonly owns :53 on Bookworm."
@@ -222,14 +224,14 @@ if have_command ss; then
   else
     echo "[doctor][ok] Port 53 appears free."
   fi
-elif have_command netstat; then
-  if netstat -tulpn 2>/dev/null | grep -q ':53 '; then
+elif have_command lsof; then
+  if [[ -n "$(lsof -nP -iUDP:53 2>/dev/null)" ]] || [[ -n "$(lsof -nP -iTCP:53 -sTCP:LISTEN 2>/dev/null)" ]]; then
     echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
   else
     echo "[doctor][ok] Port 53 appears free."
   fi
 else
-  echo "[doctor][warn] Cannot test port 53 status (missing 'ss' and 'netstat')."
+  echo "[doctor][warn] Cannot test port 53 status (missing 'ss' and 'lsof')."
 fi
 
 printf '[doctor] LAN domain suffix: %s\n' "${SUFFIX:-<unset>}"
