@@ -21,7 +21,7 @@ Knowing the entry points makes first verification easy and helps you decide whic
 
 Notes:
 - The URLs assume `LAN_DOMAIN_SUFFIX=home.arpa`. Replace the suffix if you customised it.
-- Local DNS must point clients at the Pi (see [LAN DNS distribution](lan-dns.md)). Without DNS, use `https://<LAN_IP>` with the exact port numbers from `.env`.
+- Local DNS must point clients at the Pi (see [LAN DNS & network pre-start](lan-dns-network-setup.md)). Without DNS, use `https://<LAN_IP>` with the exact port numbers from `.env`.
 - Use [Config reference](config.md) to locate additional overrides and credentials.
 
 ## Verify
@@ -30,5 +30,5 @@ After `docker compose up -d`, open `https://qbittorrent.home.arpa` in a browser.
 ## See also
 - [Quick start](../README.md)
 - [Config reference](config.md)
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Troubleshooting](troubleshooting.md)

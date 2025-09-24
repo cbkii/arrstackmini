@@ -9,7 +9,7 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
 
 ## Do
 ### Symptom: `ERR_NAME_NOT_RESOLVED`
-- **Fix:** Ensure clients use the Pi as their first DNS server. Follow [LAN DNS distribution](lan-dns.md) and reboot the device or renew its DHCP lease.
+- **Fix:** Ensure clients use the Pi as their first DNS server. Follow [LAN DNS & network pre-start](lan-dns-network-setup.md) and reboot the device or renew its DHCP lease.
 - **Verify:**
   ```bash
   nslookup qbittorrent.home.arpa
@@ -89,7 +89,7 @@ If you edited configuration files, follow up with:
 This regenerates `.env` and restarts containers. Review the summary, then browse to `https://qbittorrent.home.arpa` to confirm everything loads.
 
 ## See also
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Host DNS helper](host-dns-helper.md)
 - [Local HTTPS and CA trust](https-and-ca.md)
 - [Security notes](security-notes.md)

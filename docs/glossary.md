@@ -28,6 +28,6 @@ If a term still feels unclear, follow its link in the other docs or run `man <te
 
 ## See also
 - [Quick start](../README.md)
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Local HTTPS and CA trust](https-and-ca.md)
 - [FAQ](faq.md)

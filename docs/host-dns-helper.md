@@ -30,7 +30,7 @@ The first command should show `dnsmasq` (the `local_dns` container) bound to `19
 If either check fails, view logs with `docker logs local_dns` and repeat the setup script once the issue is resolved.
 
 ## See also
-- [LAN DNS distribution](lan-dns.md)
+- [LAN DNS & network pre-start](lan-dns-network-setup.md)
 - [Troubleshooting](troubleshooting.md)
 - [Security notes](security-notes.md)
 - [Config reference](config.md)
