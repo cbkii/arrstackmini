@@ -25,6 +25,8 @@ Caddy creates a private certificate authority (CA) for `*.home.arpa`. Importing 
    - **iOS/iPadOS:** Email or AirDrop `root.crt`, install the profile, then enable full trust under **Settings → General → About → Certificate Trust Settings**.
 3. **Store the file safely.** Keep `root.crt` in your password manager or a trusted share so you can reinstall it quickly on new devices.
 
+On Debian or Ubuntu, run `./scripts/install-caddy-ca.sh` to copy the certificate into `/usr/local/share/ca-certificates` and refresh the trust store automatically (the script escalates with `sudo`).【F:scripts/install-caddy-ca.sh†L1-L118】 Use `./scripts/export-caddy-ca.sh ~/Downloads/arrstack-root.crt` when you just need to copy the public root certificate to another machine with the correct permissions.【F:scripts/export-caddy-ca.sh†L1-L35】
+
 ## Verify
 Open a browser and visit:
 ```
