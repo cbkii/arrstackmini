@@ -60,7 +60,7 @@ install_missing() {
   msg "  Docker: $(docker version --format '{{.Server.Version}}')"
   local compose_version_display=""
   if ((${#DOCKER_COMPOSE_CMD[@]} > 0)); then
-    if ! compose_version_display="$("${DOCKER_COMPOSE_CMD[@]}" version --short 2>/dev/null)"; then
+    if ! compose_version_display="$(compose version --short 2>/dev/null)"; then
       compose_version_display="(unknown)"
     fi
   fi

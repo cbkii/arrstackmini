@@ -4,6 +4,14 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+compose() {
+  if ((${#DOCKER_COMPOSE_CMD[@]} == 0)); then
+    die "Docker Compose command not detected; run preflight first"
+  fi
+
+  "${DOCKER_COMPOSE_CMD[@]}" "$@"
+}
+
 msg_color_supported() {
   if [ -n "${NO_COLOR:-}" ]; then
     return 1
@@ -84,7 +92,7 @@ acquire_lock() {
   chmod "$LOCK_FILE_MODE" "$lockfile" 2>/dev/null || true
 
   ARRSTACK_LOCKFILE="$lockfile"
-  trap 'rm -f -- "$ARRSTACK_LOCKFILE"' EXIT INT TERM
+  trap 'rm -f -- "$ARRSTACK_LOCKFILE"' EXIT INT TERM HUP QUIT
 }
 
 atomic_write() {
@@ -121,7 +129,7 @@ portable_sed() {
 
   local perms=""
   if [ -e "$file" ]; then
-    perms="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo '')"
+    perms="$(stat -c '%a' "$file" 2>/dev/null || echo '')"
   fi
 
   if sed -e "$expr" "$file" >"$tmp" 2>/dev/null; then
@@ -287,29 +295,25 @@ obfuscate_sensitive() {
 
 gen_safe_password() {
   local len="${1:-20}"
-  local password=""
 
   if ((len <= 0)); then
     len=20
   fi
 
-  if command -v tr >/dev/null 2>&1 && [ -r /dev/urandom ]; then
-    password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len" || true)"
+  if command -v openssl >/dev/null 2>&1; then
+    LC_ALL=C openssl rand -base64 $((len * 2)) | tr -dc 'A-Za-z0-9' | head -c "$len" || true
+    printf '\n'
+    return
   fi
 
-  if ((${#password} < len)) && command -v openssl >/dev/null 2>&1; then
-    password="$(openssl rand -base64 $((len * 2)) | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$len" || true)"
+  if [ -r /dev/urandom ]; then
+    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len" || true
+    printf '\n'
+    return
   fi
 
-  if ((${#password} < len)); then
-    password="$(printf '%s' "$(date +%s%N)$$" | sha256sum | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$len" || true)"
-  fi
-
-  if ((${#password} < len)); then
-    password="$(printf '%*s' "$len" '' | tr ' ' 'A')"
-  fi
-
-  printf '%s' "$password"
+  printf '%s' "$(date +%s%N)$$" | sha256sum | tr -dc 'A-Za-z0-9' | head -c "$len" || true
+  printf '\n'
 }
 
 sanitize_user() {

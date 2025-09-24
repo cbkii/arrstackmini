@@ -113,7 +113,7 @@ gluetun_public_ip_location() {
   )
 }
 
-gluetun_public_ip_summary() {
+gluetun_public_ip_summary() { 
   local payload="$1"
 
   if ! gluetun_public_ip_details "$payload"; then
@@ -124,8 +124,26 @@ gluetun_public_ip_summary() {
   local location
   location="$(gluetun_public_ip_location 2>/dev/null || printf '')"
 
+  local -a detail_segments=()
   if [[ -n "$location" ]]; then
-    summary+=" (${location})"
+    detail_segments+=("$location")
+  fi
+
+  if [[ -n "${GLUETUN_PUBLIC_IP_HOSTNAME:-}" ]]; then
+    detail_segments+=("host ${GLUETUN_PUBLIC_IP_HOSTNAME}")
+  fi
+
+  if [[ -n "${GLUETUN_PUBLIC_IP_TIMEZONE:-}" ]]; then
+    detail_segments+=("tz ${GLUETUN_PUBLIC_IP_TIMEZONE}")
+  fi
+
+  if ((${#detail_segments[@]} > 0)); then
+    local details_formatted
+    details_formatted=$(
+      IFS='; '
+      printf '%s' "${detail_segments[*]}"
+    )
+    summary+=" (${details_formatted})"
   fi
 
   if [[ -n "${GLUETUN_PUBLIC_IP_ORGANIZATION:-}" ]]; then
@@ -254,7 +272,7 @@ fetch_forwarded_port() {
 }
 
 fetch_public_ip() {
-  local response ip
+  local response
 
   if response=$(gluetun_control_get "/v1/publicip/ip" 2>/dev/null); then
     if gluetun_public_ip_details "$response" && [[ -n "$GLUETUN_PUBLIC_IP" ]]; then

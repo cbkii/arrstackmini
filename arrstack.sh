@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # shellcheck enable=require-variable-braces
 # shellcheck enable=quote-safe-variables
-set -Euo pipefail
+set -Eeuo pipefail
 IFS=$'\n\t'
+
+arrstack_err_trap() {
+  local rc=$?
+  trap - ERR
+  local src="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
+  local line="${BASH_LINENO[0]:-${LINENO}}"
+  printf '[arrstack] error at %s:%s (status=%s)\n' "$src" "$line" "$rc" >&2
+  exit "$rc"
+}
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 [ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ] && . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
 [ -f "${REPO_ROOT}/arrconf/userconf.sh" ] && . "${REPO_ROOT}/arrconf/userconf.sh"
+
+trap 'arrstack_err_trap' ERR
 
 SCRIPT_LIB_DIR="${REPO_ROOT}/scripts"
 modules=(

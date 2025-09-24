@@ -6,7 +6,14 @@ Self-host the *arr ecosystem on a Raspberry Pi 5 or any Debian Bookworm box with
 - Raspberry Pi 5 (or similar 64-bit Debian Bookworm host) with static LAN IP, 4 CPU cores, 4 GB RAM.
 - Proton VPN Plus or Unlimited account for port forwarding.
 - Git, `curl`, `jq`, and `openssl` installed on the host.
-- [Install Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/engine/install/#dockers-compose-plugin) before running the stack.
+- [Install Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/engine/install/#docker-compose-plugin) before running the stack.
+
+On Debian Bookworm, install the command-line prerequisites non-interactively so `apt-get` never pauses for `debconf` prompts:
+
+```bash
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git curl jq openssl
+```
 
 ## Quick start (about 5 minutes)
 1. **Clone the repo into your projects directory.**
@@ -30,10 +37,12 @@ Self-host the *arr ecosystem on a Raspberry Pi 5 or any Debian Bookworm box with
    ./arrstack.sh --yes
    ```
    The script installs dependencies if needed, renders `.env`, and launches the stack with Docker Compose.
-6. **If you run Debian Bookworm, free port 53 for dnsmasq.**
+   Compose reads `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
+6. **On Debian Bookworm, free port 53 for dnsmasq.** `systemd-resolved` often owns `127.0.0.53:53` on fresh installs and blocks the `local_dns` container. The helper stops and disables it only when necessary, writes an idempotent `/etc/resolv.conf`, and then starts `local_dns`.
    ```bash
    ./scripts/host-dns-setup.sh
    ```
+   Re-run the helper whenever you change LAN IPs or DNS upstreams; it safely records backups each time.
 7. **Choose how clients learn the DNS server.** Follow [LAN DNS distribution](docs/lan-dns.md) to configure router DHCP or per-device DNS.
 8. **Open qBittorrent to confirm access.** Visit `https://qbittorrent.home.arpa` (replace the suffix if you changed it) and change the default password.
 
