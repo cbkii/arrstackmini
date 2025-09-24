@@ -1,66 +1,71 @@
+← [Back to Start](../README.md)
+
 # Version management
 
-This repository normally pins each container to a known-good tag so reproducible installs match the validated stack. In September 2024 LinuxServer.io removed several historical tags for Prowlarr and Bazarr, which caused `manifest unknown` errors for fresh pulls. The stack now validates image availability during startup, falls back to `:latest` when necessary, and ships a recovery helper for existing deployments.
+Track container tags safely so installs stay reproducible.
 
-## Current image guidance
+## Why
+The stack pins each image to a tested tag. Occasionally a registry removes an old build, which can break `docker pull` unless you fall back to a known good alternative.
 
-| Service      | Image                                | Recommended tag        | Alternatives                 | Notes |
-| ------------ | ------------------------------------ | ---------------------- | ---------------------------- | ----- |
-| Gluetun      | `qmcgaw/gluetun`                     | `v3.39.1`              | `latest`                     | Keep pinned; controls VPN routing. |
-| qBittorrent  | `lscr.io/linuxserver/qbittorrent`    | `5.1.2-r2-ls415`       | `latest`, `develop`          | Falls back to `:latest` if the pin disappears. |
-| Sonarr       | `lscr.io/linuxserver/sonarr`         | `4.0.15.2941-ls291`    | `latest`, `develop`, `main`  | `:latest` fallback applied automatically. |
-| Radarr       | `lscr.io/linuxserver/radarr`         | `5.27.5.10198-ls283`   | `latest`, `develop`          | `:latest` fallback applied automatically. |
-| Prowlarr     | `lscr.io/linuxserver/prowlarr`       | `latest`               | `develop`, `nightly`         | Specific tags churn; defaults to floating tag. |
-| Bazarr       | `lscr.io/linuxserver/bazarr`         | `latest`               | `develop`, `nightly`         | Specific tags churn; defaults to floating tag. |
-| FlareSolverr | `ghcr.io/flaresolverr/flaresolverr`  | `v3.3.21`              | `latest`                     | Pin to known good due to upstream flux. |
+## Do
+### Current image guidance
+| Service | Image | Recommended tag | Notes |
+| --- | --- | --- | --- |
+| Gluetun | `qmcgaw/gluetun` | `v3.39.1` | Keep pinned; controls VPN routing. |
+| qBittorrent | `lscr.io/linuxserver/qbittorrent` | `5.1.2-r2-ls415` | Falls back to `:latest` if the pin disappears. |
+| Sonarr | `lscr.io/linuxserver/sonarr` | `4.0.15.2941-ls291` | Installer switches to `:latest` when a tag vanishes. |
+| Radarr | `lscr.io/linuxserver/radarr` | `5.27.5.10198-ls283` | Same fallback as Sonarr. |
+| Prowlarr | `lscr.io/linuxserver/prowlarr` | `latest` | Floating tag to avoid churn. |
+| Bazarr | `lscr.io/linuxserver/bazarr` | `latest` | Floating tag to avoid churn. |
+| FlareSolverr | `ghcr.io/flaresolverr/flaresolverr` | `v3.3.21` | Keep pinned to a stable release. |
+| Caddy | `caddy` | `2.8.4` | Use upstream stable. |
 
-### Why `:latest` for Prowlarr and Bazarr?
-
-LinuxServer.io's automated builds occasionally retire old tags once upstream changes ship. When a tag disappears Docker returns `manifest unknown` during `docker pull`. Using `:latest` guarantees a published tag exists, and the installer verifies availability before starting the stack.
-
-## Checking available tags manually
-
-```bash
-# Replace IMAGE with linuxserver/<service> to inspect via Docker Hub
-IMAGE="linuxserver/prowlarr"
-curl -s "https://hub.docker.com/v2/repositories/${IMAGE}/tags/?page_size=10" |
-  jq -r '.results[].name'
-```
-
-Alternatively browse the LinuxServer Fleet: https://fleet.linuxserver.io/
-
-## Safe update workflow
-
-1. **Back up the current environment.**
+### Update workflow
+1. **Back up your data.**
    ```bash
    cd "${ARR_STACK_DIR:-$PWD}/.."
    tar -czf "arrstack-backup-$(date +%Y%m%d).tar.gz" arrstack docker-data
    ```
-2. **Adjust versions.** Edit `.env` or `arrconf/userconf.sh` to change image tags.
-3. **Validate first.** Re-run the installer (`./arrstack.sh --yes`). The new validation step checks every configured image and automatically switches LinuxServer images to `:latest` when a pin goes missing.
-4. **Confirm runtime.** Use `docker compose ps` from `${ARR_STACK_DIR}` and inspect individual logs before resuming automation.
-
-## Recovering from `manifest unknown`
-
-If an existing deployment references a removed tag:
-
-1. Run the generated helper to repair `.env`:
-   ```bash
-   ${ARR_STACK_DIR}/scripts/fix-versions.sh
-   ```
-2. Re-run the installer to regenerate Compose files and restart services:
+2. **Adjust tags.** Edit `.env` or `arrconf/userconf.sh` to change any `*_IMAGE` values.
+3. **Apply changes.**
    ```bash
    ./arrstack.sh --yes
    ```
-3. Optionally edit `.env` afterwards to pin to a newly released specific tag and re-run the installer again.
+   The installer validates each image and swaps LinuxServer pins to `:latest` if a tag has vanished.
+4. **Confirm runtime.**
+   ```bash
+   docker compose ps
+   ```
+   Ensure every container reports `running` before resuming automation.
 
-The recovery script performs a timestamped backup of `.env` and replaces the affected tags with `:latest`. You can compare backups with `diff` if manual adjustments are needed.
+### Recover from `manifest unknown`
+1. Run the helper to repair `.env`:
+   ```bash
+   ${ARR_STACK_DIR}/scripts/fix-versions.sh
+   ```
+2. Re-run the installer:
+   ```bash
+   ./arrstack.sh --yes
+   ```
+3. Optionally pin to a new tag afterward and repeat the installer if you need a specific release.
 
-## Troubleshooting
+### Check tags manually
+```bash
+IMAGE="linuxserver/prowlarr"
+curl -s "https://hub.docker.com/v2/repositories/${IMAGE}/tags/?page_size=10" |
+  jq -r '.results[].name'
+```
+Or browse the LinuxServer Fleet at https://fleet.linuxserver.io/ for official tag status.
 
-- `docker manifest inspect lscr.io/linuxserver/prowlarr:latest` – verify the tag exists.
-- `docker pull lscr.io/linuxserver/prowlarr:latest` – ensure the host can pull the fallback image.
-- `docker compose pull` – refresh all images defined in `${ARR_STACK_DIR}/docker-compose.yml`.
-- Review the installer output: any images that still fail validation are listed with corrective guidance.
+## Verify
+List the images in use and confirm the expected tags appear:
+```bash
+docker compose images
+```
+Check the `TAG` column for each service you updated.
 
-Document any future tag changes in this file and the changelog so operators know when manual intervention is required.
+## See also
+- [Config reference](config.md)
+- [Security notes](security-notes.md)
+- [Troubleshooting](troubleshooting.md)
+- [FAQ](faq.md)

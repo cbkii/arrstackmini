@@ -1,0 +1,46 @@
+← [Back to Start](../README.md)
+
+# Frequently asked questions
+
+Quick answers to common beginner questions about arrstack-mini.
+
+## Why
+Reading these first can save time before you run the installer or change defaults.
+
+## Do
+### Do I need a Raspberry Pi 5?
+The stack targets Raspberry Pi 5 or any 64-bit Debian Bookworm host with similar resources (4 cores, 4 GB RAM). Slower hardware may work but downloads and transcoding will lag.
+
+### Which Proton plan should I buy?
+Use Proton VPN Plus or Unlimited. Those plans support port forwarding, which qBittorrent needs for good performance.
+
+### Can I skip the DNS helper?
+Yes, but you must add host entries manually or set DNS per device. Using [LAN DNS distribution](lan-dns.md) gives the smoothest experience.
+
+### Where do I put my Proton credentials?
+Copy `arrconf/proton.auth.example` to `arrconf/proton.auth` and fill in `PROTON_USER` and `PROTON_PASS`. The installer locks down the permissions automatically.
+
+### How do I update to new container versions?
+Read [Version management](VERSION_MANAGEMENT.md). Back up `.env`, adjust tags, rerun `./arrstack.sh --yes`, and confirm services start.
+
+### What if I want to rerun the installer safely?
+It is idempotent. Run `./arrstack.sh --yes` anytime after editing `arrconf/userconf.sh` or `.env`. The script shows a summary before it restarts containers.
+
+### Can I expose services to the Internet?
+Only through Gluetun and Caddy with strong basic auth. Forwarding ports directly from the Pi bypasses VPN protection and is not recommended.
+
+### Is `home.arpa` required?
+It is the recommended LAN suffix because it never leaks to the public Internet. Change it only if another system already uses it.
+
+## Verify
+After following any answer above, confirm the stack responds:
+```bash
+docker compose ps
+```
+All containers should show `running`. If not, check [Troubleshooting](troubleshooting.md).
+
+## See also
+- [Quick start](../README.md)
+- [Config reference](config.md)
+- [LAN DNS distribution](lan-dns.md)
+- [Troubleshooting](troubleshooting.md)
