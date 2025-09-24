@@ -255,18 +255,10 @@ write_compose() {
     fi
 
     if ((include_local_dns)); then
-      if command -v ss >/dev/null 2>&1; then
-        if ss -tuln | grep -q ':53 ' 2>/dev/null; then
-          include_local_dns=0
-          local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
-          warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
-        fi
-      elif command -v netstat >/dev/null 2>&1; then
-        if netstat -tuln | grep -q ':53 ' 2>/dev/null; then
-          include_local_dns=0
-          local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
-          warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
-        fi
+      if port_bound_any udp 53 || port_bound_any tcp 53; then
+        include_local_dns=0
+        local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
+        warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
       fi
     fi
 
@@ -350,8 +342,8 @@ YAML
         max-size: "1m"
         max-file: "3"
 YAML
-      if ((include_local_dns)); then
-        cat <<'YAML'
+    if ((include_local_dns)); then
+      cat <<'YAML'
   local_dns:
     image: 4km3/dnsmasq:2.90-r3
     container_name: arr_local_dns
@@ -381,16 +373,19 @@ YAML
       test:
         - "CMD-SHELL"
         - >
-          if command -v nslookup >/dev/null 2>&1; then
-            nslookup qbittorrent.${LAN_DOMAIN_SUFFIX} 127.0.0.1 >/dev/null 2>&1;
-          elif command -v drill >/dev/null 2>&1; then
-            drill -Q qbittorrent.${LAN_DOMAIN_SUFFIX} @127.0.0.1 >/dev/null 2>&1;
+          if command -v drill >/dev/null 2>&1; then
+            drill -Q example.com @127.0.0.1 >/dev/null 2>&1;
+          elif command -v nslookup >/dev/null 2>&1; then
+            nslookup example.com 127.0.0.1 >/dev/null 2>&1;
+          elif command -v dig >/dev/null 2>&1; then
+            dig +time=2 +tries=1 @127.0.0.1 example.com >/dev/null 2>&1;
           else
             exit 1;
           fi
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
 YAML
       fi
@@ -412,6 +407,8 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
+      caddy:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/v2/app/version"]
       interval: 30s
@@ -442,6 +439,8 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
+      caddy:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -467,6 +466,8 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
+      caddy:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -489,6 +490,8 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
+      caddy:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -520,6 +523,8 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
+      caddy:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -537,6 +542,8 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
+      caddy:
+        condition: service_healthy
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -568,23 +575,32 @@ YAML
       - ${ARR_DOCKER_DIR}/caddy/data:/data
       - ${ARR_DOCKER_DIR}/caddy/config:/config
       - ${ARR_DOCKER_DIR}/caddy/ca-pub:/ca-pub:ro
+YAML
+      cat <<'YAML'
     depends_on:
       gluetun:
         condition: service_healthy
         restart: true
+YAML
+      if ((include_local_dns)); then
+        cat <<'YAML'
+      local_dns:
+        condition: service_healthy
+YAML
+      fi
+      cat <<'YAML'
     healthcheck:
       test:
         - "CMD-SHELL"
         - >
-          if command -v curl >/dev/null 2>&1; then
-            curl -fsS http://127.0.0.1/healthz;
-          elif command -v wget >/dev/null 2>&1; then
-            wget -qO- http://127.0.0.1/healthz;
+          if command -v wget >/dev/null 2>&1; then
+            wget -qO- http://127.0.0.1:2019/metrics >/dev/null 2>&1;
+          elif command -v curl >/dev/null 2>&1; then
+            curl -fsS --max-time 5 http://127.0.0.1:2019/metrics >/dev/null 2>&1;
           else
-            echo "missing http client" >&2;
             exit 1;
           fi
-      interval: 15s
+      interval: 10s
       timeout: 5s
       retries: 6
       start_period: 20s

@@ -167,9 +167,18 @@ echo "[info] Starting local_dns container"
 docker compose up -d local_dns
 
 echo "[info] Verifying port 53 is bound by dnsmasq"
-if ! ss -ulpn | grep ":53 " >/dev/null; then
-  echo "[error] :53 not bound; check for conflicting services" >&2
-  exit 1
+if command -v ss >/dev/null 2>&1; then
+  if [[ -z "$(ss -H -lnu 'sport = :53' 2>/dev/null)" && -z "$(ss -H -lnt 'sport = :53' 2>/dev/null)" ]]; then
+    echo "[error] :53 not bound; check for conflicting services" >&2
+    exit 1
+  fi
+elif command -v lsof >/dev/null 2>&1; then
+  if [[ -z "$(lsof -nP -iUDP:53 2>/dev/null)" && -z "$(lsof -nP -iTCP:53 -sTCP:LISTEN 2>/dev/null)" ]]; then
+    echo "[error] :53 not bound; check for conflicting services" >&2
+    exit 1
+  fi
+else
+  echo "[warn] Unable to verify port 53 binding (missing 'ss' and 'lsof')." >&2
 fi
 
 # ---- Functional tests ----

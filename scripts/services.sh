@@ -120,6 +120,29 @@ safe_cleanup() {
     | xargs -r docker rm -f 2>/dev/null || true
 }
 
+preflight_compose_interpolation() {
+  local file="${COMPOSE_FILE:-${ARR_STACK_DIR}/docker-compose.yml}"
+  local log_dir="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
+  ensure_dir "$log_dir"
+  local warn_log="${log_dir}/compose-interpolation.log"
+
+  if ! compose -f "$file" config >/dev/null 2>"$warn_log"; then
+    echo "[arrstack] docker compose config failed; see ${warn_log}" >&2
+    exit 1
+  fi
+
+  if grep -qE 'variable is not set' "$warn_log" 2>/dev/null; then
+    echo "[arrstack] unresolved Compose variables detected:" >&2
+    grep -E 'variable is not set' "$warn_log" >&2 || true
+    echo "[arrstack] Tip: run scripts/dev/find-unescaped-dollar.sh \"${file}\"" >&2
+    exit 1
+  fi
+
+  if [[ ! -s "$warn_log" ]]; then
+    rm -f "$warn_log"
+  fi
+}
+
 validate_compose_or_die() {
   local file="${COMPOSE_FILE:-${ARR_STACK_DIR}/docker-compose.yml}"
   local log_dir="${ARR_STACK_DIR}/logs"
@@ -140,6 +163,38 @@ validate_compose_or_die() {
   fi
 
   rm -f "$errlog"
+}
+
+validate_caddy_config() {
+  local caddyfile="${ARR_DOCKER_DIR}/caddy/Caddyfile"
+
+  if [[ ! -f "$caddyfile" ]]; then
+    warn "Caddyfile not found at ${caddyfile}; skipping validation"
+    return 0
+  fi
+
+  if [[ -z "${CADDY_IMAGE:-}" ]]; then
+    warn "CADDY_IMAGE is unset; skipping Caddy config validation"
+    return 0
+  fi
+
+  local log_dir="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
+  ensure_dir "$log_dir"
+  local logfile="${log_dir}/caddy-validate.log"
+
+  msg "🧪 Validating Caddy configuration"
+
+  if ! docker run --rm \
+    -v "${caddyfile}:/etc/caddy/Caddyfile:ro" \
+    "${CADDY_IMAGE}" \
+    caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
+    >"$logfile" 2>&1; then
+    warn "Caddy validation failed; see ${logfile}"
+    cat "$logfile"
+    exit 1
+  fi
+
+  rm -f "$logfile"
 }
 
 update_env_image_var() {

@@ -114,10 +114,12 @@ main() {
   generate_api_key
   write_env
   write_compose
+  preflight_compose_interpolation
   validate_compose_or_die
   write_gluetun_control_assets
   ensure_caddy_auth
   write_caddy_assets
+  validate_caddy_config
   sync_gluetun_library
   write_qbt_helper_script
   write_qbt_config
