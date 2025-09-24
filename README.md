@@ -96,9 +96,10 @@ You can combine the first four flags as needed—for example, `./arrstack.sh --y
 
 ## ✅ LAN DNS: choose one (set in `DNS_DISTRIBUTION_MODE`)
 
-**Option A — `router` (recommended):** Configure your router’s DHCP (Option 6) to hand out `${LAN_IP}` so every client uses the bundled resolver automatically. TP-Link’s VX230v exposes DNS fields in its web UI, though the exact page varies by firmware.[^tplink]
+`arrstack-mini` ships a dnsmasq resolver that answers `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` by default). Decide how clients learn `${LAN_IP}`:
 
-**Option B — `per-device`:** Leave the router unchanged and set DNS=`${LAN_IP}` on laptops, TVs, consoles, and similar devices. On Android, keep **Private DNS** set to **Off** or **Automatic**—entering a hostname forces DNS-over-TLS through an external provider and bypasses local records.[^android]
+- **`router` (recommended):** Point your router’s DHCP server at `${LAN_IP}` with a public resolver as the fallback. Follow the step-by-step checklist in [docs/ROUTER_DNS_SETUP.md](docs/ROUTER_DNS_SETUP.md) to apply the change safely; TP-Link VX230v instructions are included.[^tplink]
+- **`per-device`:** Leave the router untouched and manually set DNS=`${LAN_IP}` on key devices (Android/PC/TV). Keep Android **Private DNS** set to **Off** or **Automatic** so queries stay on the LAN.[^android]
 
 Set your preference in `arrconf/userconf.sh`:
 
