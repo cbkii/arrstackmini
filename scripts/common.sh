@@ -119,6 +119,21 @@ atomic_write() {
   fi
 }
 
+write_env_kv() {
+  local key="$1"
+  local value="${2-}"
+
+  if [[ -z "$key" ]]; then
+    die "write_env_kv requires a key"
+  fi
+
+  if [[ "$value" == *$'\n'* ]]; then
+    die "Environment value for ${key} contains newline characters"
+  fi
+
+  printf '%s=%s\n' "$key" "$value"
+}
+
 portable_sed() {
   local expr="$1"
   local file="$2"
@@ -156,22 +171,6 @@ escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[&/]/\\&/g'
 }
 
-escape_env_value_for_compose() {
-  local value="${1-}"
-
-  value="${value//$'\r'/}" # Strip carriage returns to avoid CRLF churn
-
-  if [[ "$value" == *$'\n'* ]]; then
-    die "Environment values cannot contain newline characters"
-  fi
-
-  local escaped="${value//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
-  escaped="${escaped//\$/\$\$}"
-
-  printf '"%s"' "$escaped"
-}
-
 unescape_env_value_from_compose() {
   local value="${1-}"
   local sentinel=$'\001__ARRSTACK_DOLLAR__\002'
@@ -190,17 +189,6 @@ unescape_env_value_from_compose() {
   value="${value//\$\$/${sentinel}}"
   value="${value//${sentinel}/\$}"
   printf '%s' "$value"
-}
-
-format_env_line() {
-  local key="$1"
-  local value="${2-}"
-
-  if [[ "$value" == *$'\n'* ]]; then
-    die "Environment value for ${key} contains newline characters"
-  fi
-
-  printf '%s=%s\n' "$key" "$(escape_env_value_for_compose "$value")"
 }
 
 set_qbt_conf_value() {
@@ -244,16 +232,13 @@ persist_env_var() {
     die "Environment value for ${key} contains newline characters"
   fi
 
-  local escaped_value
-  escaped_value="$(escape_env_value_for_compose "$value")"
-
   if [ -f "${ARR_ENV_FILE}" ]; then
     if grep -q "^${key}=" "${ARR_ENV_FILE}"; then
       local escaped
-      escaped="$(escape_sed_replacement "$escaped_value")"
+      escaped="$(escape_sed_replacement "$value")"
       portable_sed "s/^${key}=.*/${key}=${escaped}/" "${ARR_ENV_FILE}"
     else
-      printf '%s' "$(format_env_line "$key" "$value")" >>"${ARR_ENV_FILE}"
+      write_env_kv "$key" "$value" >>"${ARR_ENV_FILE}"
     fi
   fi
 }
