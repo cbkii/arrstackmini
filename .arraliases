@@ -29,7 +29,7 @@ if [ -f "$ARR_ENV_FILE" ]; then
   fi
 fi
 
-_arr_alias_source_if_present(){
+_arr_alias_source_if_present() {
   local file="$1"
   [ -f "$file" ] && . "$file"
 }
@@ -44,18 +44,18 @@ if [ -f "${_arr_gluetun_lib}" ]; then
 fi
 unset _arr_gluetun_lib
 
-_arr_trim(){
+_arr_trim() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "$value"
 }
 
-_arr_lowercase(){
+_arr_lowercase() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
-_arr_csv_to_array(){
+_arr_csv_to_array() {
   local input="$1"
   [ -n "$input" ] || return 0
   local IFS=','
@@ -70,7 +70,7 @@ _arr_csv_to_array(){
   done
 }
 
-_arr_unique_lines(){
+_arr_unique_lines() {
   local -a seen_lower=()
   local -a result=()
   local line lower match existing
@@ -92,19 +92,19 @@ _arr_unique_lines(){
   printf '%s\n' "${result[@]}"
 }
 
-_arr_vpn_rotation_state_file(){
+_arr_vpn_rotation_state_file() {
   local dir="${ARR_STACK_DIR}/.state"
   mkdir -p "$dir" 2>/dev/null || true
   printf '%s\n' "${dir}/pvpn-rotation.index"
 }
 
-_arr_vpn_record_index(){
+_arr_vpn_record_index() {
   local index="$1"
   local file="$(_arr_vpn_rotation_state_file)"
   printf '%s\n' "$index" >"$file"
 }
 
-_arr_vpn_read_index(){
+_arr_vpn_read_index() {
   local file="$(_arr_vpn_rotation_state_file)"
   local value
   if [ -f "$file" ]; then
@@ -117,13 +117,13 @@ _arr_vpn_read_index(){
   return 1
 }
 
-_arr_vpn_rotation_candidates(){
+_arr_vpn_rotation_candidates() {
   local env_base default_base user_list combined=""
   env_base="$(_arr_env_get SERVER_COUNTRIES 2>/dev/null || true)"
   default_base="${SERVER_COUNTRIES:-}"
   user_list="${PVPN_ROTATE_COUNTRIES:-}"
   if [ -z "$default_base" ]; then
-    default_base="Switzerland,Iceland,Romania,Czech Republic,Netherlands"
+    default_base="Switzerland,Iceland,Romania,Netherlands"
   fi
   local part
   for part in "$user_list" "$env_base" "$default_base"; do
@@ -136,18 +136,18 @@ _arr_vpn_rotation_candidates(){
     fi
   done
   if [ -z "$combined" ]; then
-    combined="Switzerland,Iceland,Romania,Czech Republic,Netherlands"
+    combined="Switzerland,Iceland,Romania,Netherlands"
   fi
   _arr_csv_to_array "$combined" | _arr_unique_lines
 }
 
-_arr_env_get(){
+_arr_env_get() {
   local key="$1"
   [[ -f "$ARR_ENV_FILE" ]] || return 1
   awk -F= -v k="$key" '$1==k{print substr($0, index($0,"=")+1); exit}' "$ARR_ENV_FILE"
 }
 
-_arr_loopback(){
+_arr_loopback() {
   local host
   host="$(_arr_env_get LOCALHOST_IP)"
   if [ -z "$host" ]; then
@@ -158,11 +158,11 @@ _arr_loopback(){
 
 _arr_services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy port-sync)
 
-_arr_compose(){ (cd "$ARR_STACK_DIR" && docker compose "$@" ); }
+_arr_compose() { (cd "$ARR_STACK_DIR" && docker compose "$@" ); }
 
-_arr_is_tty(){ [ -t 1 ]; }
+_arr_is_tty() { [ -t 1 ]; }
 
-_arr_host(){
+_arr_host() {
   local host
   host="$(_arr_env_get LAN_IP)"
   if [ -z "$host" ] || [ "$host" = "0.0.0.0" ]; then
@@ -171,7 +171,7 @@ _arr_host(){
   printf '%s' "$host"
 }
 
-_arr_domain_suffix(){
+_arr_domain_suffix() {
   local suffix
   suffix="$(_arr_env_get CADDY_DOMAIN_SUFFIX)"
   if [ -z "$suffix" ]; then
@@ -181,9 +181,9 @@ _arr_domain_suffix(){
   printf '%s' "$suffix"
 }
 
-_arr_gluetun_port(){ printf '%s' "${GLUETUN_CONTROL_PORT:-$(_arr_env_get GLUETUN_CONTROL_PORT || echo 8000)}"; }
+_arr_gluetun_port() { printf '%s' "${GLUETUN_CONTROL_PORT:-$(_arr_env_get GLUETUN_CONTROL_PORT || echo 8000)}"; }
 
-_arr_gluetun_host(){
+_arr_gluetun_host() {
   local host
   host="${GLUETUN_CONTROL_HOST:-$(_arr_env_get GLUETUN_CONTROL_HOST)}"
   if [ -z "$host" ]; then
@@ -192,7 +192,7 @@ _arr_gluetun_host(){
   printf '%s' "$host"
 }
 
-_arr_gluetun_key(){
+_arr_gluetun_key() {
   if [ -n "${GLUETUN_API_KEY:-}" ]; then
     printf '%s' "$GLUETUN_API_KEY"
   else
@@ -200,7 +200,7 @@ _arr_gluetun_key(){
   fi
 }
 
-_arr_gluetun_api(){
+_arr_gluetun_api() {
   local endpoint="$1"
   local key="$(_arr_gluetun_key)"
   local port="$(_arr_gluetun_port)"
@@ -224,13 +224,13 @@ _arr_gluetun_api(){
   return 1
 }
 
-_arr_qbt_base(){
+_arr_qbt_base() {
   local suffix
   suffix="$(_arr_domain_suffix)"
   printf 'http://qbittorrent.%s' "$suffix"
 }
 
-_arr_qbt_auth(){
+_arr_qbt_auth() {
   local user pass base host ip
   user="$(_arr_env_get QBT_USER)"
   pass="$(_arr_env_get QBT_PASS)"
@@ -248,7 +248,7 @@ _arr_qbt_auth(){
   fi
 }
 
-_arr_api_key(){
+_arr_api_key() {
   local svc="$1"
   local file="${ARR_DOCKER_DIR}/${svc}/config.xml"
   local key
@@ -271,13 +271,13 @@ _arr_api_key(){
   printf '%s\n' "$key"
 }
 
-arr.compose(){ _arr_compose "$@"; }
+arr.compose() { _arr_compose "$@"; }
 
-arr.up(){ _arr_compose up -d "$@"; }
-arr.down(){ _arr_compose down "$@"; }
-arr.restart(){ if [ $# -eq 0 ]; then _arr_compose restart "${_arr_services[@]}"; else _arr_compose restart "$@"; fi }
-arr.pull(){ _arr_compose pull "$@"; }
-arr.logs(){
+arr.up() { _arr_compose up -d "$@"; }
+arr.down() { _arr_compose down "$@"; }
+arr.restart() { if [ $# -eq 0 ]; then _arr_compose restart "${_arr_services[@]}"; else _arr_compose restart "$@"; fi }
+arr.pull() { _arr_compose pull "$@"; }
+arr.logs() {
   local tail_args=()
   if [ $# -gt 0 ] && [ "${1#*[!0-9]}" = "$1" ]; then
     tail_args=(--tail "$1")
@@ -285,9 +285,9 @@ arr.logs(){
   fi
   _arr_compose logs "${tail_args[@]}" -f "$@"
 }
-arr.ps(){ _arr_compose ps "$@"; }
-arr.stats(){ docker stats "${_arr_services[@]}" "$@"; }
-arr.shell(){
+arr.ps() { _arr_compose ps "$@"; }
+arr.stats() { docker stats "${_arr_services[@]}" "$@"; }
+arr.shell() {
   local svc="${1:-qbittorrent}"; shift || true
   if _arr_is_tty; then
     docker exec -it "$svc" "${@:-/bin/sh}"
@@ -295,7 +295,7 @@ arr.shell(){
     docker exec -i "$svc" "${@:-/bin/sh}"
   fi
 }
-arr.health(){
+arr.health() {
   local svc
   for svc in "${_arr_services[@]}"; do
     local status
@@ -306,7 +306,7 @@ arr.health(){
     fi
   done
 }
-arr.backup(){
+arr.backup() {
   local dest="${1:-${ARR_STACK_DIR}/backups/$(date +%Y%m%d-%H%M%S)}"
   mkdir -p "$dest"
   for svc in gluetun qbittorrent sonarr radarr prowlarr bazarr caddy; do
@@ -317,9 +317,9 @@ arr.backup(){
   printf 'Backups stored in %s\n' "$dest"
 }
 
-arr.compose.config(){ _arr_compose config "$@"; }
+arr.compose.config() { _arr_compose config "$@"; }
 
-arr.env.get(){
+arr.env.get() {
   if [ -z "${1:-}" ]; then
     printf 'Usage: arr.env.get <KEY>\n' >&2
     return 1
@@ -333,7 +333,7 @@ arr.env.get(){
   return 1
 }
 
-arr.env.set(){
+arr.env.set() {
   if [ $# -lt 2 ]; then
     printf 'Usage: arr.env.set <KEY> <VALUE>\n' >&2
     return 1
@@ -362,7 +362,7 @@ arr.env.set(){
   printf '%s=%s\n' "$key" "$value"
 }
 
-arr.env.list(){
+arr.env.list() {
   if [ ! -f "$ARR_ENV_FILE" ]; then
     printf 'Missing %s\n' "$ARR_ENV_FILE" >&2
     return 1
@@ -370,7 +370,7 @@ arr.env.list(){
   sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$ARR_ENV_FILE" | sort
 }
 
-arr.data.usage(){
+arr.data.usage() {
   local dirs=()
   if [ ! -d "$ARR_DOCKER_DIR" ]; then
     printf 'Missing %s\n' "$ARR_DOCKER_DIR" >&2
@@ -386,7 +386,7 @@ arr.data.usage(){
   du -sh "${dirs[@]}" 2>/dev/null | sort -h
 }
 
-arr.open(){
+arr.open() {
   local suffix="$(_arr_domain_suffix)"
   local entries='qBittorrent qbittorrent
 Sonarr sonarr
@@ -413,7 +413,7 @@ $entries
 EOF
 }
 
-arr.help(){
+arr.help() {
   cat <<'EOF'
 ARR Stack alias help
 ====================
@@ -478,7 +478,7 @@ Run 'source ${ARR_STACK_DIR}/.arraliases' in your shell to load the aliases.
 EOF
 }
 
-arr.vpn(){
+arr.vpn() {
   local action="${1:-status}"
   shift || true
   case "$action" in
@@ -508,10 +508,10 @@ arr.vpn(){
   esac
 }
 
-arr.vpn.connect(){ (cd "$ARR_STACK_DIR" && docker compose up -d gluetun qbittorrent "$@"); }
-arr.vpn.reconnect(){ docker restart gluetun "$@"; }
+arr.vpn.connect() { (cd "$ARR_STACK_DIR" && docker compose up -d gluetun qbittorrent "$@"); }
+arr.vpn.reconnect() { docker restart gluetun "$@"; }
 
-arr.vpn.status(){
+arr.vpn.status() {
   local ip_payload="" pf_payload="" summary=""
 
   if ip_payload="$(_arr_gluetun_api /v1/publicip/ip 2>/dev/null)"; then
@@ -553,9 +553,9 @@ arr.vpn.status(){
   fi
 }
 
-arr.vpn.creds(){ "${EDITOR:-nano}" "${ARRCONF_DIR}/proton.auth"; }
+arr.vpn.creds() { "${EDITOR:-nano}" "${ARRCONF_DIR}/proton.auth"; }
 
-arr.vpn.port(){
+arr.vpn.port() {
   local type="$(_arr_env_get VPN_TYPE)"
   if [ "${type:-openvpn}" != "openvpn" ]; then
     echo 'Port forwarding is only available for OpenVPN configurations.' >&2
@@ -582,10 +582,10 @@ arr.vpn.port(){
   printf '%s\n' "$payload"
 }
 
-arr.vpn.paths(){ printf 'Config: %s\nAuth: %s\n' "${ARRCONF_DIR}" "${ARR_DOCKER_DIR}/gluetun"; }
+arr.vpn.paths() { printf 'Config: %s\nAuth: %s\n' "${ARRCONF_DIR}" "${ARR_DOCKER_DIR}/gluetun"; }
 
-arr.vpn.logs(){ docker logs -f gluetun; }
-arr.vpn.ip(){
+arr.vpn.logs() { docker logs -f gluetun; }
+arr.vpn.ip() {
   local payload="$(_arr_gluetun_api /v1/publicip/ip 2>/dev/null)"
   if [ -z "$payload" ]; then
     echo 'Unable to query public IP.' >&2
@@ -597,10 +597,10 @@ arr.vpn.ip(){
   fi
   printf '%s\n' "$payload"
 }
-arr.vpn.pf(){ _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'; }
-arr.vpn.health(){ docker inspect --format '{{.State.Health.Status}}' gluetun 2>/dev/null || echo unknown; }
+arr.vpn.pf() { _arr_gluetun_api /v1/openvpn/portforwarded && printf '\n'; }
+arr.vpn.health() { docker inspect --format '{{.State.Health.Status}}' gluetun 2>/dev/null || echo unknown; }
 
-arr.vpn.servers(){
+arr.vpn.servers() {
   local limit="${1:-20}"
   local payload
 
@@ -659,7 +659,7 @@ arr.vpn.servers(){
   }
 }
 
-arr.vpn.countries(){
+arr.vpn.countries() {
   if [ $# -eq 0 ]; then
     printf 'Current SERVER_COUNTRIES=%s\n' "$(_arr_env_get SERVER_COUNTRIES)"
     return 0
@@ -676,11 +676,11 @@ arr.vpn.countries(){
   fi
 }
 
-arr.vpn.fastest(){
+arr.vpn.fastest() {
   docker exec gluetun /bin/sh -c 'gluetun servers --format table --limit 15' 2>/dev/null || echo "gluetun CLI not available."
 }
 
-arr.vpn.switch(){
+arr.vpn.switch() {
   local requested="$(_arr_trim "${1:-}")"
   local -a countries=()
   mapfile -t countries < <(_arr_vpn_rotation_candidates)
@@ -736,7 +736,7 @@ arr.vpn.switch(){
   fi
 }
 
-_arr_qbt_call(){
+_arr_qbt_call() {
   local method="$1"; shift
   local endpoint="$1"; shift
   _arr_qbt_auth
@@ -752,8 +752,8 @@ _arr_qbt_call(){
   "${curl_cmd[@]}" "$@"
 }
 
-arr.qbt.url(){ printf '%s\n' "$(_arr_qbt_base)"; }
-arr.qbt.port.get(){
+arr.qbt.url() { printf '%s\n' "$(_arr_qbt_base)"; }
+arr.qbt.port.get() {
   local json value
   json="$(_arr_qbt_call GET /api/v2/app/preferences 2>/dev/null)" || return 1
   value="$(printf '%s\n' "$json" | sed -n 's/.*"listen_port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1)"
@@ -763,7 +763,7 @@ arr.qbt.port.get(){
     echo "unknown"
   fi
 }
-arr.qbt.port.set(){
+arr.qbt.port.set() {
   if [ -z "$1" ]; then
     printf 'Usage: arr.qbt.port.set <port>\n' >&2
     return 1
@@ -771,7 +771,7 @@ arr.qbt.port.set(){
   _arr_qbt_call POST /api/v2/app/setPreferences --data "json={\"listen_port\":$1}"
   printf 'Requested port set to %s\n' "$1"
 }
-arr.qbt.port.sync(){
+arr.qbt.port.sync() {
   local payload port=""
   payload="$(_arr_gluetun_api /v1/openvpn/portforwarded 2>/dev/null || true)"
   if [ -z "$payload" ]; then
@@ -789,7 +789,7 @@ arr.qbt.port.sync(){
   fi
   arr.qbt.port.set "$port"
 }
-arr.qbt.list(){
+arr.qbt.list() {
   local payload entries
   payload="$(_arr_qbt_call GET /api/v2/torrents/info 2>/dev/null)" || return 1
   entries=$(printf '%s' "$payload" | tr -d '\n' | grep -o '"name":"[^"]*"' 2>/dev/null || true)
@@ -798,17 +798,17 @@ arr.qbt.list(){
   fi
   printf '%s\n' "$entries" | cut -d'"' -f4
 }
-arr.qbt.pause.all(){ _arr_qbt_call POST /api/v2/torrents/pause --data 'hashes=all'; }
-arr.qbt.resume.all(){ _arr_qbt_call POST /api/v2/torrents/resume --data 'hashes=all'; }
-arr.qbt.reannounce(){ _arr_qbt_call POST /api/v2/torrents/reannounce --data 'hashes=all'; }
-arr.qbt.add.url(){
+arr.qbt.pause.all() { _arr_qbt_call POST /api/v2/torrents/pause --data 'hashes=all'; }
+arr.qbt.resume.all() { _arr_qbt_call POST /api/v2/torrents/resume --data 'hashes=all'; }
+arr.qbt.reannounce() { _arr_qbt_call POST /api/v2/torrents/reannounce --data 'hashes=all'; }
+arr.qbt.add.url() {
   if [ -z "$1" ]; then
     printf 'Usage: arr.qbt.add.url <torrent-or-magnet>\n' >&2
     return 1
   fi
   _arr_qbt_call POST /api/v2/torrents/add --data-urlencode "urls=$1"
 }
-arr.qbt.limit(){
+arr.qbt.limit() {
   if [ $# -lt 2 ]; then
     printf 'Usage: arr.qbt.limit <down KiB/s> <up KiB/s>\n' >&2
     return 1
@@ -817,7 +817,7 @@ arr.qbt.limit(){
   _arr_qbt_call POST /api/v2/transfer/setUploadLimit --data "limit=$2"
 }
 
-_arr_service_helper(){
+_arr_service_helper() {
   local svc="$1"; shift
   case "$1" in
     url) printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get "$2")";;
@@ -829,10 +829,10 @@ _arr_service_helper(){
   esac
 }
 
-arr.sonarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get SONARR_PORT)"; }
-arr.sonarr.logs(){ docker logs -f sonarr; }
-arr.sonarr.restart(){ docker restart sonarr; }
-arr.sonarr.refresh(){
+arr.sonarr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get SONARR_PORT)"; }
+arr.sonarr.logs() { docker logs -f sonarr; }
+arr.sonarr.restart() { docker restart sonarr; }
+arr.sonarr.refresh() {
   local key="$(_arr_api_key sonarr)"
   if [ -z "$key" ]; then echo 'Sonarr API key unavailable'; return 1; fi
   local host="$(_arr_host)"
@@ -840,7 +840,7 @@ arr.sonarr.refresh(){
   [ -n "$port" ] || port=8989
   curl -fsS -X POST "http://${host}:${port}/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RescanFolders"}'
 }
-arr.sonarr.rss(){
+arr.sonarr.rss() {
   local key="$(_arr_api_key sonarr)"
   if [ -z "$key" ]; then echo 'Sonarr API key unavailable'; return 1; fi
   local host="$(_arr_host)"
@@ -849,10 +849,10 @@ arr.sonarr.rss(){
   curl -fsS -X POST "http://${host}:${port}/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RssSync"}'
 }
 
-arr.radarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get RADARR_PORT)"; }
-arr.radarr.logs(){ docker logs -f radarr; }
-arr.radarr.restart(){ docker restart radarr; }
-arr.radarr.refresh(){
+arr.radarr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get RADARR_PORT)"; }
+arr.radarr.logs() { docker logs -f radarr; }
+arr.radarr.restart() { docker restart radarr; }
+arr.radarr.refresh() {
   local key="$(_arr_api_key radarr)"
   if [ -z "$key" ]; then echo 'Radarr API key unavailable'; return 1; fi
   local host="$(_arr_host)"
@@ -860,7 +860,7 @@ arr.radarr.refresh(){
   [ -n "$port" ] || port=7878
   curl -fsS -X POST "http://${host}:${port}/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RescanMovie"}'
 }
-arr.radarr.rss(){
+arr.radarr.rss() {
   local key="$(_arr_api_key radarr)"
   if [ -z "$key" ]; then echo 'Radarr API key unavailable'; return 1; fi
   local host="$(_arr_host)"
@@ -869,14 +869,14 @@ arr.radarr.rss(){
   curl -fsS -X POST "http://${host}:${port}/api/v3/command" -H "X-Api-Key: ${key}" -H 'Content-Type: application/json' -d '{"name":"RssSync"}'
 }
 
-arr.prowlarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get PROWLARR_PORT)"; }
-arr.prowlarr.logs(){ docker logs -f prowlarr; }
-arr.prowlarr.restart(){ docker restart prowlarr; }
+arr.prowlarr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get PROWLARR_PORT)"; }
+arr.prowlarr.logs() { docker logs -f prowlarr; }
+arr.prowlarr.restart() { docker restart prowlarr; }
 
-arr.bazarr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get BAZARR_PORT)"; }
-arr.bazarr.logs(){ docker logs -f bazarr; }
-arr.bazarr.restart(){ docker restart bazarr; }
+arr.bazarr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get BAZARR_PORT)"; }
+arr.bazarr.logs() { docker logs -f bazarr; }
+arr.bazarr.restart() { docker restart bazarr; }
 
-arr.flaresolverr.url(){ printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get FLARESOLVERR_PORT)"; }
-arr.flaresolverr.logs(){ docker logs -f flaresolverr; }
-arr.flaresolverr.restart(){ docker restart flaresolverr; }
+arr.flaresolverr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get FLARESOLVERR_PORT)"; }
+arr.flaresolverr.logs() { docker logs -f flaresolverr; }
+arr.flaresolverr.restart() { docker restart flaresolverr; }
