@@ -142,8 +142,6 @@ if [[ "$GLUETUN_STATUS" != "running" ]]; then
   warn "Gluetun is not running. Attempting to start..."
   if docker compose version >/dev/null 2>&1; then
     docker compose up -d gluetun
-  elif command -v docker-compose >/dev/null 2>&1; then
-    docker-compose up -d gluetun
   else
     warn "Docker Compose not available; please start Gluetun manually."
   fi

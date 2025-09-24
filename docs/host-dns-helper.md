@@ -12,7 +12,7 @@ Debian Bookworm ships `systemd-resolved`, which binds `127.0.0.53:53` and overwr
    ```bash
    ./scripts/host-dns-setup.sh
    ```
-   The script escalates with `sudo` when needed, backs up the current resolver config, stops `systemd-resolved`, writes a static `/etc/resolv.conf`, and starts the `local_dns` container.
+   The script escalates with `sudo` when needed, backs up the current resolver config, stops `systemd-resolved` only if it is still active, disables it when enabled, writes a static `/etc/resolv.conf`, and starts the `local_dns` container.
 2. **Roll back when finished testing.**
    ```bash
    ./scripts/host-dns-rollback.sh

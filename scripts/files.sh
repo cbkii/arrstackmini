@@ -126,7 +126,6 @@ write_env() {
 
   PU="$OPENVPN_USER_VALUE"
   PW="$PROTON_PASS_VALUE"
-  OPENVPN_USER="$PU"
 
   validate_config
 
@@ -223,6 +222,82 @@ write_compose() {
   local compose_content
 
   LOCAL_DNS_SERVICE_ENABLED=0
+  local include_local_dns=0
+  local local_dns_block=""
+  local local_dns_state_message="Local DNS container disabled (ENABLE_LOCAL_DNS=0)"
+
+  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    include_local_dns=1
+    local_dns_state_message="Local DNS container requested"
+  fi
+
+  if ((include_local_dns)); then
+    if command -v ss >/dev/null 2>&1; then
+      if ss -tuln | grep -q ':53 ' 2>/dev/null; then
+        include_local_dns=0
+        local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
+        warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
+      fi
+    elif command -v netstat >/dev/null 2>&1; then
+      if netstat -tuln | grep -q ':53 ' 2>/dev/null; then
+        include_local_dns=0
+        local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
+        warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
+      fi
+    fi
+  fi
+
+  if ((include_local_dns)); then
+    LOCAL_DNS_SERVICE_ENABLED=1
+    local_dns_state_message="Local DNS container enabled"
+    if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
+      warn "Local DNS will bind to all interfaces (0.0.0.0:53)"
+    fi
+
+    local_dns_block="$({
+      cat <<'YAML'
+  local_dns:
+    image: 4km3/dnsmasq:2.90-r3
+    container_name: arr_local_dns
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "${LAN_IP:-0.0.0.0}:53:53/udp"
+      - "${LAN_IP:-0.0.0.0}:53:53/tcp"
+    command:
+      - --log-facility=-
+      - --no-resolv
+      - --server=${UPSTREAM_DNS_1}
+      - --server=${UPSTREAM_DNS_2}
+      - --domain-needed
+      - --bogus-priv
+      - --local-service
+      - --domain=${LAN_DOMAIN_SUFFIX}
+      - --local=/${LAN_DOMAIN_SUFFIX}/
+      - --address=/${LAN_DOMAIN_SUFFIX}/__DNS_HOST_ENTRY__
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          if command -v nslookup >/dev/null 2>&1; then
+            nslookup qbittorrent.${LAN_DOMAIN_SUFFIX} 127.0.0.1 >/dev/null 2>&1;
+          elif command -v drill >/dev/null 2>&1; then
+            drill -Q qbittorrent.${LAN_DOMAIN_SUFFIX} @127.0.0.1 >/dev/null 2>&1;
+          else
+            exit 1;
+          fi
+      interval: 30s
+      timeout: 5s
+      retries: 3
+YAML
+    })"
+  fi
 
   local dns_host_entry="${LAN_IP:-0.0.0.0}"
   if [[ "${dns_host_entry}" == "0.0.0.0" ]]; then
@@ -313,74 +388,7 @@ services:
         max-file: "3"
 YAML
 
-      local include_local_dns=0
-      if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
-        include_local_dns=1
-      fi
-
-      if ((include_local_dns)); then
-        if command -v ss >/dev/null 2>&1; then
-          if ss -tuln | grep -q ':53 ' 2>/dev/null; then
-            warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled."
-            include_local_dns=0
-            LOCAL_DNS_SERVICE_ENABLED=0
-          fi
-        elif command -v netstat >/dev/null 2>&1; then
-          if netstat -tuln | grep -q ':53 ' 2>/dev/null; then
-            warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled."
-            include_local_dns=0
-            LOCAL_DNS_SERVICE_ENABLED=0
-          fi
-        fi
-      fi
-
-      if ((include_local_dns)); then
-        LOCAL_DNS_SERVICE_ENABLED=1
-        if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
-          warn "Local DNS will bind to all interfaces (0.0.0.0:53)"
-        fi
-        cat <<'YAML'
-  local_dns:
-    image: 4km3/dnsmasq:2.90-r3
-    container_name: arr_local_dns
-    cap_add:
-      - NET_ADMIN
-    ports:
-      - "${LAN_IP:-0.0.0.0}:53:53/udp"
-      - "${LAN_IP:-0.0.0.0}:53:53/tcp"
-    command:
-      - --log-facility=-
-      - --no-resolv
-      - --server=${UPSTREAM_DNS_1}
-      - --server=${UPSTREAM_DNS_2}
-      - --domain-needed
-      - --bogus-priv
-      - --local-service
-      - --domain=${LAN_DOMAIN_SUFFIX}
-      - --local=/${LAN_DOMAIN_SUFFIX}/
-      - --address=/${LAN_DOMAIN_SUFFIX}/__DNS_HOST_ENTRY__
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "1m"
-        max-file: "2"
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          if command -v nslookup >/dev/null 2>&1; then
-            nslookup qbittorrent.${LAN_DOMAIN_SUFFIX} 127.0.0.1 >/dev/null 2>&1;
-          elif command -v drill >/dev/null 2>&1; then
-            drill -Q qbittorrent.${LAN_DOMAIN_SUFFIX} @127.0.0.1 >/dev/null 2>&1;
-          else
-            exit 1;
-          fi
-      interval: 30s
-      timeout: 5s
-      retries: 3
-YAML
-      fi
+      printf '%s\n' '__LOCAL_DNS_BLOCK__'
 
       cat <<'YAML'
   qbittorrent:
@@ -588,6 +596,13 @@ YAML
     compose_content="${compose_content//      __GLUETUN_DIRECT_PORTS__/}"
   fi
 
+  if [[ -n "$local_dns_block" ]]; then
+    compose_content="${compose_content/__LOCAL_DNS_BLOCK__/$local_dns_block}"
+  else
+    compose_content="${compose_content//$'\n__LOCAL_DNS_BLOCK__'/}"
+    compose_content="${compose_content/__LOCAL_DNS_BLOCK__/}"
+  fi
+
   compose_content="${compose_content/__GLUETUN_FIREWALL_OUTBOUND__/$gluetun_firewall_outbound}"
   compose_content="${compose_content/__DNS_HOST_ENTRY__/$dns_host_entry}"
   compose_content="${compose_content//\${dns_host_entry}/$dns_host_entry}"
@@ -599,6 +614,8 @@ YAML
   compose_content="${compose_content/__BAZARR_OPTIONAL_SUBS__/${bazarr_subs_volume}}"
 
   atomic_write "$compose_path" "$compose_content" "$NONSECRET_FILE_MODE"
+
+  msg "  Local DNS status: ${local_dns_state_message} (LOCAL_DNS_SERVICE_ENABLED=${LOCAL_DNS_SERVICE_ENABLED})"
 }
 
 write_gluetun_control_assets() {

@@ -78,15 +78,8 @@ install_vuetorrent() {
   fi
 
   chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
-  # macOS ships BSD xargs which lacks -r (see POSIX spec)
-  local -a stale_containers=()
-  while IFS= read -r container_id; do
-    stale_containers+=("$container_id")
-  done < <(docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" 2>/dev/null)
-
-  if ((${#stale_containers[@]} > 0)); then
-    docker rm -f "${stale_containers[@]}" >/dev/null 2>&1 || true
-  fi
+  docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" \
+    | xargs -r docker rm -f >/dev/null 2>&1 || true
   msg "  ✅ VueTorrent installed successfully"
 }
 
@@ -94,9 +87,9 @@ safe_cleanup() {
   msg "🧹 Safely stopping existing services..."
 
   if [[ -f "$ARR_STACK_DIR/docker-compose.yml" ]]; then
-    "${DOCKER_COMPOSE_CMD[@]}" stop 2>/dev/null || true
+    compose stop 2>/dev/null || true
     sleep 5
-    "${DOCKER_COMPOSE_CMD[@]}" down --remove-orphans 2>/dev/null || true
+    compose down --remove-orphans 2>/dev/null || true
   fi
 
   local temp_files=(
@@ -222,7 +215,7 @@ compose_up_service() {
   local output=""
 
   msg "  Starting $service..."
-  if output="$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1)"; then
+  if output="$(compose up -d "$service" 2>&1)"; then
     if [[ "$output" == *"is up-to-date"* ]]; then
       msg "  $service is up-to-date"
     elif [[ -n "$output" ]]; then
@@ -366,7 +359,7 @@ start_stack() {
   install_vuetorrent
 
   msg "Starting Gluetun VPN container..."
-  if ! "${DOCKER_COMPOSE_CMD[@]}" up -d gluetun 2>&1; then
+  if ! compose up -d gluetun 2>&1; then
     warn "Initial Gluetun start failed"
   fi
 
@@ -436,14 +429,12 @@ start_stack() {
   services+=(caddy qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
   local service
   local qb_started=0
-  local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
-
   for service in "${services[@]}"; do
     msg "Starting $service..."
     local service_started=0
     local start_output=""
 
-    if start_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d "$service" 2>&1)"; then
+    if start_output="$(compose up -d "$service" 2>&1)"; then
       if [[ -n "$start_output" ]]; then
         while IFS= read -r line; do
           printf '  %s\n' "$line"
@@ -459,7 +450,7 @@ start_stack() {
       fi
 
       local fallback_output=""
-      if fallback_output="$("${DOCKER_COMPOSE_CMD[@]}" up -d --no-deps "$service" 2>&1)"; then
+      if fallback_output="$(compose up -d --no-deps "$service" 2>&1)"; then
         msg "  Started $service without dependency checks"
         if [[ -n "$fallback_output" ]]; then
           while IFS= read -r line; do

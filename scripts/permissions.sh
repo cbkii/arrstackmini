@@ -8,7 +8,7 @@ check_and_fix_mode() {
   [[ -e "$target" ]] || return 0
 
   local perms
-  perms="$(stat -c '%a' "$target" 2>/dev/null || stat -f '%OLp' "$target" 2>/dev/null || echo 'unknown')"
+  perms="$(stat -c '%a' "$target" 2>/dev/null || echo 'unknown')"
 
   if [[ "$perms" != "$desired" ]]; then
     warn "  ${issue_label} on $target: $perms (should be $desired)"

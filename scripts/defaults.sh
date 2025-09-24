@@ -59,6 +59,7 @@ arrstack_setup_defaults() {
   : "${REFRESH_ALIASES:=0}"
 
   LOCAL_DNS_SERVICE_ENABLED=0
+  : "$LOCAL_DNS_SERVICE_ENABLED" # referenced by other modules after defaults load
 
   : "${FORCE_REGEN_CADDY_AUTH:=0}"
   : "${CADDY_IMAGE:=caddy:2.8.4}"
@@ -102,10 +103,12 @@ arrstack_setup_defaults() {
   PROTON_PASS_VALUE=""
   OPENVPN_USER_VALUE=""
   PROTON_USER_PMP_ADDED=0
+  : "$PROTON_USER_VALUE" "$PROTON_PASS_VALUE" "$OPENVPN_USER_VALUE" "$PROTON_USER_PMP_ADDED"
 
   DOCKER_COMPOSE_CMD=()
   ARRSTACK_LOCKFILE=""
   LOG_FILE=""
+  : "${DOCKER_COMPOSE_CMD[*]}" "$ARRSTACK_LOCKFILE" "$LOG_FILE"
 
   local requested_permission_profile="${ARR_PERMISSION_PROFILE:-}"
   local permission_profile="${requested_permission_profile:-strict}"
@@ -138,12 +141,15 @@ arrstack_setup_defaults() {
     ARR_PERMISSION_PROFILE="${permission_profile}"
   fi
 
+  : "$SECRET_FILE_MODE" "$LOCK_FILE_MODE" "$NONSECRET_FILE_MODE" "$DATA_DIR_MODE"
   readonly ARR_PERMISSION_PROFILE SECRET_FILE_MODE LOCK_FILE_MODE NONSECRET_FILE_MODE DATA_DIR_MODE
 
   ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy local_dns)
+  : "${ARR_DOCKER_SERVICES[*]}"
   readonly -a ARR_DOCKER_SERVICES
 
   CYAN='\033[0;36m'
   YELLOW='\033[0;33m'
   RESET='\033[0m'
+  : "$CYAN" "$YELLOW" "$RESET"
 }

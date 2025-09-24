@@ -43,6 +43,7 @@ load_proton_credentials() {
   fi
 
   OPENVPN_USER_VALUE="$enforced"
+  : "$PROTON_USER_PMP_ADDED"
 }
 
 show_configuration_preview() {

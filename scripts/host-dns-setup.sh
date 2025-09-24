@@ -41,6 +41,12 @@ REAL="/run/systemd/resolve/resolv.conf"      # full upstreams (older dists)
 echo "[info] Backing up DNS state into ${BACKUP_DIR}"
 cp -a /etc/systemd/resolved.conf "${BACKUP_DIR}/resolved.conf.bak" 2>/dev/null || true
 cp -a "${RESOLV}" "${BACKUP_DIR}/resolv.conf.bak" 2>/dev/null || true
+if [[ -e "${STUB}" ]]; then
+  cp -a "${STUB}" "${BACKUP_DIR}/stub-resolv.conf.bak" 2>/dev/null || true
+fi
+if [[ -e "${REAL}" && "${REAL}" != "${STUB}" ]]; then
+  cp -a "${REAL}" "${BACKUP_DIR}/resolved-upstream.conf.bak" 2>/dev/null || true
+fi
 ls -l "${RESOLV}" || true
 
 echo "[info] Capturing current upstreams from systemd-resolved (if present)"
@@ -103,12 +109,38 @@ SEARCH_LINE="$(printf '%s\n' "${SEARCH_MERGED}" | paste -sd' ' -)"
 # ---- Disable systemd-resolved cleanly (free :53) ----
 # (Documented behaviour: it maintains stub file and typically symlinks /etc/resolv.conf there.)
 # Debian manpages: systemd-resolved(8), resolved.conf(5)
-echo "[info] Disabling ${RESOLVED_UNIT} (freeing port 53)"
-systemctl disable --now "${RESOLVED_UNIT}"
+echo "[info] Preparing to free port 53 from ${RESOLVED_UNIT}"
+if systemctl is-active --quiet "${RESOLVED_UNIT}"; then
+  echo "[info] Stopping ${RESOLVED_UNIT}"
+  systemctl stop "${RESOLVED_UNIT}"
+else
+  echo "[info] ${RESOLVED_UNIT} already stopped"
+fi
+
+if systemctl is-enabled --quiet "${RESOLVED_UNIT}"; then
+  echo "[info] Disabling ${RESOLVED_UNIT}"
+  systemctl disable "${RESOLVED_UNIT}"
+else
+  echo "[info] ${RESOLVED_UNIT} already disabled"
+fi
 
 # Replace /etc/resolv.conf (remove symlink if present)
 if [[ -L "${RESOLV}" ]]; then
-  echo "[info] /etc/resolv.conf is a symlink; removing"
+  target="$(readlink -f "${RESOLV}" 2>/dev/null || true)"
+  case "${target}" in
+    "${STUB}")
+      echo "[info] /etc/resolv.conf is a symlink to systemd-resolved stub (${STUB}); removing"
+      ;;
+    "${REAL}")
+      echo "[info] /etc/resolv.conf is a symlink to resolved upstreams (${REAL}); removing"
+      ;;
+    "")
+      echo "[info] /etc/resolv.conf is a symlink; removing"
+      ;;
+    *)
+      echo "[info] /etc/resolv.conf is a symlink to ${target}; removing"
+      ;;
+  esac
   rm -f "${RESOLV}"
 fi
 
