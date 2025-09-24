@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Default configuration for ARR Stack
-# Override these in arrconf/userconf.sh (git-ignored)
+# This file is sourced *before* arrconf/userconf.sh.
+# Keep assignments idempotent and avoid relying on side effects so overrides
+# behave predictably when userconf.sh runs afterwards.
+# Override these in arrconf/userconf.sh (git-ignored).
 
 # Guard helpers for shells that source these defaults alongside other scripts
 if ! declare -f arrstack_var_is_readonly >/dev/null 2>&1; then
@@ -29,7 +32,7 @@ ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
 ARR_LOG_DIR="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
 ARR_INSTALL_LOG="${ARR_INSTALL_LOG:-${ARR_LOG_DIR}/arrstack-install.log}"
 ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"
-ARRCONF_DIR="${ARRCONF_DIR:-${PWD}/arrconf}"
+ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT:-${PWD}}/arrconf}"
 
 # File/dir permissions (strict keeps secrets 600/700, collaborative loosens group access)
 if ! arrstack_var_is_readonly ARR_PERMISSION_PROFILE; then
