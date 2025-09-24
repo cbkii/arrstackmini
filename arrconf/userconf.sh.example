@@ -46,7 +46,7 @@ QBT_USER="admin"                       # Initial qBittorrent username (change af
 QBT_PASS="adminadmin"                  # Initial qBittorrent password (update immediately after install)
 GLUETUN_API_KEY=""                     # Pre-seed a Gluetun API key or leave empty to auto-generate
 QBT_DOCKER_MODS="ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest"  # Vuetorrent WebUI mod (set empty to disable)
-QBT_AUTH_WHITELIST="127.0.0.1/8,::1/128"  # CIDRs allowed to bypass the qBittorrent login prompt
+QBT_AUTH_WHITELIST="127.0.0.1/32,::1/128"  # CIDRs allowed to bypass the qBittorrent login prompt
 CADDY_BASIC_AUTH_USER="user"           # Username clients outside CADDY_LAN_CIDRS must use
 CADDY_BASIC_AUTH_HASH=""               # Bcrypt hash for the Basic Auth password (regen when empty)
 

@@ -11,6 +11,49 @@ validate_port() {
   [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
+is_private_ipv4() {
+  local ip="$1"
+
+  if ! validate_ipv4 "$ip"; then
+    return 1
+  fi
+
+  local IFS='.'
+  read -r oct1 oct2 _ _ <<<"$ip"
+
+  case "$oct1" in
+    10)
+      return 0
+      ;;
+    192)
+      [[ "$oct2" == "168" ]] && return 0
+      ;;
+    172)
+      if [[ "$oct2" =~ ^[0-9]+$ ]] && [ "$oct2" -ge 16 ] && [ "$oct2" -le 31 ]; then
+        return 0
+      fi
+      ;;
+  esac
+
+  return 1
+}
+
+lan_ipv4_subnet_cidr() {
+  local ip="$1"
+
+  if [[ -z "$ip" || "$ip" == "0.0.0.0" ]]; then
+    return 1
+  fi
+
+  if ! is_private_ipv4 "$ip"; then
+    return 1
+  fi
+
+  local IFS='.'
+  read -r oct1 oct2 oct3 _ <<<"$ip"
+  printf '%s.%s.%s.0/24' "$oct1" "$oct2" "$oct3"
+}
+
 detect_lan_ip() {
   if ! have_command ip; then
     return 1

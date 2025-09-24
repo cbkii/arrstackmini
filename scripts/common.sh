@@ -134,6 +134,68 @@ write_env_kv() {
   printf '%s=%s\n' "$key" "$value"
 }
 
+trim_string() {
+  local value="${1-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+normalize_csv() {
+  local csv="${1-}"
+  csv="${csv//$'\r'/}"
+  csv="${csv//$'\n'/,}"
+  csv="${csv//$'\t'/,}"
+
+  local -A seen=()
+  local -a ordered=()
+  local entry
+  local IFS=','
+  read -ra entries <<<"$csv"
+
+  for entry in "${entries[@]}"; do
+    entry="$(trim_string "$entry")"
+    [[ -z "$entry" ]] && continue
+    if [[ -z "${seen[$entry]+x}" ]]; then
+      seen[$entry]=1
+      ordered+=("$entry")
+    fi
+  done
+
+  local joined=""
+  for entry in "${ordered[@]}"; do
+    if [[ -z "$joined" ]]; then
+      joined="$entry"
+    else
+      joined+=",$entry"
+    fi
+  done
+
+  printf '%s' "$joined"
+}
+
+verify_single_level_env_placeholders() {
+  local file="$1"
+
+  if [[ -z "$file" || ! -f "$file" ]]; then
+    die "verify_single_level_env_placeholders requires an existing file"
+  fi
+
+  local nested=""
+
+  nested="$(awk '/\$\{[^}]*\$\{/{printf "%d:%s\n", NR, $0}' "$file" || true)"
+
+  if [[ -z "$nested" ]]; then
+    return 0
+  fi
+
+  warn "Detected unsupported nested environment placeholders while rendering ${file}"
+  warn "  Nested variable expansions:"
+  printf '%s\n' "$nested" >&2
+
+  return 1
+}
+
 portable_sed() {
   local expr="$1"
   local file="$2"

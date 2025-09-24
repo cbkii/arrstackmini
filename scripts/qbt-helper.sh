@@ -89,7 +89,23 @@ start_container() {
 
 derive_subnet() {
   if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" ]]; then
-    echo "$LAN_IP" | sed 's/\.[0-9]*$/.0\/24/'
+    local IFS='.'
+    read -r oct1 oct2 oct3 _ <<<"$LAN_IP"
+    case "$oct1" in
+      10)
+        printf '%s.%s.%s.0/24\n' "$oct1" "$oct2" "$oct3"
+        ;;
+      192)
+        if [[ "$oct2" == "168" ]]; then
+          printf '%s.%s.%s.0/24\n' "$oct1" "$oct2" "$oct3"
+        fi
+        ;;
+      172)
+        if [[ "$oct2" =~ ^[0-9]+$ ]] && [ "$oct2" -ge 16 ] && [ "$oct2" -le 31 ]; then
+          printf '%s.%s.%s.0/24\n' "$oct1" "$oct2" "$oct3"
+        fi
+        ;;
+    esac
   fi
 }
 
