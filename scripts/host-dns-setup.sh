@@ -183,7 +183,7 @@ CURL_RC=$?
 set -e
 
 if [[ "${DIG_RC}" -ne 0 ]]; then
-  echo "[warn] dig failed; check local_dns logs: docker logs -n 200 local_dns"
+  echo "[warn] dig failed; check local_dns logs: docker logs -n 200 arr_local_dns"
 fi
 if [[ "${CURL_RC}" -ne 0 ]]; then
   echo "[warn] curl HTTPS test failed; check Caddy/gluetun/ports"

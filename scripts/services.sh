@@ -83,6 +83,18 @@ install_vuetorrent() {
   msg "  ✅ VueTorrent installed successfully"
 }
 
+service_container_name() {
+  local service="$1"
+  case "$service" in
+    local_dns)
+      printf '%s' "arr_local_dns"
+      ;;
+    *)
+      printf '%s' "$service"
+      ;;
+  esac
+}
+
 safe_cleanup() {
   msg "🧹 Safely stopping existing services..."
 
@@ -363,8 +375,10 @@ show_service_status() {
 
   local service
   for service in "${services[@]}"; do
+    local container
+    container="$(service_container_name "$service")"
     local status
-    status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
+    status="$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
     printf '  %-15s: %s\n' "$service" "$status"
   done
 }
@@ -501,8 +515,10 @@ start_stack() {
   sleep 5
   local -a created_services=()
   for service in "${services[@]}"; do
+    local container
+    container="$(service_container_name "$service")"
     local status
-    status="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
+    status="$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
     if [[ "$status" == "created" ]]; then
       created_services+=("$service")
     fi
@@ -511,7 +527,7 @@ start_stack() {
   if ((${#created_services[@]} > 0)); then
     msg "Force-starting services that were stuck in 'created' state..."
     for service in "${created_services[@]}"; do
-      docker start "$service" 2>/dev/null || true
+      docker start "$(service_container_name "$service")" 2>/dev/null || true
     done
   fi
 

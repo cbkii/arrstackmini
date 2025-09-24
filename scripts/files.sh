@@ -134,13 +134,21 @@ write_env() {
     dns_host_entry="HOST_IP"
   fi
   local -a outbound_candidates=("192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12")
-  if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
-    local subnet
-    subnet="${LAN_IP%.*}.0/24"
-    outbound_candidates=("$subnet" "${outbound_candidates[@]}")
+  local lan_private_subnet=""
+  if lan_private_subnet="$(lan_ipv4_subnet_cidr "$LAN_IP" 2>/dev/null)"; then
+    outbound_candidates=("$lan_private_subnet" "${outbound_candidates[@]}")
   fi
   local gluetun_firewall_outbound
   gluetun_firewall_outbound="$(printf '%s\n' "${outbound_candidates[@]}" | sort -u | paste -sd, -)"
+  local qbt_whitelist_raw
+  qbt_whitelist_raw="${QBT_AUTH_WHITELIST:-}"
+  if [[ -z "$qbt_whitelist_raw" ]]; then
+    qbt_whitelist_raw="127.0.0.1/32,::1/128"
+  fi
+  if [[ -n "$lan_private_subnet" ]]; then
+    qbt_whitelist_raw+="${qbt_whitelist_raw:+,}${lan_private_subnet}"
+  fi
+  QBT_AUTH_WHITELIST="$(normalize_csv "$qbt_whitelist_raw")"
   local tmp
   tmp="$(mktemp "${ARR_ENV_FILE}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${ARR_ENV_FILE}"
   chmod 600 "$tmp" 2>/dev/null || true
@@ -195,6 +203,7 @@ write_env() {
     write_env_kv "QBT_USER" "$QBT_USER"
     write_env_kv "QBT_PASS" "$QBT_PASS"
     write_env_kv "QBT_DOCKER_MODS" "$QBT_DOCKER_MODS"
+    write_env_kv "QBT_AUTH_WHITELIST" "$QBT_AUTH_WHITELIST"
     printf '\n'
 
     printf '# Reverse proxy defaults\n'
@@ -294,7 +303,7 @@ services:
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
       HTTP_CONTROL_SERVER_ADDRESS: 0.0.0.0:${GLUETUN_CONTROL_PORT}
       HTTP_CONTROL_SERVER_AUTH: "apikey"
-      HTTP_CONTROL_SERVER_APIKEY: ${GLUETUN_API_KEY}
+      HTTP_CONTROL_SERVER_APIKEY: "${GLUETUN_API_KEY}"
       VPN_PORT_FORWARDING_UP_COMMAND: "/gluetun/hooks/update-qbt-port.sh {{PORTS}}"
       QBT_USER: ${QBT_USER}
       QBT_PASS: ${QBT_PASS}
@@ -349,8 +358,8 @@ YAML
     cap_add:
       - NET_ADMIN
     ports:
-      - "${LAN_IP:-0.0.0.0}:53:53/udp"
-      - "${LAN_IP:-0.0.0.0}:53:53/tcp"
+      - "${LAN_IP}:53:53/udp"
+      - "${LAN_IP}:53:53/tcp"
     command:
       - --log-facility=-
       - --no-resolv
@@ -587,6 +596,11 @@ YAML
         max-file: "2"
 YAML
     } >"$tmp"
+
+    if ! verify_single_level_env_placeholders "$tmp"; then
+      rm -f "$tmp"
+      die "Generated docker-compose.yml contains nested environment placeholders"
+    fi
 
     chmod "$NONSECRET_FILE_MODE" "$tmp" 2>/dev/null || true
     mv "$tmp" "$compose_path"
@@ -978,7 +992,8 @@ write_qbt_config() {
     rm -f "$legacy_conf"
   fi
   local auth_whitelist
-  auth_whitelist="${QBT_AUTH_WHITELIST:-127.0.0.1/32,::1/128}"
+  auth_whitelist="$(normalize_csv "${QBT_AUTH_WHITELIST:-127.0.0.1/32,::1/128}")"
+  QBT_AUTH_WHITELIST="$auth_whitelist"
   msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
 
   if [[ ! -f "$conf_file" ]]; then

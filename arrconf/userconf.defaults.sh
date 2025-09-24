@@ -100,7 +100,7 @@ QBT_PASS="${QBT_PASS:-adminadmin}"
 QBT_DOCKER_MODS="${QBT_DOCKER_MODS:-ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
 
 # Comma-separated CIDR list that can bypass the qBittorrent WebUI login
-QBT_AUTH_WHITELIST="${QBT_AUTH_WHITELIST:-127.0.0.1/8,::1/128}"
+QBT_AUTH_WHITELIST="${QBT_AUTH_WHITELIST:-127.0.0.1/32,::1/128}"
 
 # Caddy Basic Auth credentials (bcrypt hash generated automatically when empty)
 CADDY_BASIC_AUTH_USER="${CADDY_BASIC_AUTH_USER:-user}"

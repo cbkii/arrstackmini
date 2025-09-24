@@ -70,7 +70,7 @@ arrstack_setup_defaults() {
   : "${QBT_USER:=admin}"
   : "${QBT_PASS:=adminadmin}"
   : "${QBT_DOCKER_MODS:=ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest}"
-  : "${QBT_AUTH_WHITELIST:=127.0.0.1/32,127.0.0.0/8,::1/128}"
+  : "${QBT_AUTH_WHITELIST:=127.0.0.1/32,::1/128}"
 
   : "${GLUETUN_IMAGE:=qmcgaw/gluetun:v3.39.1}"
   : "${QBITTORRENT_IMAGE:=lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
