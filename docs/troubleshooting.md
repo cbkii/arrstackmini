@@ -76,11 +76,17 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
   It reads the same environment values as the installer and prints targeted hints for any conflicts it finds.【F:scripts/doctor.sh†L1-L235】
 
 ## Verify
-When issues clear, run the stack doctor checks:
+When issues clear, rerun the LAN diagnostics:
+```bash
+./scripts/doctor.sh
+```
+The script repeats the DNS, port, and HTTPS checks that the installer performs automatically.
+
+If you edited configuration files, follow up with:
 ```bash
 ./arrstack.sh --yes
 ```
-Review the summary, then browse to `https://qbittorrent.home.arpa` to confirm everything loads.
+This regenerates `.env` and restarts containers. Review the summary, then browse to `https://qbittorrent.home.arpa` to confirm everything loads.
 
 ## See also
 - [LAN DNS distribution](lan-dns.md)

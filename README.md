@@ -43,6 +43,14 @@ dig @192.168.1.50 qbittorrent.home.arpa
 ```
 You should see the Pi’s IP in the answer. If not, revisit steps 6–7.
 
+## Useful commands
+- `./arrstack.sh --rotate-api-key --yes` regenerates the Gluetun API key and writes it back to `.env`.
+- `./arrstack.sh --rotate-caddy-auth --yes` creates a new Caddy basic-auth password and saves the plaintext copy in `docker-data/caddy/credentials`.
+- `./arrstack.sh --setup-host-dns --yes` runs the host helper so Debian Bookworm frees port 53 before the installer exits.
+- `./arrstack.sh --refresh-aliases` rebuilds `.arraliases` and reloads your shell so helper commands (such as `arr.vpn status`) stay up to date.
+- `./scripts/qbt-helper.sh {show|reset|whitelist}` shows connection info, clears the qBittorrent password, or enables LAN whitelisting.
+- `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
+
 ## Docs
 - [LAN DNS distribution](docs/lan-dns.md)
 - [Host DNS helper](docs/host-dns-helper.md)

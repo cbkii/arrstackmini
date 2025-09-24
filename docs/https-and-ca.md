@@ -13,6 +13,7 @@ Caddy creates a private certificate authority (CA) for `*.home.arpa`. Importing 
    curl -o root.crt http://ca.home.arpa/root.crt
    ```
    Only the public `root.crt` file is served from `caddy/ca-pub`. Never expose the rest of the Caddy PKI directory.
+   - Already on the Pi? Run `./scripts/export-caddy-ca.sh ~/root.crt` to copy the file out of `docker-data/caddy/data` with correct permissions.
 2. **Import the certificate on your devices.**
    - **Windows:** Open **Manage user certificates → Trusted Root Certification Authorities → Certificates → Action → All Tasks → Import** and choose `root.crt`.
    - **macOS:** Open **Keychain Access**, drag `root.crt` into **System**, then double-click it and set **When using this certificate → Always Trust**.

@@ -122,7 +122,8 @@ reset_auth() {
   local cfg
   cfg=$(config_file_path)
   if [[ -f "$cfg" ]]; then
-    local backup="${cfg}.bak.$(date +%Y%m%d_%H%M%S)"
+    local backup
+    backup="${cfg}.bak.$(date +%Y%m%d_%H%M%S)"
     cp "$cfg" "$backup"
     log "  Backed up config to $backup"
     sed -i '/WebUI\\Password_PBKDF2/d' "$cfg" || true
