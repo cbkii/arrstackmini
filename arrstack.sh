@@ -114,6 +114,7 @@ main() {
   generate_api_key
   write_env
   write_compose
+  validate_compose_or_die
   write_gluetun_control_assets
   ensure_caddy_auth
   write_caddy_assets

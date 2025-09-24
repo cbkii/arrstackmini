@@ -108,6 +108,28 @@ safe_cleanup() {
     | xargs -r docker rm -f 2>/dev/null || true
 }
 
+validate_compose_or_die() {
+  local file="${COMPOSE_FILE:-${ARR_STACK_DIR}/docker-compose.yml}"
+  local log_dir="${ARR_STACK_DIR}/logs"
+  ensure_dir "$log_dir"
+  local errlog="${log_dir}/compose.err"
+
+  if ! compose -f "$file" config -q 2>"$errlog"; then
+    echo "[arrstack] Compose validation failed; see $errlog"
+    local line
+    line="$(grep -oE 'line ([0-9]+)' "$errlog" | awk '{print $2}' | tail -1 || true)"
+    if [[ -n "$line" && -r "$file" ]]; then
+      local start=$((line - 5))
+      local end=$((line + 5))
+      ((start < 1)) && start=1
+      nl -ba "$file" | sed -n "${start},${end}p"
+    fi
+    exit 1
+  fi
+
+  rm -f "$errlog"
+}
+
 update_env_image_var() {
   local var_name="$1"
   local new_value="$2"

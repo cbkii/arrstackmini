@@ -69,6 +69,7 @@ generate_api_key() {
     local existing
     existing="$(grep '^GLUETUN_API_KEY=' "$ARR_ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
     if [[ -n "$existing" ]]; then
+      existing="$(unescape_env_value_from_compose "$existing")"
       GLUETUN_API_KEY="$existing"
       msg "Using existing API key"
       return
@@ -128,206 +129,149 @@ write_env() {
   PW="$PROTON_PASS_VALUE"
 
   validate_config
-
-  local env_content
-  env_content="$({
-    printf '# Core settings\n'
-    format_env_line "VPN_TYPE" "openvpn"
-    format_env_line "PUID" "$PUID"
-    format_env_line "PGID" "$PGID"
-    format_env_line "TIMEZONE" "$TIMEZONE"
-    format_env_line "LAN_IP" "$LAN_IP"
-    format_env_line "LOCALHOST_IP" "$LOCALHOST_IP"
-    format_env_line "EXPOSE_DIRECT_PORTS" "$EXPOSE_DIRECT_PORTS"
-    printf '\n'
-
-    printf '# Local DNS\n'
-    format_env_line "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
-    format_env_line "ENABLE_LOCAL_DNS" "$ENABLE_LOCAL_DNS"
-    format_env_line "DNS_DISTRIBUTION_MODE" "$DNS_DISTRIBUTION_MODE"
-    format_env_line "UPSTREAM_DNS_1" "$UPSTREAM_DNS_1"
-    format_env_line "UPSTREAM_DNS_2" "$UPSTREAM_DNS_2"
-    printf '\n'
-
-    # Derived, so downstream tools (and developers) can reference the normalized suffix directly
-    printf '# ProtonVPN OpenVPN credentials\n'
-    format_env_line "OPENVPN_USER" "$PU"
-    format_env_line "OPENVPN_PASSWORD" "$PW"
-    printf '\n'
-
-    # Also persist for clarity (helps compose templating & external tooling)
-    format_env_line "OPENVPN_USER_ENFORCED" "$PU"
-    printf '\n'
-
-    printf '# Gluetun settings\n'
-    format_env_line "VPN_SERVICE_PROVIDER" "protonvpn"
-    format_env_line "GLUETUN_API_KEY" "$GLUETUN_API_KEY"
-    format_env_line "GLUETUN_CONTROL_PORT" "$GLUETUN_CONTROL_PORT"
-    format_env_line "SERVER_COUNTRIES" "$SERVER_COUNTRIES"
-    printf '\n'
-
-    printf '# Service ports\n'
-    format_env_line "QBT_HTTP_PORT_HOST" "$QBT_HTTP_PORT_HOST"
-    format_env_line "SONARR_PORT" "$SONARR_PORT"
-    format_env_line "RADARR_PORT" "$RADARR_PORT"
-    format_env_line "PROWLARR_PORT" "$PROWLARR_PORT"
-    format_env_line "BAZARR_PORT" "$BAZARR_PORT"
-    format_env_line "FLARESOLVERR_PORT" "$FLARESOLVERR_PORT"
-    printf '\n'
-
-    printf '# qBittorrent credentials (change in WebUI after install, then update here)\n'
-    format_env_line "QBT_USER" "$QBT_USER"
-    format_env_line "QBT_PASS" "$QBT_PASS"
-    format_env_line "QBT_DOCKER_MODS" "$QBT_DOCKER_MODS"
-    printf '\n'
-
-    printf '# Reverse proxy defaults\n'
-    format_env_line "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
-    format_env_line "CADDY_LAN_CIDRS" "$CADDY_LAN_CIDRS"
-    format_env_line "CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_USER"
-    # Store the bcrypt hash and escape dollars so Compose does not expand them
-    format_env_line "CADDY_BASIC_AUTH_HASH" "$(unescape_env_value_from_compose "$CADDY_BASIC_AUTH_HASH")"
-    printf '\n'
-
-    printf '# Paths\n'
-    format_env_line "ARR_DOCKER_DIR" "$ARR_DOCKER_DIR"
-    format_env_line "DOWNLOADS_DIR" "$DOWNLOADS_DIR"
-    format_env_line "COMPLETED_DIR" "$COMPLETED_DIR"
-    format_env_line "TV_DIR" "$TV_DIR"
-    format_env_line "MOVIES_DIR" "$MOVIES_DIR"
-    if [[ -n "${SUBS_DIR:-}" ]]; then
-      format_env_line "SUBS_DIR" "$SUBS_DIR"
-    fi
-    printf '\n'
-
-    printf '# Images\n'
-    format_env_line "GLUETUN_IMAGE" "$GLUETUN_IMAGE"
-    format_env_line "QBITTORRENT_IMAGE" "$QBITTORRENT_IMAGE"
-    format_env_line "SONARR_IMAGE" "$SONARR_IMAGE"
-    format_env_line "RADARR_IMAGE" "$RADARR_IMAGE"
-    format_env_line "PROWLARR_IMAGE" "$PROWLARR_IMAGE"
-    format_env_line "BAZARR_IMAGE" "$BAZARR_IMAGE"
-    format_env_line "FLARESOLVERR_IMAGE" "$FLARESOLVERR_IMAGE"
-    format_env_line "CADDY_IMAGE" "$CADDY_IMAGE"
-  })"
-
-  atomic_write "$ARR_ENV_FILE" "$env_content" 600
-
-}
-
-write_compose() {
-  msg "🐳 Writing docker-compose.yml"
-
-  local compose_path="${ARR_STACK_DIR}/docker-compose.yml"
-  local compose_content
-
-  LOCAL_DNS_SERVICE_ENABLED=0
-  local include_local_dns=0
-  local local_dns_block=""
-  local local_dns_state_message="Local DNS container disabled (ENABLE_LOCAL_DNS=0)"
-
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
-    include_local_dns=1
-    local_dns_state_message="Local DNS container requested"
-  fi
-
-  if ((include_local_dns)); then
-    if command -v ss >/dev/null 2>&1; then
-      if ss -tuln | grep -q ':53 ' 2>/dev/null; then
-        include_local_dns=0
-        local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
-        warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
-      fi
-    elif command -v netstat >/dev/null 2>&1; then
-      if netstat -tuln | grep -q ':53 ' 2>/dev/null; then
-        include_local_dns=0
-        local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
-        warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
-      fi
-    fi
-  fi
-
-  if ((include_local_dns)); then
-    LOCAL_DNS_SERVICE_ENABLED=1
-    local_dns_state_message="Local DNS container enabled"
-    if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
-      warn "Local DNS will bind to all interfaces (0.0.0.0:53)"
-    fi
-
-    local_dns_block="$({
-      cat <<'YAML'
-  local_dns:
-    image: 4km3/dnsmasq:2.90-r3
-    container_name: arr_local_dns
-    cap_add:
-      - NET_ADMIN
-    ports:
-      - "${LAN_IP:-0.0.0.0}:53:53/udp"
-      - "${LAN_IP:-0.0.0.0}:53:53/tcp"
-    command:
-      - --log-facility=-
-      - --no-resolv
-      - --server=${UPSTREAM_DNS_1}
-      - --server=${UPSTREAM_DNS_2}
-      - --domain-needed
-      - --bogus-priv
-      - --local-service
-      - --domain=${LAN_DOMAIN_SUFFIX}
-      - --local=/${LAN_DOMAIN_SUFFIX}/
-      - --address=/${LAN_DOMAIN_SUFFIX}/__DNS_HOST_ENTRY__
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "1m"
-        max-file: "2"
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >
-          if command -v nslookup >/dev/null 2>&1; then
-            nslookup qbittorrent.${LAN_DOMAIN_SUFFIX} 127.0.0.1 >/dev/null 2>&1;
-          elif command -v drill >/dev/null 2>&1; then
-            drill -Q qbittorrent.${LAN_DOMAIN_SUFFIX} @127.0.0.1 >/dev/null 2>&1;
-          else
-            exit 1;
-          fi
-      interval: 30s
-      timeout: 5s
-      retries: 3
-YAML
-    })"
-  fi
-
   local dns_host_entry="${LAN_IP:-0.0.0.0}"
-  if [[ "${dns_host_entry}" == "0.0.0.0" ]]; then
+  if [[ -z "$dns_host_entry" || "$dns_host_entry" == "0.0.0.0" ]]; then
     dns_host_entry="HOST_IP"
   fi
-
-  local gluetun_direct_ports_block=""
-  if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
-    gluetun_direct_ports_block="$(
-      cat <<'YAML'
-      - "${LAN_IP}:8080:8080"
-      - "${LAN_IP}:8989:8989"
-      - "${LAN_IP}:7878:7878"
-      - "${LAN_IP}:9696:9696"
-      - "${LAN_IP}:6767:6767"
-YAML
-    )"
-  fi
-
   local -a outbound_candidates=("192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12")
   if [[ -n "${LAN_IP:-}" && "$LAN_IP" != "0.0.0.0" && "$LAN_IP" == *.*.*.* ]]; then
     local subnet
     subnet="${LAN_IP%.*}.0/24"
     outbound_candidates=("$subnet" "${outbound_candidates[@]}")
   fi
-
   local gluetun_firewall_outbound
   gluetun_firewall_outbound="$(printf '%s\n' "${outbound_candidates[@]}" | sort -u | paste -sd, -)"
+  local tmp
+  tmp="$(mktemp "${ARR_ENV_FILE}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${ARR_ENV_FILE}"
+  chmod 600 "$tmp" 2>/dev/null || true
 
-  compose_content="$(
+  {
+    printf '# Core settings\n'
+    write_env_kv "VPN_TYPE" "openvpn"
+    write_env_kv "PUID" "$PUID"
+    write_env_kv "PGID" "$PGID"
+    write_env_kv "TIMEZONE" "$TIMEZONE"
+    write_env_kv "LAN_IP" "$LAN_IP"
+    write_env_kv "LOCALHOST_IP" "$LOCALHOST_IP"
+    write_env_kv "EXPOSE_DIRECT_PORTS" "$EXPOSE_DIRECT_PORTS"
+    printf '\n'
+
+    printf '# Local DNS\n'
+    write_env_kv "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
+    write_env_kv "ENABLE_LOCAL_DNS" "$ENABLE_LOCAL_DNS"
+    write_env_kv "DNS_DISTRIBUTION_MODE" "$DNS_DISTRIBUTION_MODE"
+    write_env_kv "UPSTREAM_DNS_1" "$UPSTREAM_DNS_1"
+    write_env_kv "UPSTREAM_DNS_2" "$UPSTREAM_DNS_2"
+    write_env_kv "DNS_HOST_ENTRY" "$dns_host_entry"
+    printf '\n'
+
+    printf '# ProtonVPN OpenVPN credentials\n'
+    write_env_kv "OPENVPN_USER" "$PU"
+    write_env_kv "OPENVPN_PASSWORD" "$PW"
+    printf '\n'
+
+    printf '# Derived values\n'
+    write_env_kv "OPENVPN_USER_ENFORCED" "$PU"
+    printf '\n'
+
+    printf '# Gluetun settings\n'
+    write_env_kv "VPN_SERVICE_PROVIDER" "protonvpn"
+    write_env_kv "GLUETUN_API_KEY" "$GLUETUN_API_KEY"
+    write_env_kv "GLUETUN_CONTROL_PORT" "$GLUETUN_CONTROL_PORT"
+    write_env_kv "SERVER_COUNTRIES" "$SERVER_COUNTRIES"
+    write_env_kv "GLUETUN_FIREWALL_OUTBOUND_SUBNETS" "$gluetun_firewall_outbound"
+    printf '\n'
+
+    printf '# Service ports\n'
+    write_env_kv "QBT_HTTP_PORT_HOST" "$QBT_HTTP_PORT_HOST"
+    write_env_kv "SONARR_PORT" "$SONARR_PORT"
+    write_env_kv "RADARR_PORT" "$RADARR_PORT"
+    write_env_kv "PROWLARR_PORT" "$PROWLARR_PORT"
+    write_env_kv "BAZARR_PORT" "$BAZARR_PORT"
+    write_env_kv "FLARESOLVERR_PORT" "$FLARESOLVERR_PORT"
+    printf '\n'
+
+    printf '# qBittorrent credentials (change in WebUI after install, then update here)\n'
+    write_env_kv "QBT_USER" "$QBT_USER"
+    write_env_kv "QBT_PASS" "$QBT_PASS"
+    write_env_kv "QBT_DOCKER_MODS" "$QBT_DOCKER_MODS"
+    printf '\n'
+
+    printf '# Reverse proxy defaults\n'
+    write_env_kv "CADDY_DOMAIN_SUFFIX" "$ARR_DOMAIN_SUFFIX_CLEAN"
+    write_env_kv "CADDY_LAN_CIDRS" "$CADDY_LAN_CIDRS"
+    write_env_kv "CADDY_BASIC_AUTH_USER" "$CADDY_BASIC_AUTH_USER"
+    write_env_kv "CADDY_BASIC_AUTH_HASH" "$(unescape_env_value_from_compose "$CADDY_BASIC_AUTH_HASH")"
+    printf '\n'
+
+    printf '# Paths\n'
+    write_env_kv "ARR_DOCKER_DIR" "$ARR_DOCKER_DIR"
+    write_env_kv "DOWNLOADS_DIR" "$DOWNLOADS_DIR"
+    write_env_kv "COMPLETED_DIR" "$COMPLETED_DIR"
+    write_env_kv "TV_DIR" "$TV_DIR"
+    write_env_kv "MOVIES_DIR" "$MOVIES_DIR"
+    if [[ -n "${SUBS_DIR:-}" ]]; then
+      write_env_kv "SUBS_DIR" "$SUBS_DIR"
+    fi
+    printf '\n'
+
+    printf '# Images\n'
+    write_env_kv "GLUETUN_IMAGE" "$GLUETUN_IMAGE"
+    write_env_kv "QBITTORRENT_IMAGE" "$QBITTORRENT_IMAGE"
+    write_env_kv "SONARR_IMAGE" "$SONARR_IMAGE"
+    write_env_kv "RADARR_IMAGE" "$RADARR_IMAGE"
+    write_env_kv "PROWLARR_IMAGE" "$PROWLARR_IMAGE"
+    write_env_kv "BAZARR_IMAGE" "$BAZARR_IMAGE"
+    write_env_kv "FLARESOLVERR_IMAGE" "$FLARESOLVERR_IMAGE"
+    write_env_kv "CADDY_IMAGE" "$CADDY_IMAGE"
+  } >"$tmp"
+
+  mv "$tmp" "$ARR_ENV_FILE"
+
+}
+
+write_compose() {
+    msg "🐳 Writing docker-compose.yml"
+
+    local compose_path="${ARR_STACK_DIR}/docker-compose.yml"
+    local tmp
+
+    LOCAL_DNS_SERVICE_ENABLED=0
+    local include_local_dns=0
+    local local_dns_state_message="Local DNS container disabled (ENABLE_LOCAL_DNS=0)"
+
+    if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+      include_local_dns=1
+      local_dns_state_message="Local DNS container requested"
+    fi
+
+    if ((include_local_dns)); then
+      if command -v ss >/dev/null 2>&1; then
+        if ss -tuln | grep -q ':53 ' 2>/dev/null; then
+          include_local_dns=0
+          local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
+          warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
+        fi
+      elif command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln | grep -q ':53 ' 2>/dev/null; then
+          include_local_dns=0
+          local_dns_state_message="Local DNS disabled automatically (port 53 already in use)"
+          warn "Port 53 is already in use (likely systemd-resolved). Local DNS will be disabled (LOCAL_DNS_SERVICE_ENABLED=0)."
+        fi
+      fi
+    fi
+
+    if ((include_local_dns)); then
+      LOCAL_DNS_SERVICE_ENABLED=1
+      local_dns_state_message="Local DNS container enabled"
+      if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
+        warn "Local DNS will bind to all interfaces (0.0.0.0:53)"
+      fi
+    fi
+
+    tmp="$(mktemp "${compose_path}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${compose_path}"
+    chmod "$NONSECRET_FILE_MODE" "$tmp" 2>/dev/null || true
+
     {
       cat <<'YAML'
 services:
@@ -361,7 +305,7 @@ services:
       HEALTH_VPN_DURATION_ADDITION: "10s"
       HEALTH_SUCCESS_WAIT_DURATION: "10s"
       DNS_KEEP_NAMESERVER: "off"
-      FIREWALL_OUTBOUND_SUBNETS: "__GLUETUN_FIREWALL_OUTBOUND__"
+      FIREWALL_OUTBOUND_SUBNETS: ${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}
       FIREWALL_INPUT_PORTS: "80,443,8080,8989,7878,9696,6767,8191"
       UPDATER_PERIOD: "24h"
       PUID: ${PUID}
@@ -373,7 +317,17 @@ services:
       - "${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
       - "${LAN_IP}:80:80"
       - "${LAN_IP}:443:443"
-      __GLUETUN_DIRECT_PORTS__
+YAML
+      if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
+        cat <<'YAML'
+      - "${LAN_IP}:8080:8080"
+      - "${LAN_IP}:8989:8989"
+      - "${LAN_IP}:7878:7878"
+      - "${LAN_IP}:9696:9696"
+      - "${LAN_IP}:6767:6767"
+YAML
+      fi
+      cat <<'YAML'
     healthcheck:
       test: /gluetun-entrypoint healthcheck
       interval: 30s
@@ -387,9 +341,50 @@ services:
         max-size: "1m"
         max-file: "3"
 YAML
+      if ((include_local_dns)); then
+        cat <<'YAML'
+  local_dns:
+    image: 4km3/dnsmasq:2.90-r3
+    container_name: arr_local_dns
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "${LAN_IP:-0.0.0.0}:53:53/udp"
+      - "${LAN_IP:-0.0.0.0}:53:53/tcp"
+    command:
+      - --log-facility=-
+      - --no-resolv
+      - --server=${UPSTREAM_DNS_1}
+      - --server=${UPSTREAM_DNS_2}
+      - --domain-needed
+      - --bogus-priv
+      - --local-service
+      - --domain=${LAN_DOMAIN_SUFFIX}
+      - --local=/${LAN_DOMAIN_SUFFIX}/
+      - --address=/${LAN_DOMAIN_SUFFIX}/${DNS_HOST_ENTRY}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          if command -v nslookup >/dev/null 2>&1; then
+            nslookup qbittorrent.${LAN_DOMAIN_SUFFIX} 127.0.0.1 >/dev/null 2>&1;
+          elif command -v drill >/dev/null 2>&1; then
+            drill -Q qbittorrent.${LAN_DOMAIN_SUFFIX} @127.0.0.1 >/dev/null 2>&1;
+          else
+            exit 1;
+          fi
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-      printf '%s\n' '__LOCAL_DNS_BLOCK__'
-
+YAML
+      fi
       cat <<'YAML'
   qbittorrent:
     image: ${QBITTORRENT_IMAGE}
@@ -505,7 +500,13 @@ YAML
       - ${ARR_DOCKER_DIR}/bazarr:/config
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
-__BAZARR_OPTIONAL_SUBS__
+YAML
+      if [[ -n "${SUBS_DIR:-}" ]]; then
+        cat <<'YAML'
+      - ${SUBS_DIR}:/subs
+YAML
+      fi
+      cat <<'YAML'
     depends_on:
       gluetun:
         condition: service_healthy
@@ -584,38 +585,13 @@ __BAZARR_OPTIONAL_SUBS__
       options:
         max-size: "1m"
         max-file: "2"
-
 YAML
-    }
-  )"
+    } >"$tmp"
 
-  if [[ -n "$gluetun_direct_ports_block" ]]; then
-    compose_content="${compose_content/      __GLUETUN_DIRECT_PORTS__/${gluetun_direct_ports_block}}"
-  else
-    compose_content="${compose_content//$'\n      __GLUETUN_DIRECT_PORTS__'/}"
-    compose_content="${compose_content//      __GLUETUN_DIRECT_PORTS__/}"
-  fi
+    chmod "$NONSECRET_FILE_MODE" "$tmp" 2>/dev/null || true
+    mv "$tmp" "$compose_path"
 
-  if [[ -n "$local_dns_block" ]]; then
-    compose_content="${compose_content/__LOCAL_DNS_BLOCK__/$local_dns_block}"
-  else
-    compose_content="${compose_content//$'\n__LOCAL_DNS_BLOCK__'/}"
-    compose_content="${compose_content/__LOCAL_DNS_BLOCK__/}"
-  fi
-
-  compose_content="${compose_content/__GLUETUN_FIREWALL_OUTBOUND__/$gluetun_firewall_outbound}"
-  compose_content="${compose_content/__DNS_HOST_ENTRY__/$dns_host_entry}"
-  compose_content="${compose_content//\${dns_host_entry/}/$dns_host_entry}"
-
-  local bazarr_subs_volume=""
-  if [[ -n "${SUBS_DIR:-}" ]]; then
-    printf -v bazarr_subs_volume $'      - ${SUBS_DIR}:/subs\n'
-  fi
-  compose_content="${compose_content/__BAZARR_OPTIONAL_SUBS__/${bazarr_subs_volume}}"
-
-  atomic_write "$compose_path" "$compose_content" "$NONSECRET_FILE_MODE"
-
-  msg "  Local DNS status: ${local_dns_state_message} (LOCAL_DNS_SERVICE_ENABLED=${LOCAL_DNS_SERVICE_ENABLED})"
+    msg "  Local DNS status: ${local_dns_state_message} (LOCAL_DNS_SERVICE_ENABLED=${LOCAL_DNS_SERVICE_ENABLED})"
 }
 
 write_gluetun_control_assets() {
