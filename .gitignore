@@ -3,6 +3,9 @@
 .arraliases.configured
 arrconf/proton.auth
 arrconf/userconf.sh
+arrconf/*txt
+arrconf/*md
+arrconf/*2.sh
 
 # Runtime data
 docker-data/
