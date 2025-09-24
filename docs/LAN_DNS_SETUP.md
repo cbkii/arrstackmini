@@ -1,10 +1,12 @@
-# Router setup for LAN DNS
+# LAN DNS setup guide
 
-Configure your home router so every device on the network uses your arrstack-mini host for LAN service lookups while still falling back to the public Internet when needed. These steps target beginners and use the default variables from `arrconf/userconf.defaults.sh`:
+Configure your home network so every device uses your arrstack-mini host for LAN service lookups while still falling back to the public Internet when needed. These steps target beginners and use the default variables from `arrconf/userconf.defaults.sh`:
 
 - `LAN_IP=192.168.1.50` – static IP of the Raspberry Pi running arrstack-mini.
 - `LAN_DOMAIN_SUFFIX=home.arpa` – RFC 8375 home-LAN domain used by the stack.
 - `DNS_DISTRIBUTION_MODE=router` – tells the installer and docs you are distributing DNS via router DHCP.
+
+If your router cannot advertise custom DNS servers, skip to [Unable to change router DNS?](#10-unable-to-change-router-dns) for per-device guidance.
 
 If your environment differs, substitute the equivalent values.
 

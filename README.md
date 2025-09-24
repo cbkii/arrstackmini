@@ -92,14 +92,14 @@ You can combine the first four flags as needed—for example, `./arrstack.sh --y
 - 🪪 **Helper aliases** – a rendered `.arraliases` file lands in `${ARR_STACK_DIR}` and can be sourced for `arr.vpn.*`, `arr.help`, `arr.health`, and other shortcuts.
 - ⚠️🔐 **Credentials** – the installer captures the temporary qBittorrent password from container logs and stores it as `QBT_PASS` in `.env`. The Gluetun hook authenticates with those credentials whenever the WebUI demands it, while Caddy allows LAN clients straight through and prompts non-LAN clients for the Basic Auth user recorded in `${ARR_DOCKER_DIR}/caddy/credentials`. That file (mode `0600`) contains the current username/password pair, while `.env` retains only the bcrypt hash.
 - 🛡️ **LAN auth model** – qBittorrent keeps `LocalHostAuth`, CSRF, clickjacking, and host-header protections enabled while the installer maintains a LAN whitelist so the WebUI mirrors Caddy’s “no password on LAN” stance. Sonarr, Radarr, Prowlarr, and Bazarr retain their native logins by default; rely on Caddy’s `remote_ip` matcher for the LAN bypass unless you opt into per-app tweaks manually.
-- 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` unless overridden). It binds both UDP and TCP :53 and now runs with `--local-service` to avoid serving non-LAN subnets. Choose how clients learn `${LAN_IP}` via `DNS_DISTRIBUTION_MODE` (`router` vs `per-device`), and import the Caddy CA from `${ARR_DOCKER_DIR}/caddy/ca-pub/root.crt`, fetch it via `http://ca.${LAN_DOMAIN_SUFFIX}/root.crt`, or run `./scripts/export-caddy-ca.sh` for a local copy. The CA host stays reachable over plain HTTP to avoid bootstrap loops, while HTTPS works once the root is trusted. Use `--setup-host-dns` to replace Debian Bookworm’s `systemd-resolved` stub cleanly and rebind port 53; roll back with `./scripts/host-dns-rollback.sh` if needed.
+- 🌐 **LAN DNS & TLS** – the optional `local_dns` service (enabled by default) runs dnsmasq on `${LAN_IP}`, answering for `*.${LAN_DOMAIN_SUFFIX}` on both UDP and TCP :53 while `--local-service` keeps it LAN-scoped. Set `DNS_DISTRIBUTION_MODE` to choose router or per-device distribution, follow the walkthrough in [docs/LAN_DNS_SETUP.md](docs/LAN_DNS_SETUP.md), and fetch the Caddy root CA from `${ARR_DOCKER_DIR}/caddy/ca-pub/root.crt` or `http://ca.${LAN_DOMAIN_SUFFIX}/root.crt`. Use `--setup-host-dns` (with `host-dns-rollback.sh` as the undo) when Bookworm’s `systemd-resolved` still holds port 53.
 
-## ✅ LAN DNS: choose one (set in `DNS_DISTRIBUTION_MODE`)
+## ✅ LAN DNS overview (set in `DNS_DISTRIBUTION_MODE`)
 
-`arrstack-mini` ships a dnsmasq resolver that answers `*.${LAN_DOMAIN_SUFFIX}` (`home.arpa` by default). Decide how clients learn `${LAN_IP}`:
+`arrstack-mini` ships a dnsmasq resolver that answers `*.${LAN_DOMAIN_SUFFIX}` (defaults to `home.arpa`). Choose how clients learn `${LAN_IP}`:
 
-- **`router` (recommended):** Point your router’s DHCP server at `${LAN_IP}` with a public resolver as the fallback. Follow the step-by-step checklist in [docs/ROUTER_DNS_SETUP.md](docs/ROUTER_DNS_SETUP.md) to apply the change safely; TP-Link VX230v instructions are included.[^tplink]
-- **`per-device`:** Leave the router untouched and manually set DNS=`${LAN_IP}` on key devices (Android/PC/TV). Keep Android **Private DNS** set to **Off** or **Automatic** so queries stay on the LAN.[^android]
+- **`router` (recommended):** Update your router’s DHCP DNS so the Pi is listed first with a public resolver as the fallback. The step-by-step walkthrough in [docs/LAN_DNS_SETUP.md](docs/LAN_DNS_SETUP.md) shows every screen, including TP-Link VX230v examples.
+- **`per-device`:** Leave the router untouched and set DNS=`${LAN_IP}` on important clients such as Android, PCs, and TVs. Android’s **Private DNS** must remain **Off** or **Automatic** so lookups stay on the LAN.
 
 Set your preference in `arrconf/userconf.sh`:
 
@@ -107,45 +107,33 @@ Set your preference in `arrconf/userconf.sh`:
 DNS_DISTRIBUTION_MODE=router    # or per-device
 ```
 
+Read [docs/LAN_DNS_SETUP.md](docs/LAN_DNS_SETUP.md) for the full checklist, troubleshooting tips, and per-device fallback.
+
 ### Why `home.arpa`
 
-The stack defaults to `home.arpa`, the IETF special-use domain for residential networks, so queries never escape to the public Internet.[^rfc8375]
+`home.arpa` is reserved for residential networks, which prevents accidental leakage to public resolvers and avoids clashes with `.local` mDNS naming.
 
 ### Host DNS helper (Bookworm)
 
-Debian Bookworm ships `systemd-resolved`, which binds 127.0.0.53 and symlinks `/etc/resolv.conf`. Run:
-
-```bash
-./scripts/host-dns-setup.sh
-```
-
-to back up the stub, disable the service non-destructively, and write a static resolver that points at `${LAN_IP}` plus validated upstreams. Restore the previous state any time with `./scripts/host-dns-rollback.sh`. Background on the stub resolver is covered in the resolved.conf man page and community explanations.[^resolvconf]
+Debian Bookworm enables `systemd-resolved`, binding 127.0.0.53 and managing `/etc/resolv.conf`. Run `./scripts/host-dns-setup.sh` to back up the stub, disable the listener cleanly, and write a static resolver that points at `${LAN_IP}` plus the upstream pair. Restore the original state any time with `./scripts/host-dns-rollback.sh`.
 
 ### CA bootstrap
 
-The installer copies Caddy’s public root certificate into `${ARR_DOCKER_DIR}/caddy/ca-pub/root.crt` and serves it from `http://ca.${LAN_DOMAIN_SUFFIX}/root.crt`. Only the public root is exposed; private PKI material remains inside `/data/caddy/pki/authorities/local` within the container.[^caddy]
+The installer copies Caddy’s public root certificate into `${ARR_DOCKER_DIR}/caddy/ca-pub/root.crt` and serves it from `http://ca.${LAN_DOMAIN_SUFFIX}/root.crt`. Only the public root is exposed; private PKI material stays inside the container.
 
 ### Risk mitigations / things to watch
 
-- **Port 53 conflicts:** `scripts/doctor.sh` flags listeners such as `systemd-resolved` and recommends running the host helper.
-- **UDP *and* TCP DNS:** dnsmasq listens on both transports per RFC 5966, and the doctor probes both query types.[^rfc5966]
-- **Scope restriction:** `--local-service` keeps dnsmasq from answering requests routed in from outside the LAN.[^dnsmasq]
-- **Android Private DNS:** Hostname mode bypasses LAN resolvers; leave it Off/Automatic when using `per-device` mode.[^android]
-
-[^tplink]: [How to change DNS settings on TP-Link ISP-Customized Modems/Routers](https://www.tp-link.com/au/support/faq/4369/)
-[^android]: [How to Enable Private DNS on Android Devices?](https://www.geeksforgeeks.org/android/how-to-enable-private-dns-on-android/)
-[^rfc8375]: [RFC 8375 – Special-Use Domain 'home.arpa.'](https://datatracker.ietf.org/doc/html/rfc8375)
-[^resolvconf]: [Why does /etc/resolv.conf point at 127.0.0.53?](https://unix.stackexchange.com/questions/612416/why-does-etc-resolv-conf-point-at-127-0-0-53)
-[^caddy]: [Caddy documentation – Local PKI](https://caddyserver.com/docs/modules/pki)
-[^rfc5966]: [RFC 5966 – DNS Transport over TCP](https://www.rfc-editor.org/rfc/rfc5966)
-[^dnsmasq]: [dnsmasq(8) Manual](https://dnsmasq.org/docs/dnsmasq-man.html)
+- **Port 53 conflicts:** `scripts/doctor.sh` warns when another service (such as `systemd-resolved`) owns the port and points to the host helper.
+- **UDP and TCP coverage:** dnsmasq listens on both transports and the doctor script probes each mode.
+- **LAN-only scope:** `--local-service` and binding to `${LAN_IP}` keep the resolver limited to local clients.
+- **Android Private DNS:** Hostname mode forces DNS-over-TLS and bypasses your LAN resolver. Leave it Off/Automatic when running in `per-device` mode.
 
 ### First-time checklist
 After `./arrstack.sh` (or `./arrstack.sh --yes` when automating) finishes:
 
 1. **Change the qBittorrent password.** Log in with the credentials stored in `.env` (`QBT_USER`/`QBT_PASS`), update them in Settings → WebUI, then mirror the new values in `.env`.
 2. **Rotate the Caddy Basic Auth credentials.** Run `./arrstack.sh --rotate-caddy-auth` (or set `FORCE_REGEN_CADDY_AUTH=1 ./arrstack.sh --yes`) to mint a fresh username/password pair. The plaintext is written to `${ARR_DOCKER_DIR}/caddy/credentials`, and the bcrypt hash is saved to `.env`. Prefer manual control? You can still generate a hash yourself with `docker run --rm caddy caddy hash-password --plaintext 'yourpass'` and update `.env` accordingly.
-3. **Decide how LAN DNS resolves the stack.** Leave `ENABLE_LOCAL_DNS=1`, pick `DNS_DISTRIBUTION_MODE=router` to advertise `${LAN_IP}` via DHCP, or choose `per-device` and configure key clients manually (see [LAN DNS options](#-lan-dns-choose-one-set-in-dns_distribution_mode)). Disabling local DNS still works—add `/etc/hosts` entries that map each service (`qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc.) to `LAN_IP`.
+3. **Decide how LAN DNS resolves the stack.** Leave `ENABLE_LOCAL_DNS=1`, pick `DNS_DISTRIBUTION_MODE=router` to advertise `${LAN_IP}` via DHCP, or choose `per-device` and configure key clients manually (see [LAN DNS overview](#-lan-dns-overview-set-in-dns_distribution_mode)). Disabling local DNS still works—add `/etc/hosts` entries that map each service (`qbittorrent.${CADDY_DOMAIN_SUFFIX}`, `sonarr.${CADDY_DOMAIN_SUFFIX}`, etc.) to `LAN_IP`.
 4. **Set a fixed `LAN_IP`.** Edit `arrconf/userconf.sh` if the summary warned about `0.0.0.0` exposure.
 5. **Reload aliases.** Run `./arrstack.sh --refresh-aliases` to regenerate the helper file and reload your shell (or `source ${ARR_STACK_DIR}/.arraliases` manually) to gain `arr.vpn.status`, `arr.help`, `arr.logs`, and other useful aliased quick commands.
 6. **Verify VPN status.** `docker logs gluetun --tail 100` should show a healthy tunnel and forwarded port.
