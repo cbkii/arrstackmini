@@ -176,7 +176,7 @@ report_port() {
 test_lan_connectivity() {
   echo "[doctor] Testing LAN accessibility..."
 
-  if [[ -z "$LAN_IP" || "$LAN_IP" == "0.0.0.0" ]]; then
+  if [[ -z "${LAN_IP}" || "${LAN_IP}" == "0.0.0.0" ]]; then
     echo "[doctor][warn] LAN_IP unset or 0.0.0.0; skipping LAN connectivity checks."
     return
   fi
@@ -248,34 +248,34 @@ else
 fi
 
 echo "[doctor] Checking host reachability"
-if [[ -z "$LAN_IP" || "$LAN_IP" == "0.0.0.0" ]]; then
+if [[ -z "${LAN_IP}" || "${LAN_IP}" == "0.0.0.0" ]]; then
   echo "[doctor][warn] LAN_IP is unset or 0.0.0.0; skipping ping check."
 elif have_command ping; then
-  if ping -c 1 -W 1 "$LAN_IP" >/dev/null 2>&1; then
-    echo "[doctor][ok] Host responded to ping at $LAN_IP"
+  if ping -c 1 -W 1 "${LAN_IP}" >/dev/null 2>&1; then
+    echo "[doctor][ok] Host responded to ping at ${LAN_IP}"
   else
-    echo "[doctor][warn] Host did not respond to ping at $LAN_IP"
+    echo "[doctor][warn] Host did not respond to ping at ${LAN_IP}"
   fi
 else
   echo "[doctor][warn] 'ping' command not found; skipping reachability test."
 fi
 
-if [[ -z "$LAN_IP" || "$LAN_IP" == "0.0.0.0" ]]; then
+if [[ -z "${LAN_IP}" || "${LAN_IP}" == "0.0.0.0" ]]; then
   echo "[doctor][warn] Skipping LAN port checks because LAN_IP is not set to a specific address."
 else
-  report_port "Caddy HTTP" tcp "$LAN_IP" 80
-  report_port "Caddy HTTPS" tcp "$LAN_IP" 443
+  report_port "Caddy HTTP" tcp "${LAN_IP}" 80
+  report_port "Caddy HTTPS" tcp "${LAN_IP}" 443
 
   if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
-    report_port "Local DNS" udp "$LAN_IP" 53
-    report_port "Local DNS" tcp "$LAN_IP" 53
+    report_port "Local DNS" udp "${LAN_IP}" 53
+    report_port "Local DNS" tcp "${LAN_IP}" 53
   else
     echo "[doctor][info] Skipping port 53 checks because local DNS is disabled."
   fi
 fi
 
-if [[ -n "$LOCALHOST_IP" ]]; then
-  report_port "Gluetun control" tcp "$LOCALHOST_IP" "$GLUETUN_CONTROL_PORT"
+if [[ -n "${LOCALHOST_IP}" ]]; then
+  report_port "Gluetun control" tcp "${LOCALHOST_IP}" "${GLUETUN_CONTROL_PORT}"
 fi
 
 if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
@@ -317,7 +317,7 @@ if ! have_command curl; then
   echo "[doctor][warn] 'curl' command not found; skipping HTTPS probe."
 else
   curl_args=(-k --silent --max-time 5)
-  if [[ -n "$LAN_IP" && "$LAN_IP" != "0.0.0.0" ]]; then
+  if [[ -n "${LAN_IP}" && "${LAN_IP}" != "0.0.0.0" ]]; then
     curl_args+=(--resolve "qbittorrent.${SUFFIX}:443:${LAN_IP}" --resolve "qbittorrent.${SUFFIX}:80:${LAN_IP}")
   fi
   if curl "${curl_args[@]}" "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
@@ -329,7 +329,7 @@ fi
 
 test_lan_connectivity
 
-case "$DNS_DISTRIBUTION_MODE" in
+case "${DNS_DISTRIBUTION_MODE}" in
   router)
     echo "[doctor][info] DNS distribution mode 'router': set DHCP Option 6 (DNS server) on your router to ${LAN_IP}."
     ;;

@@ -88,9 +88,9 @@ preflight() {
 
   install_missing
 
-  if [[ -f "$ARR_ENV_FILE" ]]; then
+  if [[ -f "${ARR_ENV_FILE}" ]]; then
     local existing_openvpn_user=""
-    existing_openvpn_user="$(grep '^OPENVPN_USER=' "$ARR_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
+    existing_openvpn_user="$(grep '^OPENVPN_USER=' "${ARR_ENV_FILE}" | head -n1 | cut -d= -f2- | tr -d '\r' || true)"
     if [[ -n "$existing_openvpn_user" ]]; then
       local existing_unescaped
       existing_unescaped="$(unescape_env_value_from_compose "$existing_openvpn_user")"
@@ -102,7 +102,7 @@ preflight() {
 
   show_configuration_preview
 
-  if [[ "$ASSUME_YES" != 1 ]]; then
+  if [[ "${ASSUME_YES}" != 1 ]]; then
     local response=""
 
     warn "Continue with ProtonVPN OpenVPN setup? [y/N]: "

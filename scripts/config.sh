@@ -73,14 +73,14 @@ show_configuration_preview() {
 
   local gluetun_api_key_display
   if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
-    gluetun_api_key_display="$(obfuscate_sensitive "$GLUETUN_API_KEY")"
+    gluetun_api_key_display="$(obfuscate_sensitive "${GLUETUN_API_KEY}")"
   else
     gluetun_api_key_display="(will be generated during setup)"
   fi
 
   local lan_ip_display
   if [[ -n "${LAN_IP:-}" ]]; then
-    lan_ip_display="$LAN_IP"
+    lan_ip_display="${LAN_IP}"
   else
     lan_ip_display="(binds to 0.0.0.0 by default)"
   fi
@@ -135,15 +135,15 @@ CONFIG
 
 validate_config() {
   if [ -n "${LAN_IP:-}" ] && [ "${LAN_IP}" != "0.0.0.0" ]; then
-    validate_ipv4 "$LAN_IP" || die "Invalid LAN_IP: ${LAN_IP}"
+    validate_ipv4 "${LAN_IP}" || die "Invalid LAN_IP: ${LAN_IP}"
   fi
-  validate_port "$GLUETUN_CONTROL_PORT" || die "Invalid GLUETUN_CONTROL_PORT: ${GLUETUN_CONTROL_PORT}"
-  validate_port "$QBT_HTTP_PORT_HOST" || die "Invalid QBT_HTTP_PORT_HOST: ${QBT_HTTP_PORT_HOST}"
-  validate_port "$SONARR_PORT" || die "Invalid SONARR_PORT: ${SONARR_PORT}"
-  validate_port "$RADARR_PORT" || die "Invalid RADARR_PORT: ${RADARR_PORT}"
-  validate_port "$PROWLARR_PORT" || die "Invalid PROWLARR_PORT: ${PROWLARR_PORT}"
-  validate_port "$BAZARR_PORT" || die "Invalid BAZARR_PORT: ${BAZARR_PORT}"
-  validate_port "$FLARESOLVERR_PORT" || die "Invalid FLARESOLVERR_PORT: ${FLARESOLVERR_PORT}"
+  validate_port "${GLUETUN_CONTROL_PORT}" || die "Invalid GLUETUN_CONTROL_PORT: ${GLUETUN_CONTROL_PORT}"
+  validate_port "${QBT_HTTP_PORT_HOST}" || die "Invalid QBT_HTTP_PORT_HOST: ${QBT_HTTP_PORT_HOST}"
+  validate_port "${SONARR_PORT}" || die "Invalid SONARR_PORT: ${SONARR_PORT}"
+  validate_port "${RADARR_PORT}" || die "Invalid RADARR_PORT: ${RADARR_PORT}"
+  validate_port "${PROWLARR_PORT}" || die "Invalid PROWLARR_PORT: ${PROWLARR_PORT}"
+  validate_port "${BAZARR_PORT}" || die "Invalid BAZARR_PORT: ${BAZARR_PORT}"
+  validate_port "${FLARESOLVERR_PORT}" || die "Invalid FLARESOLVERR_PORT: ${FLARESOLVERR_PORT}"
 
   validate_proton_creds "$PU" "$PW" || die "Invalid ProtonVPN credentials format"
 }

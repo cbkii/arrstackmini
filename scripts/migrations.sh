@@ -13,14 +13,14 @@ run_one_time_migrations() {
     fi
   fi
 
-  if [[ -f "$ARR_ENV_FILE" ]]; then
+  if [[ -f "${ARR_ENV_FILE}" ]]; then
     local env_backup_created=0
     local env_backup_path=""
 
     ensure_env_backup() {
       if ((env_backup_created == 0)); then
         env_backup_path="${ARR_ENV_FILE}.bak.$(date +%s)"
-        if cp "$ARR_ENV_FILE" "$env_backup_path" 2>/dev/null; then
+        if cp "${ARR_ENV_FILE}" "$env_backup_path" 2>/dev/null; then
           chmod 600 "$env_backup_path" 2>/dev/null || true
           warn "Backed up existing .env to ${env_backup_path} before applying migrations"
           env_backup_created=1
@@ -32,7 +32,7 @@ run_one_time_migrations() {
 
     local existing_line existing_value existing_unescaped fixed_value escaped_fixed sed_value
 
-    existing_line="$(grep '^OPENVPN_USER=' "$ARR_ENV_FILE" | head -n1 || true)"
+    existing_line="$(grep '^OPENVPN_USER=' "${ARR_ENV_FILE}" | head -n1 || true)"
     if [[ -n "$existing_line" ]]; then
       existing_value="${existing_line#OPENVPN_USER=}"
       existing_unescaped="$(unescape_env_value_from_compose "$existing_value")"
@@ -41,12 +41,12 @@ run_one_time_migrations() {
         ensure_env_backup
         escaped_fixed="$(escape_env_value_for_compose "$fixed_value")"
         sed_value="$(escape_sed_replacement "$escaped_fixed")"
-        portable_sed "s|^OPENVPN_USER=.*$|OPENVPN_USER=${sed_value}|" "$ARR_ENV_FILE"
+        portable_sed "s|^OPENVPN_USER=.*$|OPENVPN_USER=${sed_value}|" "${ARR_ENV_FILE}"
         warn "OPENVPN_USER was missing '+pmp'; updated automatically in ${ARR_ENV_FILE}"
       fi
     fi
 
-    existing_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "$ARR_ENV_FILE" | head -n1 || true)"
+    existing_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "${ARR_ENV_FILE}" | head -n1 || true)"
     if [[ -n "$existing_line" ]]; then
       existing_value="${existing_line#CADDY_BASIC_AUTH_HASH=}"
       existing_unescaped="$(unescape_env_value_from_compose "$existing_value")"
@@ -54,7 +54,7 @@ run_one_time_migrations() {
       if [[ "$existing_value" != "$escaped_fixed" ]]; then
         ensure_env_backup
         sed_value="$(escape_sed_replacement "$escaped_fixed")"
-        portable_sed "s|^CADDY_BASIC_AUTH_HASH=.*$|CADDY_BASIC_AUTH_HASH=${sed_value}|" "$ARR_ENV_FILE"
+        portable_sed "s|^CADDY_BASIC_AUTH_HASH=.*$|CADDY_BASIC_AUTH_HASH=${sed_value}|" "${ARR_ENV_FILE}"
         warn "Escaped dollar signs in CADDY_BASIC_AUTH_HASH for Docker Compose compatibility"
       fi
     fi

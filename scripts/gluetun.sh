@@ -113,7 +113,7 @@ gluetun_public_ip_location() {
   )
 }
 
-gluetun_public_ip_summary() { 
+gluetun_public_ip_summary() {
   local payload="$1"
 
   if ! gluetun_public_ip_details "$payload"; then

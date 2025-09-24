@@ -247,13 +247,13 @@ persist_env_var() {
   local escaped_value
   escaped_value="$(escape_env_value_for_compose "$value")"
 
-  if [ -f "$ARR_ENV_FILE" ]; then
-    if grep -q "^${key}=" "$ARR_ENV_FILE"; then
+  if [ -f "${ARR_ENV_FILE}" ]; then
+    if grep -q "^${key}=" "${ARR_ENV_FILE}"; then
       local escaped
       escaped="$(escape_sed_replacement "$escaped_value")"
-      portable_sed "s/^${key}=.*/${key}=${escaped}/" "$ARR_ENV_FILE"
+      portable_sed "s/^${key}=.*/${key}=${escaped}/" "${ARR_ENV_FILE}"
     else
-      printf '%s' "$(format_env_line "$key" "$value")" >>"$ARR_ENV_FILE"
+      printf '%s' "$(format_env_line "$key" "$value")" >>"${ARR_ENV_FILE}"
     fi
   fi
 }

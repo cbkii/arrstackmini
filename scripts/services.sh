@@ -86,17 +86,17 @@ install_vuetorrent() {
 safe_cleanup() {
   msg "🧹 Safely stopping existing services..."
 
-  if [[ -f "$ARR_STACK_DIR/docker-compose.yml" ]]; then
+  if [[ -f "${ARR_STACK_DIR}/docker-compose.yml" ]]; then
     compose stop 2>/dev/null || true
     sleep 5
     compose down --remove-orphans 2>/dev/null || true
   fi
 
   local temp_files=(
-    "$ARR_DOCKER_DIR/gluetun/forwarded_port"
-    "$ARR_DOCKER_DIR/gluetun/forwarded_port.json"
-    "$ARR_DOCKER_DIR/gluetun/port-forwarding.json"
-    "$ARR_DOCKER_DIR/qbittorrent/qBittorrent/BT_backup/.cleaning"
+    "${ARR_DOCKER_DIR}/gluetun/forwarded_port"
+    "${ARR_DOCKER_DIR}/gluetun/forwarded_port.json"
+    "${ARR_DOCKER_DIR}/gluetun/port-forwarding.json"
+    "${ARR_DOCKER_DIR}/qbittorrent/qBittorrent/BT_backup/.cleaning"
   )
 
   local file
@@ -118,8 +118,8 @@ update_env_image_var() {
 
   printf -v "$var_name" '%s' "$new_value"
 
-  if [[ -f "$ARR_ENV_FILE" ]] && grep -q "^${var_name}=" "$ARR_ENV_FILE"; then
-    portable_sed "s|^${var_name}=.*|${var_name}=${new_value}|" "$ARR_ENV_FILE"
+  if [[ -f "${ARR_ENV_FILE}" ]] && grep -q "^${var_name}=" "${ARR_ENV_FILE}"; then
+    portable_sed "s|^${var_name}=.*|${var_name}=${new_value}|" "${ARR_ENV_FILE}"
   fi
 }
 
@@ -235,7 +235,7 @@ compose_up_service() {
 }
 
 sync_qbt_password_from_logs() {
-  if [[ "$QBT_PASS" != "adminadmin" ]]; then
+  if [[ "${QBT_PASS}" != "adminadmin" ]]; then
     return
   fi
 
@@ -247,7 +247,7 @@ sync_qbt_password_from_logs() {
     detected="$(docker logs qbittorrent 2>&1 | grep -i "temporary password" | tail -1 | sed 's/.*temporary password[^:]*: *//' | awk '{print $1}' || true)"
     if [[ -n "$detected" ]]; then
       QBT_PASS="$detected"
-      persist_env_var QBT_PASS "$QBT_PASS"
+      persist_env_var QBT_PASS "${QBT_PASS}"
       msg "  Saved qBittorrent temporary password to .env (QBT_PASS)"
       return
     fi
@@ -350,7 +350,7 @@ show_service_status() {
 start_stack() {
   msg "🚀 Starting services"
 
-  cd "$ARR_STACK_DIR" || die "Failed to change to ${ARR_STACK_DIR}"
+  cd "${ARR_STACK_DIR}" || die "Failed to change to ${ARR_STACK_DIR}"
 
   safe_cleanup
 

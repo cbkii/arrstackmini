@@ -73,8 +73,8 @@ verify_permissions() {
     fi
   done
 
-  if [[ -d "$ARRCONF_DIR" ]]; then
-    if ! check_and_fix_mode "$ARRCONF_DIR" 700 "Loose permissions"; then
+  if [[ -d "${ARRCONF_DIR}" ]]; then
+    if ! check_and_fix_mode "${ARRCONF_DIR}" 700 "Loose permissions"; then
       ((issues++))
     fi
   fi

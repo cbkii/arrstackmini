@@ -34,12 +34,12 @@ configure_local_dns_entries() {
     return 0
   fi
 
-  if ! ip_assigned "$LAN_IP"; then
+  if ! ip_assigned "${LAN_IP}"; then
     warn "LAN_IP ${LAN_IP} is not assigned on this host; skipping local DNS helper"
     return 0
   fi
 
-  if ! "$helper_script" "$ARR_DOMAIN_SUFFIX_CLEAN" "$LAN_IP"; then
+  if ! "$helper_script" "$ARR_DOMAIN_SUFFIX_CLEAN" "${LAN_IP}"; then
     local exit_code=$?
     if ((exit_code == 3)); then
       warn "Local DNS helper refused to update hosts because LAN_IP is 0.0.0.0; provide a valid address and rerun."
@@ -64,7 +64,7 @@ run_host_dns_setup() {
     return 0
   fi
 
-  if ! ip_assigned "$LAN_IP"; then
+  if ! ip_assigned "${LAN_IP}"; then
     warn "Cannot run --setup-host-dns automatically: LAN_IP ${LAN_IP} is not assigned on this host"
     warn "Verify the address with 'ip -4 addr show' or remove LAN_IP to auto-detect."
     return 0
@@ -85,7 +85,7 @@ run_host_dns_setup() {
   msg "🔧 Running host DNS setup helper (--setup-host-dns)"
 
   if (
-    cd "$ARR_STACK_DIR" 2>/dev/null \
+    cd "${ARR_STACK_DIR}" 2>/dev/null \
       && LAN_IP="${LAN_IP}" \
         LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
         UPSTREAM_DNS_1="${UPSTREAM_DNS_1}" \

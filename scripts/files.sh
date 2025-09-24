@@ -605,7 +605,7 @@ YAML
 
   compose_content="${compose_content/__GLUETUN_FIREWALL_OUTBOUND__/$gluetun_firewall_outbound}"
   compose_content="${compose_content/__DNS_HOST_ENTRY__/$dns_host_entry}"
-  compose_content="${compose_content//\${dns_host_entry}/$dns_host_entry}"
+  compose_content="${compose_content//\${dns_host_entry/}/$dns_host_entry}"
 
   local bazarr_subs_volume=""
   if [[ -n "${SUBS_DIR:-}" ]]; then
