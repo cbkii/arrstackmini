@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
-# Copy to arrconf/userconf.sh and edit as needed, overrides defaults.
+# Copy to arrconf/userconf.sh and edit as needed. Values here override the
+# defaults from arrconf/userconf.defaults.sh, which loads first.
 
 # --- Stack paths ---
 ARR_BASE="${HOME}/srv"                 # Root directory for generated stack files
 ARR_STACK_DIR="${ARR_BASE}/arrstack"  # Location for docker-compose.yml, scripts, and aliases
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"  # Path to the generated .env secrets file
 ARR_DOCKER_DIR="${ARR_BASE}/docker-data"  # Docker volumes and persistent data storage
-# ARRCONF_DIR="${PWD}/arrconf"         # Uncomment to move Proton credentials outside the repo tree
+# ARRCONF_DIR="${HOME}/.config/arrstack"  # Optional: relocate Proton creds outside the repo
 
 # --- Permissions ---
 ARR_PERMISSION_PROFILE="strict"        # strict keeps secrets 600/700, collaborative loosens group access
@@ -44,7 +45,7 @@ EXPOSE_DIRECT_PORTS="0"                # Publish raw app ports on the LAN alongs
 QBT_USER="admin"                       # Initial qBittorrent username (change after first login)
 QBT_PASS="adminadmin"                  # Initial qBittorrent password (update immediately after install)
 GLUETUN_API_KEY=""                     # Pre-seed a Gluetun API key or leave empty to auto-generate
-# QBT_DOCKER_MODS="ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest"  # Alternate qBittorrent WebUI mod image
+QBT_DOCKER_MODS="ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest"  # Vuetorrent WebUI mod (set empty to disable)
 QBT_AUTH_WHITELIST="127.0.0.1/8,::1/128"  # CIDRs allowed to bypass the qBittorrent login prompt
 CADDY_BASIC_AUTH_USER="user"           # Username clients outside CADDY_LAN_CIDRS must use
 CADDY_BASIC_AUTH_HASH=""               # Bcrypt hash for the Basic Auth password (regen when empty)
