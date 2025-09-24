@@ -48,6 +48,7 @@ You should see the Pi’s IP in the answer. If not, revisit steps 6–7.
 - [Host DNS helper](docs/host-dns-helper.md)
 - [Local HTTPS and CA trust](docs/https-and-ca.md)
 - [Service overview](docs/services.md)
+- [Script reference](docs/script-reference.md)
 - [Config reference](docs/config.md)
 - [Router configuration examples](docs/router-examples.md)
 - [Security notes](docs/security-notes.md)

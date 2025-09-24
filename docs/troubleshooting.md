@@ -68,6 +68,13 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
   ```
   The command should return your Proton exit IP.
 
+### Symptom: Unsure which component failed
+- **Fix:** Run the bundled doctor script for a full set of port, DNS, HTTPS, and LAN reachability checks.
+  ```bash
+  ./scripts/doctor.sh
+  ```
+  It reads the same environment values as the installer and prints targeted hints for any conflicts it finds.【F:scripts/doctor.sh†L1-L235】
+
 ## Verify
 When issues clear, run the stack doctor checks:
 ```bash
