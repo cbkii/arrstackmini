@@ -918,8 +918,7 @@ write_caddy_assets() {
     printf '    }\n'
     printf '}\n\n'
 
-    printf 'ca.%s {\n' "$domain_suffix"
-    printf '    auto_https disable_redirects\n'
+    printf 'http://ca.%s {\n' "$domain_suffix"
     printf '    root * /ca-pub\n'
     printf '    file_server\n'
     printf '    # Serve the public root over HTTP to avoid bootstrap loops\n'
