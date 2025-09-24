@@ -34,6 +34,7 @@ SERVER_COUNTRIES="Switzerland,Iceland,Romania,Czech Republic,Netherlands"  # Pro
 PVPN_ROTATE_COUNTRIES="${SERVER_COUNTRIES},France,Germany"  # Optional rotation order for arr.vpn switch (always includes SERVER_COUNTRIES)
 GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API
 ENABLE_LOCAL_DNS="1"                   # Enable the bundled dnsmasq container on LAN_IP
+DNS_DISTRIBUTION_MODE="router"         # router (DHCP Option 6) or per-device DNS settings
 UPSTREAM_DNS_1="1.1.1.1"               # First upstream resolver when local DNS is enabled
 UPSTREAM_DNS_2="1.0.0.1"               # Second upstream resolver when local DNS is enabled
 CADDY_LAN_CIDRS="127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # Clients allowed to skip Caddy auth

@@ -67,6 +67,11 @@ UPSTREAM_DNS_2="${UPSTREAM_DNS_2:-1.0.0.1}"
 # Enable internal local DNS resolver service
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
 
+# How LAN clients learn the resolver address
+#   router     – configure DHCP Option 6 on your router to ${LAN_IP}
+#   per-device – leave router DNS untouched and set DNS=${LAN_IP} on important clients
+DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE:-router}"
+
 # Reverse proxy hostnames (Caddy defaults to LAN suffix when unset)
 CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX:-${LAN_DOMAIN_SUFFIX}}"
 CADDY_LAN_CIDRS="${CADDY_LAN_CIDRS:-127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"

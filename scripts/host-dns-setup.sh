@@ -25,6 +25,7 @@ LAN_IP="${LAN_IP:-192.168.1.50}"
 SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}" # RFC 8375 special-use domain
 FALLBACK1="${UPSTREAM_DNS_1:-1.1.1.1}"
 FALLBACK2="${UPSTREAM_DNS_2:-1.0.0.1}"
+MODE="${DNS_DISTRIBUTION_MODE:-router}"
 
 # ---- Paths & backups ----
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -157,4 +158,8 @@ if [[ "${CURL_RC}" -ne 0 ]]; then
 fi
 
 echo "[done] Host DNS takeover complete. Backups in ${BACKUP_DIR}"
-echo "[hint] Router DHCP: set DNS server = ${LAN_IP} so LAN clients use local DNS automatically."
+if [[ "$MODE" == "per-device" ]]; then
+  echo "[hint] Per-device DNS: set DNS=${LAN_IP} on important clients and disable custom Private DNS on Android."
+else
+  echo "[hint] Router DHCP: set DNS server = ${LAN_IP} so LAN clients use local DNS automatically."
+fi

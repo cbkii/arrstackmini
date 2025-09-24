@@ -145,6 +145,7 @@ write_env() {
     printf '# Local DNS\n'
     format_env_line "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
     format_env_line "ENABLE_LOCAL_DNS" "$ENABLE_LOCAL_DNS"
+    format_env_line "DNS_DISTRIBUTION_MODE" "$DNS_DISTRIBUTION_MODE"
     format_env_line "UPSTREAM_DNS_1" "$UPSTREAM_DNS_1"
     format_env_line "UPSTREAM_DNS_2" "$UPSTREAM_DNS_2"
     printf '\n'
@@ -354,6 +355,7 @@ YAML
       - --server=${UPSTREAM_DNS_2}
       - --domain-needed
       - --bogus-priv
+      - --local-service
       - --domain=${LAN_DOMAIN_SUFFIX}
       - --local=/${LAN_DOMAIN_SUFFIX}/
       - --address=/${LAN_DOMAIN_SUFFIX}/__DNS_HOST_ENTRY__
@@ -547,6 +549,7 @@ __BAZARR_OPTIONAL_SUBS__
       - ${ARR_DOCKER_DIR}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${ARR_DOCKER_DIR}/caddy/data:/data
       - ${ARR_DOCKER_DIR}/caddy/config:/config
+      - ${ARR_DOCKER_DIR}/caddy/ca-pub:/ca-pub:ro
     depends_on:
       gluetun:
         condition: service_healthy
@@ -773,6 +776,60 @@ ensure_caddy_auth() {
   fi
 }
 
+sync_caddy_ca_public_copy() {
+  local wait_attempts=1
+  local quiet=0
+
+  while (($#)); do
+    case "$1" in
+      --wait)
+        wait_attempts=10
+        ;;
+      --quiet)
+        quiet=1
+        ;;
+    esac
+    shift
+  done
+
+  local caddy_root="${ARR_DOCKER_DIR}/caddy"
+  local ca_source="${caddy_root}/data/pki/authorities/local/root.crt"
+  local ca_pub_dir="${caddy_root}/ca-pub"
+  local ca_dest="${ca_pub_dir}/root.crt"
+
+  ensure_dir "$ca_pub_dir"
+  chmod "$DATA_DIR_MODE" "$ca_pub_dir" 2>/dev/null || true
+
+  local attempt
+  for ((attempt = 1; attempt <= wait_attempts; attempt++)); do
+    if [[ -f "$ca_source" ]]; then
+      if [[ -f "$ca_dest" ]] && cmp -s "$ca_source" "$ca_dest" 2>/dev/null; then
+        chmod 644 "$ca_dest" 2>/dev/null || true
+        return 0
+      fi
+
+      if cp -f "$ca_source" "$ca_dest" 2>/dev/null; then
+        chmod 644 "$ca_dest" 2>/dev/null || true
+        msg "  Published Caddy root certificate to ${ca_dest}"
+        return 0
+      fi
+
+      warn "Failed to copy Caddy root certificate to ${ca_dest}"
+      return 1
+    fi
+
+    if ((attempt < wait_attempts)); then
+      sleep 2
+    fi
+  done
+
+  if ((quiet == 0)); then
+    warn "Caddy root certificate not found at ${ca_source}; it will be copied after Caddy issues it."
+  fi
+
+  return 1
+}
+
 write_caddy_assets() {
   msg "🌐 Writing Caddy reverse proxy config"
 
@@ -839,15 +896,16 @@ write_caddy_assets() {
     printf '}\n\n'
 
     printf 'ca.%s {\n' "$domain_suffix"
-    printf '    root * /data/caddy/pki/authorities/local\n'
-    printf '    file_server browse\n'
-    printf '\n'
+    printf '    auto_https disable_redirects\n'
+    printf '    root * /ca-pub\n'
+    printf '    file_server\n'
+    printf '    # Serve the public root over HTTP to avoid bootstrap loops\n'
     printf '    @ca_cert {\n'
     printf '        path /root.crt\n'
     printf '    }\n'
     printf '    handle @ca_cert {\n'
-    printf '        header Content-Type "application/x-x509-ca-cert"\n'
-    printf '        header Content-Disposition "attachment; filename=\"arrstack-ca.crt\""\n'
+    printf '        header Content-Type "application/pkix-cert"\n'
+    printf '        header Content-Disposition "attachment; filename=\"arrstackmini-root.cer\""\n'
     printf '    }\n'
     printf '}\n\n'
 
@@ -873,6 +931,8 @@ write_caddy_assets() {
   })"
 
   atomic_write "$caddyfile" "$caddyfile_content" "$NONSECRET_FILE_MODE"
+
+  sync_caddy_ca_public_copy --quiet || true
 
   if ! grep -Fq "${CADDY_BASIC_AUTH_USER}" "$caddyfile"; then
     warn "Caddyfile is missing the configured Basic Auth user; verify CADDY_BASIC_AUTH_USER"

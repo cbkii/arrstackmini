@@ -502,6 +502,10 @@ start_stack() {
     done
   fi
 
+  if ! sync_caddy_ca_public_copy --wait; then
+    warn "Caddy CA root certificate is not published yet; fetch http://ca.${ARR_DOMAIN_SUFFIX_CLEAN}/root.crt after Caddy issues it."
+  fi
+
   if ((qb_started)); then
     sync_qbt_password_from_logs
   fi
