@@ -28,6 +28,8 @@ Caddy creates a private certificate authority (CA) for `*.home.arpa`. Importing 
 
 On Debian or Ubuntu, run `./scripts/install-caddy-ca.sh` to copy the certificate into `/usr/local/share/ca-certificates` and refresh the trust store automatically (the script escalates with `sudo`).【F:scripts/install-caddy-ca.sh†L1-L118】 Use `./scripts/export-caddy-ca.sh ~/Downloads/arrstack-root.crt` when you just need to copy the public root certificate to another machine with the correct permissions.【F:scripts/export-caddy-ca.sh†L1-L35】
 
+During installation the stack now validates the generated Caddyfile with `caddy validate` and waits for Caddy’s healthcheck before starting the downstream web UIs, which prevents first-boot certificate races.【F:scripts/services.sh†L72-L117】【F:scripts/files.sh†L374-L612】
+
 ## Verify
 Open a browser and visit:
 ```
