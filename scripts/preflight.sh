@@ -85,6 +85,129 @@ normalize_bind_address() {
   printf '%s\n' "$address"
 }
 
+trim_whitespace() {
+  local value="$1"
+
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+
+  printf '%s\n' "$value"
+}
+
+declare -Ag DOCKER_PORT_BINDINGS=()
+DOCKER_PORT_BINDINGS_LOADED=0
+
+load_docker_port_bindings() {
+  if ((DOCKER_PORT_BINDINGS_LOADED)); then
+    return 0
+  fi
+
+  DOCKER_PORT_BINDINGS_LOADED=1
+
+  if ! have_command docker; then
+    return 0
+  fi
+
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+
+    local container_id=""
+    local container_name=""
+    local compose_project=""
+    local compose_service=""
+    local ports=""
+
+    IFS='|' read -r container_id container_name compose_project compose_service ports <<<"$line"
+
+    if [[ -z "$ports" || "$ports" == "<no value>" ]]; then
+      continue
+    fi
+
+    compose_project="${compose_project//<no value>/}"
+    compose_service="${compose_service//<no value>/}"
+
+    local short_id="${container_id:0:12}"
+
+    IFS=',' read -r -a mapped_ports <<<"$ports"
+
+    local mapping
+    for mapping in "${mapped_ports[@]}"; do
+      mapping="$(trim_whitespace "$mapping")"
+      [[ -z "$mapping" ]] && continue
+      [[ "$mapping" != *"->"* ]] && continue
+
+      local host_segment="${mapping%%->*}"
+      local container_segment="${mapping##*->}"
+
+      host_segment="$(trim_whitespace "$host_segment")"
+      container_segment="$(trim_whitespace "$container_segment")"
+
+      local proto="${container_segment##*/}"
+      proto="${proto,,}"
+
+      local host_port="${host_segment##*:}"
+      local host_ip="${host_segment%:"${host_port}"}"
+
+      if [[ "$host_ip" == "$host_segment" ]]; then
+        host_ip="*"
+      fi
+
+      host_ip="$(normalize_bind_address "$host_ip")"
+
+      if [[ -z "$proto" || -z "$host_port" ]]; then
+        continue
+      fi
+
+      local desc="Docker container ${container_name}"
+
+      if [[ -n "$compose_project" ]]; then
+        desc+=" (compose project ${compose_project}"
+        if [[ -n "$compose_service" ]]; then
+          desc+=", service ${compose_service}"
+        fi
+        desc+=")"
+      elif [[ -n "$compose_service" ]]; then
+        desc+=" (service ${compose_service})"
+      fi
+
+      desc+=" (id ${short_id})"
+
+      local key="${proto}|${host_port}"
+      local value="${host_ip}|${desc}"
+
+      if [[ -n "${DOCKER_PORT_BINDINGS[$key]:-}" ]]; then
+        DOCKER_PORT_BINDINGS[$key]+=$'\n'
+      fi
+
+      DOCKER_PORT_BINDINGS[$key]+="$value"
+    done
+  done < <(docker ps --format '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}|{{.Ports}}' 2>/dev/null || true)
+}
+
+docker_port_conflict_listeners() {
+  local proto="$1"
+  local expected_ip="$2"
+  local port="$3"
+
+  load_docker_port_bindings || true
+
+  local key="${proto,,}|${port}"
+  local data="${DOCKER_PORT_BINDINGS[$key]:-}"
+
+  [[ -z "$data" ]] && return
+
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    IFS='|' read -r bind_host docker_desc <<<"$entry"
+    bind_host="$(normalize_bind_address "$bind_host")"
+    if ! address_conflicts "$expected_ip" "$bind_host"; then
+      continue
+    fi
+    printf '%s|%s\n' "$bind_host" "$docker_desc"
+  done <<<"$data"
+}
+
 address_conflicts() {
   local desired_raw="$1"
   local actual_raw="$2"
@@ -117,6 +240,8 @@ port_conflict_listeners() {
   local port="$3"
 
   local found=0
+  local -a results=()
+  local -A seen=()
 
   if have_command ss; then
     local flag="lntp"
@@ -144,7 +269,13 @@ port_conflict_listeners() {
           proc_desc="$proc"
         fi
       fi
-      printf '%s|%s\n' "$(normalize_bind_address "$host")" "${proc_desc:-unknown process}"
+      local normalized_host=""
+      normalized_host="$(normalize_bind_address "$host")"
+      local entry="${normalized_host}|${proc_desc:-}"
+      if [[ -z "${seen[$entry]:-}" ]]; then
+        results+=("$entry")
+        seen["$entry"]=1
+      fi
       found=1
     done < <(ss -H -${flag} "sport = :${port}" 2>/dev/null || true)
   fi
@@ -173,14 +304,149 @@ port_conflict_listeners() {
       proc="$(awk '{print $1}' <<<"$line" 2>/dev/null || true)"
       local pid=""
       pid="$(awk '{print $2}' <<<"$line" 2>/dev/null || true)"
-      local proc_desc="${proc:-unknown process}"
+      local proc_desc="${proc:-}"
       if [[ -n "$pid" ]]; then
-        proc_desc+=" (pid ${pid})"
+        proc_desc+="${proc_desc:+ }(pid ${pid})"
       fi
-      printf '%s|%s\n' "$(normalize_bind_address "$host")" "$proc_desc"
+      local normalized_host=""
+      normalized_host="$(normalize_bind_address "$host")"
+      local entry="${normalized_host}|$proc_desc"
+      if [[ -z "${seen[$entry]:-}" ]]; then
+        results+=("$entry")
+        seen["$entry"]=1
+      fi
       found=1
     done < <(lsof -nP "${spec[@]}" 2>/dev/null || true)
   fi
+
+  while IFS= read -r docker_entry; do
+    [[ -z "$docker_entry" ]] && continue
+    local entry="$docker_entry"
+    if [[ -n "${seen[$entry]:-}" ]]; then
+      continue
+    fi
+    results+=("$entry")
+    seen["$entry"]=1
+    found=1
+  done < <(docker_port_conflict_listeners "$proto" "$expected_ip" "$port")
+
+  printf '%s\n' "${results[@]}"
+}
+
+listener_is_arrstack() {
+  local desc="${1,,}"
+  [[ "$desc" == *"arrstack"* ]]
+}
+
+format_listener_description() {
+  local raw_desc="$1"
+
+  if listener_is_arrstack "$raw_desc"; then
+    printf '%s\n' "existing arrstack installation"
+    return
+  fi
+
+  if [[ -z "$raw_desc" ]]; then
+    printf '%s\n' "another service"
+    return
+  fi
+
+  printf '%s\n' "$raw_desc"
+}
+
+prompt_port_conflict_resolution() {
+  local -n _conflicts_ref="$1"
+  local -n _arrstack_conflicts_ref="$2"
+
+  msg ""
+  msg "Port Conflict Detected!"
+  msg ""
+  msg "The following ports are already in use:"
+  local entry
+  for entry in "${_conflicts_ref[@]}"; do
+    IFS='|' read -r port proto label host desc _is_arrstack <<<"$entry"
+    msg "- Port ${port} (${label}): In use on ${host}${desc:+ by ${desc}}"
+  done
+  msg ""
+
+  if ((${#_arrstack_conflicts_ref[@]} == ${#_conflicts_ref[@]})) && ((${#_conflicts_ref[@]} > 0)); then
+    msg "These ports are likely being used by an existing arrstack installation."
+  elif ((${#_arrstack_conflicts_ref[@]} > 0)); then
+    msg "Some of these ports are currently in use by an existing arrstack installation."
+  else
+    msg "These ports are currently in use by other services on this host."
+  fi
+
+  msg ""
+  msg "How would you like to resolve this?"
+  msg ""
+  msg "1. Edit ports (Keeps existing arrstack running, you'll need to update userconf.sh)"
+  msg "2. Stop existing arrstack and continue installation"
+  msg "3. Use existing services (Stops this installation)"
+  msg ""
+
+  local choice=""
+  while true; do
+    printf 'Enter 1, 2, or 3: '
+    if ! IFS= read -r choice; then
+      choice=""
+    fi
+    case "$choice" in
+      1)
+        msg ""
+        msg "Installation paused."
+        msg "1. Edit the ports in userconf.sh"
+        msg "2. Run this installer again"
+        msg ""
+        msg "Installation stopped. No changes were made."
+        exit 0
+        ;;
+      2)
+        if ((${#_arrstack_conflicts_ref[@]} == 0)); then
+          msg ""
+          msg "Option 2 is only available when an existing arrstack installation is detected on the conflicting ports."
+          msg "Please choose a different option."
+          continue
+        fi
+
+        msg ""
+        msg "This will:"
+        msg "1. Stop your existing arrstack installation"
+        msg "2. Continue installing arrstackmini with default ports"
+        msg ""
+        printf 'Are you sure? (yes/no): '
+        local confirm=""
+        if ! IFS= read -r confirm; then
+          confirm=""
+        fi
+        if [[ ${confirm,,} == "yes" ]]; then
+          msg ""
+          msg "Stopping existing arrstack services..."
+          if safe_cleanup; then
+            msg "Existing arrstack services were stopped."
+            return 0
+          fi
+          die "Failed to stop the existing arrstack services. Resolve the conflicts manually and rerun the installer."
+        fi
+        msg ""
+        msg "Installation cancelled."
+        msg "Your existing arrstack installation will continue running."
+        msg "No changes were made."
+        exit 0
+        ;;
+      3)
+        msg ""
+        msg "Installation cancelled."
+        msg "Your existing arrstack installation will continue running."
+        msg "No changes were made."
+        exit 0
+        ;;
+      *)
+        msg ""
+        msg "Please enter 1, 2, or 3 only."
+        ;;
+    esac
+  done
 }
 
 check_port_conflicts() {
@@ -238,34 +504,78 @@ check_port_conflicts() {
     port_expected["53/udp"]="${LAN_IP:-}"
   fi
 
-  local conflict_found=0
-  local key
-  for key in "${!port_labels[@]}"; do
-    local proto="${port_protos[$key]:-tcp}"
-    local port="$key"
-    if [[ "$port" == */* ]]; then
-      proto="${port##*/}"
-      port="${port%%/*}"
-    fi
+  local cleanup_performed=0
 
-    local expected="${port_expected[$key]:-*}"
-    mapfile -t listeners < <(port_conflict_listeners "$proto" "$expected" "$port")
+  while true; do
+    local conflict_found=0
+    declare -A conflict_map=()
+    declare -A conflict_arrstack=()
+    local -a conflict_order=()
 
-    if ((${#listeners[@]} == 0)); then
-      msg "    [ok] ${port_labels[$key]} port ${port}/${proto^^} is free"
-      continue
-    fi
+    local key
+    for key in "${!port_labels[@]}"; do
+      local proto="${port_protos[$key]:-tcp}"
+      local port="$key"
+      if [[ "$port" == */* ]]; then
+        proto="${port##*/}"
+        port="${port%%/*}"
+      fi
 
-    conflict_found=1
-    local listener
-    for listener in "${listeners[@]}"; do
-      IFS='|' read -r bind_host proc <<<"$listener"
-      warn "    Port ${port}/${proto^^} needed for ${port_labels[$key]} is already bound on ${bind_host}${proc:+ by ${proc}}."
+      local expected="${port_expected[$key]:-*}"
+      mapfile -t listeners < <(port_conflict_listeners "$proto" "$expected" "$port")
+
+      if ((${#listeners[@]} == 0)); then
+        msg "    [ok] ${port_labels[$key]} port ${port}/${proto^^} is free"
+        continue
+      fi
+
+      local listener
+      for listener in "${listeners[@]}"; do
+        IFS='|' read -r bind_host raw_desc <<<"$listener"
+        local is_arrstack=0
+        if listener_is_arrstack "$raw_desc"; then
+          is_arrstack=1
+        fi
+        local desc
+        desc="$(format_listener_description "$raw_desc")"
+        local conflict_key="${port}|${proto}|${bind_host}"
+        if [[ -z "${conflict_map[$conflict_key]:-}" ]]; then
+          conflict_map[$conflict_key]="${port}|${proto}|${port_labels[$key]}|${bind_host}|${desc}|${is_arrstack}"
+          conflict_order+=("$conflict_key")
+        fi
+        if ((is_arrstack)); then
+          conflict_map[$conflict_key]="${port}|${proto}|${port_labels[$key]}|${bind_host}|${desc}|1"
+          conflict_arrstack[$conflict_key]=1
+        fi
+        conflict_found=1
+      done
     done
+
+    if ((conflict_found)); then
+      local -a conflicts=()
+      local -a arrstack_conflicts=()
+      local conflict_id
+      for conflict_id in "${conflict_order[@]}"; do
+        local record="${conflict_map[$conflict_id]}"
+        conflicts+=("$record")
+        if [[ "${conflict_arrstack[$conflict_id]:-0}" -eq 1 ]]; then
+          arrstack_conflicts+=("$record")
+        fi
+      done
+
+      if prompt_port_conflict_resolution conflicts arrstack_conflicts; then
+        DOCKER_PORT_BINDINGS=()
+        DOCKER_PORT_BINDINGS_LOADED=0
+        cleanup_performed=1
+        continue
+      fi
+    fi
+
+    break
   done
 
-  if ((conflict_found)); then
-    die "Resolve the port conflicts above or change the *_PORT values in arrconf/userconf.sh, then rerun the installer."
+  if ((cleanup_performed)); then
+    msg "    Existing arrstack services were stopped to free required ports."
   fi
 }
 
