@@ -178,6 +178,11 @@ report_port() {
 test_lan_connectivity() {
   echo "[doctor] Testing LAN accessibility..."
 
+  if [[ "${ENABLE_CADDY}" -ne 1 ]]; then
+    echo "[doctor][info] Skipping Caddy HTTP checks (ENABLE_CADDY=0)."
+    return
+  fi
+
   if [[ -z "${LAN_IP}" || "${LAN_IP}" == "0.0.0.0" ]]; then
     echo "[doctor][warn] LAN_IP unset or 0.0.0.0; skipping LAN connectivity checks."
     return
@@ -207,31 +212,43 @@ test_lan_connectivity() {
 SUFFIX="${LAN_DOMAIN_SUFFIX:-}"
 LAN_IP="${LAN_IP:-}"
 DNS_IP="${LAN_IP:-127.0.0.1}"
-ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
+ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-0}"
 LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED:-1}"
+ENABLE_CADDY="${ENABLE_CADDY:-0}"
+EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS:-1}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
 DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE:-router}"
+QBT_HTTP_PORT_HOST="${QBT_HTTP_PORT_HOST:-8080}"
+SONARR_PORT="${SONARR_PORT:-8989}"
+RADARR_PORT="${RADARR_PORT:-7878}"
+PROWLARR_PORT="${PROWLARR_PORT:-9696}"
+BAZARR_PORT="${BAZARR_PORT:-6767}"
+FLARESOLVERR_PORT="${FLARESOLVERR_PORT:-8191}"
 
-echo "[doctor] Checking if port 53 is free (or already bound):"
-if have_command ss; then
-  if [[ -n "$(ss -H -lnu 'sport = :53' 2>/dev/null)" ]] || [[ -n "$(ss -H -lnt 'sport = :53' 2>/dev/null)" ]]; then
-    echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
-    if have_command systemctl && systemctl is-active --quiet systemd-resolved; then
-      echo "[doctor][hint] systemd-resolved is active and commonly owns :53 on Bookworm."
-      echo "[doctor][hint] Run: ./scripts/host-dns-setup.sh (safe takeover with backup & rollback)."
+if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
+  echo "[doctor] Checking if port 53 is free (or already bound):"
+  if have_command ss; then
+    if [[ -n "$(ss -H -lnu 'sport = :53' 2>/dev/null)" ]] || [[ -n "$(ss -H -lnt 'sport = :53' 2>/dev/null)" ]]; then
+      echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
+      if have_command systemctl && systemctl is-active --quiet systemd-resolved; then
+        echo "[doctor][hint] systemd-resolved is active and commonly owns :53 on Bookworm."
+        echo "[doctor][hint] Run: ./scripts/host-dns-setup.sh (safe takeover with backup & rollback)."
+      fi
+    else
+      echo "[doctor][ok] Port 53 appears free."
+    fi
+  elif have_command lsof; then
+    if [[ -n "$(lsof -nP -iUDP:53 2>/dev/null)" ]] || [[ -n "$(lsof -nP -iTCP:53 -sTCP:LISTEN 2>/dev/null)" ]]; then
+      echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
+    else
+      echo "[doctor][ok] Port 53 appears free."
     fi
   else
-    echo "[doctor][ok] Port 53 appears free."
-  fi
-elif have_command lsof; then
-  if [[ -n "$(lsof -nP -iUDP:53 2>/dev/null)" ]] || [[ -n "$(lsof -nP -iTCP:53 -sTCP:LISTEN 2>/dev/null)" ]]; then
-    echo "[doctor][warn] Something is listening on port 53. Could conflict with local_dns service."
-  else
-    echo "[doctor][ok] Port 53 appears free."
+    echo "[doctor][warn] Cannot test port 53 status (missing 'ss' and 'lsof')."
   fi
 else
-  echo "[doctor][warn] Cannot test port 53 status (missing 'ss' and 'lsof')."
+  echo "[doctor][info] Skipping port 53 availability check (local DNS disabled)."
 fi
 
 printf '[doctor] LAN domain suffix: %s\n' "${SUFFIX:-<unset>}"
@@ -265,8 +282,23 @@ fi
 if [[ -z "${LAN_IP}" || "${LAN_IP}" == "0.0.0.0" ]]; then
   echo "[doctor][warn] Skipping LAN port checks because LAN_IP is not set to a specific address."
 else
-  report_port "Caddy HTTP" tcp "${LAN_IP}" 80
-  report_port "Caddy HTTPS" tcp "${LAN_IP}" 443
+  if [[ "${EXPOSE_DIRECT_PORTS}" -eq 1 ]]; then
+    report_port "qBittorrent UI" tcp "${LAN_IP}" "${QBT_HTTP_PORT_HOST}"
+    report_port "Sonarr UI" tcp "${LAN_IP}" "${SONARR_PORT}"
+    report_port "Radarr UI" tcp "${LAN_IP}" "${RADARR_PORT}"
+    report_port "Prowlarr UI" tcp "${LAN_IP}" "${PROWLARR_PORT}"
+    report_port "Bazarr UI" tcp "${LAN_IP}" "${BAZARR_PORT}"
+    report_port "FlareSolverr" tcp "${LAN_IP}" "${FLARESOLVERR_PORT}"
+  else
+    echo "[doctor][info] Direct LAN ports are disabled (EXPOSE_DIRECT_PORTS=0)."
+  fi
+
+  if [[ "${ENABLE_CADDY}" -eq 1 ]]; then
+    report_port "Caddy HTTP" tcp "${LAN_IP}" 80
+    report_port "Caddy HTTPS" tcp "${LAN_IP}" 443
+  else
+    echo "[doctor][info] Skipping Caddy port checks (ENABLE_CADDY=0)."
+  fi
 
   if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
     report_port "Local DNS" udp "${LAN_IP}" 53
@@ -303,44 +335,73 @@ else
   echo "[doctor][info] DNS checks skipped: local DNS is disabled."
 fi
 
-echo "[doctor] Testing CA fetch over HTTP (bootstrap)"
-if have_command curl && have_command openssl; then
-  if cert_output="$(curl -fsS "http://ca.${SUFFIX}/root.crt" 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null)"; then
-    printf '[doctor][ok] CA download succeeded:%s%s\n' "${cert_output:+\n}" "${cert_output}"
+if [[ "${ENABLE_CADDY}" -eq 1 ]]; then
+  echo "[doctor] Testing CA fetch over HTTP (bootstrap)"
+  if have_command curl && have_command openssl; then
+    if cert_output="$(curl -fsS "http://ca.${SUFFIX}/root.crt" 2>/dev/null | openssl x509 -noout -subject -issuer 2>/dev/null)"; then
+      printf '[doctor][ok] CA download succeeded:%s%s\n' "${cert_output:+\n}" "${cert_output}"
+    else
+      echo "[doctor][warn] Could not fetch CA over HTTP"
+    fi
   else
-    echo "[doctor][warn] Could not fetch CA over HTTP"
+    echo "[doctor][warn] Skipping CA fetch test: missing 'curl' or 'openssl'."
   fi
-else
-  echo "[doctor][warn] Skipping CA fetch test: missing 'curl' or 'openssl'."
-fi
 
-echo "[doctor] Testing HTTPS endpoint"
-if ! have_command curl; then
-  echo "[doctor][warn] 'curl' command not found; skipping HTTPS probe."
-else
-  curl_args=(-k --silent --max-time 5)
-  if [[ -n "${LAN_IP}" && "${LAN_IP}" != "0.0.0.0" ]]; then
-    curl_args+=(--resolve "qbittorrent.${SUFFIX}:443:${LAN_IP}" --resolve "qbittorrent.${SUFFIX}:80:${LAN_IP}")
-  fi
-  if curl "${curl_args[@]}" "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
-    echo "[doctor][ok] HTTPS endpoint reachable"
+  echo "[doctor] Testing HTTPS endpoint"
+  if ! have_command curl; then
+    echo "[doctor][warn] 'curl' command not found; skipping HTTPS probe."
   else
-    echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
+    curl_args=(-k --silent --max-time 5)
+    if [[ -n "${LAN_IP}" && "${LAN_IP}" != "0.0.0.0" ]]; then
+      curl_args+=(--resolve "qbittorrent.${SUFFIX}:443:${LAN_IP}" --resolve "qbittorrent.${SUFFIX}:80:${LAN_IP}")
+    fi
+    if curl "${curl_args[@]}" "https://qbittorrent.${SUFFIX}/" -o /dev/null; then
+      echo "[doctor][ok] HTTPS endpoint reachable"
+    else
+      echo "[doctor][warn] HTTPS endpoint not reachable. Could be DNS, Caddy, or firewall issue."
+    fi
   fi
+else
+  echo "[doctor][info] Skipping Caddy CA and HTTPS checks (ENABLE_CADDY=0)."
 fi
 
 test_lan_connectivity
 
-case "${DNS_DISTRIBUTION_MODE}" in
-  router)
-    echo "[doctor][info] DNS distribution mode 'router': set DHCP Option 6 (DNS server) on your router to ${LAN_IP}."
-    ;;
-  per-device)
-    echo "[doctor][info] DNS distribution mode 'per-device': point important clients at ${LAN_IP} and keep Android Private DNS Off/Automatic."
-    ;;
-  *)
-    echo "[doctor][warn] Unknown DNS_DISTRIBUTION_MODE='${DNS_DISTRIBUTION_MODE}'. Expected 'router' or 'per-device'."
-    ;;
-esac
+if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
+  case "${DNS_DISTRIBUTION_MODE}" in
+    router)
+      echo "[doctor][info] DNS distribution mode 'router': set DHCP Option 6 (DNS server) on your router to ${LAN_IP}."
+      ;;
+    per-device)
+      echo "[doctor][info] DNS distribution mode 'per-device': point important clients at ${LAN_IP} and keep Android Private DNS Off/Automatic."
+      ;;
+    *)
+      echo "[doctor][warn] Unknown DNS_DISTRIBUTION_MODE='${DNS_DISTRIBUTION_MODE}'. Expected 'router' or 'per-device'."
+      ;;
+  esac
+else
+  echo "[doctor][info] DNS distribution mode ignored (local DNS disabled)."
+fi
+
+lan_target="${LAN_IP:-<unset>}"
+echo "[doctor] From another LAN device you can try:"
+if [[ "${EXPOSE_DIRECT_PORTS}" -eq 1 ]]; then
+  echo "  curl -I http://${lan_target}:${QBT_HTTP_PORT_HOST}"
+  echo "  curl -I http://${lan_target}:${SONARR_PORT}"
+else
+  echo "  (Direct ports disabled; set EXPOSE_DIRECT_PORTS=1 to enable IP:PORT access.)"
+fi
+
+if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
+  echo "  nslookup qbittorrent.${SUFFIX} ${lan_target}"
+  echo "[doctor][note] If DNS queries fail:"
+  echo "  - Ensure the client and ${lan_target} are on the same VLAN/subnet;"
+  echo "  - Some routers block DNS to LAN hosts; allow UDP/TCP 53 to ${lan_target};"
+  echo "  - Temporarily set the client DNS to ${lan_target} and retry."
+fi
+
+if [[ "${ENABLE_CADDY}" -eq 1 ]]; then
+  echo "  curl -k https://qbittorrent.${SUFFIX}/ --resolve qbittorrent.${SUFFIX}:443:${lan_target}"
+fi
 
 exit 0

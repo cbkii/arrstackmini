@@ -38,19 +38,21 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    ```
    The script installs dependencies if needed, renders `.env`, and launches the stack with Docker Compose.
    Compose reads `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
-6. **On Debian Bookworm, free port 53 for dnsmasq.** `systemd-resolved` often owns `127.0.0.53:53` on fresh installs and blocks the `local_dns` container. The helper stops and disables it only when necessary, writes an idempotent `/etc/resolv.conf`, and then starts `local_dns`.
-   ```bash
-   ./scripts/host-dns-setup.sh
-   ```
-   Re-run the helper whenever you change LAN IPs or DNS upstreams; it safely records backups each time.
-7. **Choose how clients learn the DNS server.** Follow [LAN DNS & network pre-start](docs/lan-dns-network-setup.md) to delegate DNS through your router (Option 6 / RDNSS) or evaluate per-device overrides.
-8. **Open qBittorrent to confirm access.** Visit `https://qbittorrent.home.arpa` (replace the suffix if you changed it) and change the default password.
+6. **Open the WebUIs directly by IP.** As soon as the installer finishes, browse to each service using your Pi’s LAN IP (example `192.168.1.50`):
+   - `http://192.168.1.50:8080` (qBittorrent)
+   - `http://192.168.1.50:8989` (Sonarr)
+   - `http://192.168.1.50:7878` (Radarr)
+   - `http://192.168.1.50:9696` (Prowlarr)
+   - `http://192.168.1.50:6767` (Bazarr)
+   - `http://192.168.1.50:8191` (FlareSolverr health page)
+   The default qBittorrent credentials are `admin` / `adminadmin` — change them immediately.
+7. **(Optional) Enable extras later.** Set `ENABLE_CADDY=1` for HTTPS reverse proxying or `ENABLE_LOCAL_DNS=1` for dnsmasq, then rerun `./arrstack.sh`. The defaults keep both disabled so IP:PORT access works everywhere without touching your router.
 
 **Verify:**
 ```bash
-dig @192.168.1.50 qbittorrent.home.arpa
+curl -I http://192.168.1.50:8080
 ```
-You should see the Pi’s IP in the answer. If not, revisit steps 6–7.
+You should see an HTTP 200/302 response. If not, re-run the installer and confirm the LAN IP detection.
 
 ## Useful commands
 - `./arrstack.sh --rotate-api-key --yes` regenerates the Gluetun API key and writes it back to `.env`.

@@ -18,57 +18,61 @@ show_summary() {
     fi
   fi
 
-  local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
-
-  local lan_ip_display="${LAN_IP:-<unset>}"
-  local lan_dns_hint
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
-    lan_dns_hint="LAN DNS hint: ensure clients use ${lan_ip_display} as their DNS server so *.${domain_suffix} resolves via local dnsmasq."
-  elif [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
-    lan_dns_hint="LAN DNS hint: local_dns container is not active; clients must use another resolver until LAN_IP/port conflicts are resolved."
-  else
-    lan_dns_hint="LAN DNS hint: point qbittorrent.${domain_suffix} to ${lan_ip_display} (via DNS or /etc/hosts)."
+  local ip_hint="${LAN_IP:-}"
+  if [[ -z "$ip_hint" || "$ip_hint" == "0.0.0.0" ]]; then
+    ip_hint="<LAN_IP>"
   fi
 
   cat <<QBT_INFO
 ================================================
 qBittorrent Access Information:
 ================================================
-LAN URL:  http://qbittorrent.${domain_suffix}/
-HTTPS:    https://qbittorrent.${domain_suffix}/  (trust the Caddy internal CA)
+WebUI:    http://${ip_hint}:${QBT_HTTP_PORT_HOST}
 Username: ${QBT_USER}
 ${qbt_pass_msg}
-
-${lan_dns_hint}
-Remote clients must supply the Caddy Basic Auth user '${CADDY_BASIC_AUTH_USER}' with the password saved in ${ARR_DOCKER_DIR}/caddy/credentials.
 ================================================
 
 QBT_INFO
 
-  if [[ "${LAN_IP}" == "0.0.0.0" ]]; then
+  cat <<'DIRECT'
+Direct LAN URLs (ipdirect profile enabled):
+DIRECT
+  cat <<DIRECT_URLS
+  qBittorrent:  http://${ip_hint}:${QBT_HTTP_PORT_HOST}
+  Sonarr:       http://${ip_hint}:${SONARR_PORT}
+  Radarr:       http://${ip_hint}:${RADARR_PORT}
+  Prowlarr:     http://${ip_hint}:${PROWLARR_PORT}
+  Bazarr:       http://${ip_hint}:${BAZARR_PORT}
+  FlareSolverr: http://${ip_hint}:${FLARESOLVERR_PORT}
+DIRECT_URLS
+
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    local domain_suffix="${ARR_DOMAIN_SUFFIX_CLEAN}"
+    cat <<CADDY_INFO
+
+Proxy profile enabled (Caddy reverse proxy):
+  http://qbittorrent.${domain_suffix}
+  https://qbittorrent.${domain_suffix} (trust the internal CA)
+  Health endpoint: http://${ip_hint}/healthz
+Remote clients must authenticate with '${CADDY_BASIC_AUTH_USER}' using the password stored in ${ARR_DOCKER_DIR}/caddy/credentials.
+CADDY_INFO
+  fi
+
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+    if [[ ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
+      msg "Local DNS is enabled. Point DHCP Option 6 (or per-device DNS) at ${LAN_IP:-<unset>} so hostnames resolve."
+    else
+      warn "Local DNS requested but the container is disabled (port 53 conflict). Resolve the conflict and rerun."
+    fi
+  fi
+
+  if [[ "${LAN_IP}" == "0.0.0.0" || -z "${LAN_IP:-}" ]]; then
     cat <<'WARNING'
 ⚠️  SECURITY WARNING
-   LAN_IP is 0.0.0.0 so services listen on all interfaces.
+   LAN_IP is unset or 0.0.0.0 so services listen on all interfaces.
    Update arrconf/userconf.sh with a specific LAN_IP to limit exposure.
 
 WARNING
-
-    cat <<'MANUAL_ACCESS'
-
-⚠️  MANUAL ACCESS REQUIRED
-Since services are bound to 0.0.0.0, you need to:
-
-1. Find your Pi's IP address:
-   ip addr show | grep "inet " | grep -v 127.0.0.1
-
-2. Access services directly via IP:
-   http://<YOUR_PI_IP>:80  (Caddy proxy)
-
-3. Or add to your computer's /etc/hosts:
-   <YOUR_PI_IP> qbittorrent.home.arpa sonarr.home.arpa radarr.home.arpa
-   <YOUR_PI_IP> prowlarr.home.arpa bazarr.home.arpa flaresolverr.home.arpa
-
-MANUAL_ACCESS
   fi
 
   if [[ "${QBT_USER}" == "admin" && "${QBT_PASS}" == "adminadmin" ]]; then
@@ -81,16 +85,6 @@ WARNING
   fi
 
   cat <<SUMMARY
-Access your services via Caddy:
-  qBittorrent:   http://qbittorrent.${domain_suffix}
-  Sonarr:        http://sonarr.${domain_suffix}
-  Radarr:        http://radarr.${domain_suffix}
-  Prowlarr:      http://prowlarr.${domain_suffix}
-  Bazarr:        http://bazarr.${domain_suffix}
-  FlareSolverr:  http://flaresolverr.${domain_suffix}
-
-HTTPS is also available on the same hostnames (Caddy issues an internal certificate).
-
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 
 Helper commands:

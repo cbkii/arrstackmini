@@ -20,7 +20,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 - **`DNS_DISTRIBUTION_MODE`** – choose `router` or `per-device` (see [LAN DNS & network pre-start](lan-dns-network-setup.md)).
 - **`UPSTREAM_DNS_1` / `UPSTREAM_DNS_2`** – public resolvers used when the Pi forwards queries. Defaults work for most homes.
 - **`GLUETUN_CONTROL_PORT`** – keep `8000` unless another local service uses it.
-- **`EXPOSE_DIRECT_PORTS`** – leave at `0` so Caddy is the only LAN entry point. Set `1` only if you need direct ports for testing.
+- **`EXPOSE_DIRECT_PORTS`** – defaults to `1` so every WebUI is reachable at `http://LAN_IP:PORT`. Set to `0` if you want Caddy to be the sole LAN entry point.
 
 ### Credentials and security
 - **`QBT_USER` / `QBT_PASS`** – update after first login to qBittorrent. Keep `.env` in sync.

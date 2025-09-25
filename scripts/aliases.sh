@@ -131,6 +131,7 @@ else
   warn "Gluetun helper library missing at $GLUETUN_LIB"
   fetch_forwarded_port() { printf '0'; }
   fetch_public_ip() { printf ''; }
+  ensure_proton_port_forwarding_ready() { return 1; }
 fi
 
 msg "🔍 VPN Diagnostics Starting..."
@@ -158,25 +159,18 @@ else
 fi
 
 msg "Checking port forwarding..."
-PF_PORT="$(fetch_forwarded_port)"
+PF_PORT="$(fetch_forwarded_port 2>/dev/null || printf '0')"
+
+if [[ "$PF_PORT" == "0" ]]; then
+  ensure_proton_port_forwarding_ready || true
+  PF_PORT="${PF_ENSURED_PORT:-$PF_PORT}"
+fi
 
 if [[ "$PF_PORT" != "0" ]]; then
   msg "✅ Port forwarding active: Port $PF_PORT"
 else
   warn "Port forwarding not working"
-  warn "Attempting fix: Restarting Gluetun..."
-  if docker restart gluetun >/dev/null 2>&1; then
-    sleep 60
-    PF_PORT="$(fetch_forwarded_port)"
-    if [[ "$PF_PORT" != "0" ]]; then
-      msg "✅ Port forwarding recovered: Port $PF_PORT"
-    else
-      warn "Port forwarding still not working"
-      warn "Review 'docker logs gluetun --tail 100 | grep update-qbt-port' for details"
-    fi
-  else
-    warn "Docker restart command failed; restart Gluetun manually."
-  fi
+  warn "Review 'docker logs gluetun --tail 100 | grep update-qbt-port' for details"
 fi
 
 msg "Checking service health..."

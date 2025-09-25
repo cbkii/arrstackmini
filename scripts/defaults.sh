@@ -31,7 +31,7 @@ arrstack_setup_defaults() {
   ASSUME_YES="${ASSUME_YES:-0}"
   FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
   LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
-  SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
+  SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands}"
 
   : "${PUID:=$(id -u)}"
   : "${PGID:=$(id -g)}"
@@ -53,7 +53,8 @@ arrstack_setup_defaults() {
 
   : "${UPSTREAM_DNS_1:=1.1.1.1}"
   : "${UPSTREAM_DNS_2:=1.0.0.1}"
-  : "${ENABLE_LOCAL_DNS:=1}"
+  : "${ENABLE_LOCAL_DNS:=0}"
+  : "${ENABLE_CADDY:=0}"
   : "${DNS_DISTRIBUTION_MODE:=router}"
   : "${SETUP_HOST_DNS:=0}"
   : "${REFRESH_ALIASES:=0}"
@@ -79,7 +80,7 @@ arrstack_setup_defaults() {
   : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
   : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
   : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
-  : "${EXPOSE_DIRECT_PORTS:=0}"
+  : "${EXPOSE_DIRECT_PORTS:=1}"
 
   if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"
