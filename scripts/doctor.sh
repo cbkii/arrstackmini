@@ -19,49 +19,6 @@ if [[ -f "${REPO_ROOT}/arrconf/userconf.sh" ]]; then
   . "${REPO_ROOT}/arrconf/userconf.sh"
 fi
 
-normalize_bind_address() {
-  local address="$1"
-
-  address="${address%%%*}"
-  address="${address#[}"
-  address="${address%]}"
-
-  if [[ "$address" == ::ffff:* ]]; then
-    address="${address##::ffff:}"
-  fi
-
-  if [[ -z "$address" ]]; then
-    address="*"
-  fi
-
-  printf '%s\n' "$address"
-}
-
-address_conflicts() {
-  local desired_raw="$1"
-  local actual_raw="$2"
-
-  local desired
-  local actual
-  desired="$(normalize_bind_address "$desired_raw")"
-  actual="$(normalize_bind_address "$actual_raw")"
-
-  if [[ "$desired" == "0.0.0.0" || "$desired" == "*" ]]; then
-    return 0
-  fi
-
-  case "$actual" in
-    "0.0.0.0" | "::" | "*")
-      return 0
-      ;;
-  esac
-
-  if [[ "$desired" == "$actual" ]]; then
-    return 0
-  fi
-
-  return 1
-}
 
 port_in_use_with_ss() {
   local proto="$1"

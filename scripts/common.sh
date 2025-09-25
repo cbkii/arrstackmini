@@ -285,6 +285,50 @@ port_bound_any() {
   return 1
 }
 
+normalize_bind_address() {
+  local address="${1:-}"
+
+  address="${address%%%*}"
+  address="${address#[}"
+  address="${address%]}"
+
+  if [[ "$address" == ::ffff:* ]]; then
+    address="${address##::ffff:}"
+  fi
+
+  if [[ -z "$address" ]]; then
+    address="*"
+  fi
+
+  printf '%s\n' "$address"
+}
+
+address_conflicts() {
+  local desired_raw="$1"
+  local actual_raw="$2"
+
+  local desired
+  local actual
+  desired="$(normalize_bind_address "$desired_raw")"
+  actual="$(normalize_bind_address "$actual_raw")"
+
+  if [[ "$desired" == "0.0.0.0" || "$desired" == "*" ]]; then
+    return 0
+  fi
+
+  case "$actual" in
+    "0.0.0.0" | "::" | "*")
+      return 0
+      ;;
+  esac
+
+  if [[ "$desired" == "$actual" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 compose() {
   if ((${#DOCKER_COMPOSE_CMD[@]} == 0)); then
     die "Docker Compose command not detected; run preflight first"

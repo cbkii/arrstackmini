@@ -3,47 +3,45 @@
 install_missing() {
   msg "🔧 Checking dependencies"
 
+  require_dependencies docker
+
   if ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
     die "Docker daemon is not running or not accessible"
   fi
 
-  local compose_cmd=""
-  local compose_version=""
+  local compose_version_raw=""
+  local compose_version_clean=""
+  local compose_major=""
 
   if docker compose version >/dev/null 2>&1; then
-    compose_version="$(docker compose version --short 2>/dev/null | sed 's/^v//')"
-    local compose_major="${compose_version%%.*}"
-    if [[ -n "$compose_major" ]] && ((compose_major >= 2)); then
-      compose_cmd="docker compose"
+    compose_version_raw="$(docker compose version --short 2>/dev/null || true)"
+    compose_version_clean="${compose_version_raw#v}"
+    compose_major="${compose_version_clean%%.*}"
+    if [[ "$compose_major" =~ ^[0-9]+$ ]] && ((compose_major >= 2)); then
       DOCKER_COMPOSE_CMD=(docker compose)
+    else
+      compose_version_raw=""
+      compose_version_clean=""
     fi
   fi
 
-  if [[ -z "$compose_cmd" ]] && command -v docker-compose >/dev/null 2>&1; then
-    compose_version="$(docker-compose version --short 2>/dev/null | sed 's/^v//')"
-    local compose_major="${compose_version%%.*}"
-    if [[ -n "$compose_major" ]] && ((compose_major >= 2)); then
-      compose_cmd="docker-compose"
+  if ((${#DOCKER_COMPOSE_CMD[@]} == 0)) && command -v docker-compose >/dev/null 2>&1; then
+    compose_version_raw="$(docker-compose version --short 2>/dev/null || true)"
+    compose_version_clean="${compose_version_raw#v}"
+    compose_major="${compose_version_clean%%.*}"
+    if [[ "$compose_major" =~ ^[0-9]+$ ]] && ((compose_major >= 2)); then
       DOCKER_COMPOSE_CMD=(docker-compose)
+    else
+      compose_version_raw=""
+      compose_version_clean=""
     fi
   fi
 
-  if [[ -z "$compose_cmd" ]]; then
+  if ((${#DOCKER_COMPOSE_CMD[@]} == 0)); then
     die "Docker Compose v2+ is required but not found"
   fi
 
-  local required=(curl jq openssl)
-  local missing=()
-
-  for cmd in "${required[@]}"; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      missing+=("$cmd")
-    fi
-  done
-
-  if ((${#missing[@]} > 0)); then
-    die "Missing required tools: ${missing[*]}. Please install them and re-run."
-  fi
+  require_dependencies curl jq openssl
 
   if ! command -v certutil >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
@@ -58,35 +56,23 @@ install_missing() {
   fi
 
   msg "  Docker: $(docker version --format '{{.Server.Version}}')"
-  local compose_version_display=""
-  if ((${#DOCKER_COMPOSE_CMD[@]} > 0)); then
-    if ! compose_version_display="$(compose version --short 2>/dev/null)"; then
-      compose_version_display="(unknown)"
-    fi
+  local compose_cmd_display="${DOCKER_COMPOSE_CMD[*]}"
+  local compose_version_display="${compose_version_raw:-${compose_version_clean:-unknown}}"
+  if [[ -n "$compose_version_display" && "$compose_version_display" != "unknown" ]]; then
+    msg "  Compose: ${compose_cmd_display} ${compose_version_display}"
+  else
+    msg "  Compose: ${compose_cmd_display} (unknown)"
   fi
-  msg "  Compose: ${compose_cmd} ${compose_version_display}"
 }
 
-normalize_bind_address() {
-  local address="$1"
-
-  address="${address%%%*}"
-  address="${address#[}"
-  address="${address%]}"
-
-  if [[ "$address" == ::ffff:* ]]; then
-    address="${address##::ffff:}"
-  fi
-
-  if [[ -z "$address" ]]; then
-    address="*"
-  fi
-
-  printf '%s\n' "$address"
-}
 
 trim_whitespace() {
   local value="$1"
+
+  if declare -f arrstack_trim_whitespace >/dev/null 2>&1; then
+    printf '%s\n' "$(arrstack_trim_whitespace "$value")"
+    return
+  fi
 
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
