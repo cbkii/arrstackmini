@@ -36,23 +36,12 @@ arrstack_setup_defaults() {
   : "${PUID:=$(id -u)}"
   : "${PGID:=$(id -g)}"
   : "${TIMEZONE:=Australia/Sydney}"
-  : "${GLUETUN_CONTROL_PORT:=8000}"
-  : "${QBT_HTTP_PORT_HOST:=8080}"
-  : "${SONARR_PORT:=8989}"
-  : "${RADARR_PORT:=7878}"
-  : "${PROWLARR_PORT:=9696}"
-  : "${BAZARR_PORT:=6767}"
-  : "${FLARESOLVERR_PORT:=8191}"
   : "${SUBS_DIR:=}"
 
-  : "${LAN_DOMAIN_SUFFIX:=home.arpa}"
-  LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX#.}"
-  if [[ -z "${LAN_DOMAIN_SUFFIX}" ]]; then
-    LAN_DOMAIN_SUFFIX="lan"
+  if [[ -n "${LAN_DOMAIN_SUFFIX:-}" ]]; then
+    LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX#.}"
   fi
 
-  : "${UPSTREAM_DNS_1:=1.1.1.1}"
-  : "${UPSTREAM_DNS_2:=1.0.0.1}"
   : "${ENABLE_LOCAL_DNS:=0}"
   : "${ENABLE_CADDY:=0}"
   : "${DNS_DISTRIBUTION_MODE:=router}"
@@ -80,22 +69,17 @@ arrstack_setup_defaults() {
   : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
   : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
   : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
-  : "${EXPOSE_DIRECT_PORTS:=1}"
 
   if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"
   fi
 
-  if [[ -z "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
+  if [[ -z "${CADDY_DOMAIN_SUFFIX:-}" && -n "${LAN_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}"
   fi
 
-  if [[ -z "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
-    CADDY_DOMAIN_SUFFIX="lan"
-  fi
-
   ARR_DOMAIN_SUFFIX_CLEAN="${CADDY_DOMAIN_SUFFIX#.}"
-  ARR_DOMAIN_SUFFIX_CLEAN="${ARR_DOMAIN_SUFFIX_CLEAN:-lan}"
+  export ARR_DOMAIN_SUFFIX_CLEAN
 
   export CADDY_DOMAIN_SUFFIX
   export LAN_DOMAIN_SUFFIX

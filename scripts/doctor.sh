@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+
+if [[ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ]]; then
+  # shellcheck source=arrconf/userconf.defaults.sh
+  . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
+fi
+
+if [[ -f "${REPO_ROOT}/arrconf/userconf.sh" ]]; then
+  # shellcheck source=arrconf/userconf.sh
+  . "${REPO_ROOT}/arrconf/userconf.sh"
+fi
+
 have_command() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -175,6 +188,124 @@ report_port() {
   fi
 }
 
+port_bind_addresses() {
+  local proto="$1"
+  local port="$2"
+
+  if have_command ss; then
+    local flag="lnt"
+    if [[ "$proto" == "udp" ]]; then
+      flag="lnu"
+    fi
+
+    ss -H -${flag} "sport = :${port}" 2>/dev/null \
+      | awk '{print $4}' \
+      | while IFS= read -r addr; do
+          [[ -z "$addr" ]] && continue
+          printf '%s\n' "$(normalize_bind_address "${addr%:*}")"
+        done
+  elif have_command lsof; then
+    local -a spec
+    if [[ "$proto" == "udp" ]]; then
+      spec=(-iUDP:"${port}")
+    else
+      spec=(-iTCP:"${port}" -sTCP:LISTEN)
+    fi
+
+    lsof -nP "${spec[@]}" 2>/dev/null \
+      | awk 'NR>1 {print $9}' \
+      | while IFS= read -r name; do
+          [[ -z "$name" ]] && continue
+          name="${name%%->*}"
+          name="${name% (LISTEN)}"
+          printf '%s\n' "$(normalize_bind_address "${name%:*}")"
+        done
+  fi
+}
+
+check_network_security() {
+  echo "[doctor] Auditing bind addresses for safety"
+
+  if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
+    echo "[doctor][warn] Cannot verify LAN bindings because LAN_IP is unset or 0.0.0.0."
+  fi
+
+  if [[ -z "${EXPOSE_DIRECT_PORTS:-}" ]]; then
+    EXPOSE_DIRECT_PORTS=0
+  fi
+
+  local -a direct_ports=("${QBT_HTTP_PORT_HOST}" "${SONARR_PORT}" "${RADARR_PORT}" "${PROWLARR_PORT}" "${BAZARR_PORT}" "${FLARESOLVERR_PORT}")
+
+  if [[ "${EXPOSE_DIRECT_PORTS}" -eq 1 ]]; then
+    if [[ -z "${LAN_IP:-}" || "${LAN_IP}" == "0.0.0.0" ]]; then
+      echo "[doctor][warn] Direct ports enabled but LAN_IP is not set; they would bind to 0.0.0.0."
+    else
+      local port
+      for port in "${direct_ports[@]}"; do
+        local -a bindings=()
+        mapfile -t bindings < <(port_bind_addresses tcp "$port")
+        if ((${#bindings[@]} == 0)); then
+          echo "[doctor][warn] Expected listener on ${LAN_IP}:${port} but nothing is bound."
+          continue
+        fi
+        local had_lan=0
+        local has_wildcard=0
+        local addr
+        for addr in "${bindings[@]}"; do
+          case "$addr" in
+            "${LAN_IP}")
+              had_lan=1
+              ;;
+            "0.0.0.0" | "::" | "*")
+              has_wildcard=1
+              ;;
+          esac
+        done
+        if ((has_wildcard)); then
+          echo "[doctor][warn] Port ${port}/TCP is bound to 0.0.0.0; restrict it to LAN_IP=${LAN_IP} to avoid WAN exposure."
+        fi
+        if ((had_lan == 0)); then
+          echo "[doctor][warn] Port ${port}/TCP does not appear to bind to ${LAN_IP}; confirm your port mappings."
+        fi
+      done
+    fi
+  else
+    local port
+    for port in "${direct_ports[@]}"; do
+      local -a bindings=()
+      mapfile -t bindings < <(port_bind_addresses tcp "$port")
+      if ((${#bindings[@]} > 0)); then
+        echo "[doctor][warn] Direct ports disabled but port ${port}/TCP is still listening on ${bindings[*]}."
+      fi
+    done
+  fi
+
+  local -a gluetun_bindings=()
+  mapfile -t gluetun_bindings < <(port_bind_addresses tcp "$GLUETUN_CONTROL_PORT")
+  local unsafe_gluetun=0
+  local bind
+  for bind in "${gluetun_bindings[@]:-}"; do
+    if [[ -n "$bind" && "$bind" != "${LOCALHOST_IP}" ]]; then
+      unsafe_gluetun=1
+      break
+    fi
+  done
+  if ((unsafe_gluetun)); then
+    echo "[doctor][warn] Gluetun control API is reachable on ${gluetun_bindings[*]}; restrict it to LOCALHOST_IP=${LOCALHOST_IP}."
+  fi
+
+  if [[ "${ENABLE_CADDY}" -ne 1 ]]; then
+    local port
+    for port in 80 443; do
+      local -a bindings=()
+      mapfile -t bindings < <(port_bind_addresses tcp "$port")
+      if ((${#bindings[@]} > 0)); then
+        echo "[doctor][warn] Caddy is disabled but port ${port}/TCP is listening on ${bindings[*]}."
+      fi
+    done
+  fi
+}
+
 test_lan_connectivity() {
   echo "[doctor] Testing LAN accessibility..."
 
@@ -215,7 +346,7 @@ DNS_IP="${LAN_IP:-127.0.0.1}"
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-0}"
 LOCAL_DNS_SERVICE_ENABLED="${LOCAL_DNS_SERVICE_ENABLED:-1}"
 ENABLE_CADDY="${ENABLE_CADDY:-0}"
-EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS:-1}"
+EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS:-0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT:-8000}"
 DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE:-router}"
@@ -307,6 +438,8 @@ else
     echo "[doctor][info] Skipping port 53 checks because local DNS is disabled."
   fi
 fi
+
+check_network_security
 
 if [[ -n "${LOCALHOST_IP}" ]]; then
   report_port "Gluetun control" tcp "${LOCALHOST_IP}" "${GLUETUN_CONTROL_PORT}"

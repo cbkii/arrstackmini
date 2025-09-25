@@ -114,16 +114,27 @@ write_env() {
 
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
+  local direct_ports_requested="${EXPOSE_DIRECT_PORTS:-0}"
+
   if [[ -z "${LAN_IP:-}" || "$LAN_IP" == "0.0.0.0" ]]; then
     if detected_ip="$(detect_lan_ip 2>/dev/null)"; then
       LAN_IP="$detected_ip"
       msg "Auto-detected LAN_IP: $LAN_IP"
     else
       LAN_IP="0.0.0.0"
-      msg "LAN_IP not set; binding services to 0.0.0.0"
+      warn "LAN_IP could not be detected automatically; set it in arrconf/userconf.sh so services bind to the correct interface."
     fi
   else
     msg "Using configured LAN_IP: $LAN_IP"
+  fi
+
+  if (( direct_ports_requested == 1 )); then
+    if [[ -z "${LAN_IP:-}" || "$LAN_IP" == "0.0.0.0" ]]; then
+      die "EXPOSE_DIRECT_PORTS=1 requires LAN_IP to be set to your host's private IPv4 address in arrconf/userconf.sh."
+    fi
+    if ! is_private_ipv4 "$LAN_IP"; then
+      die "LAN_IP='${LAN_IP}' is not a private IPv4 address. Set LAN_IP to your LAN host IP before exposing ports."
+    fi
   fi
 
   load_proton_credentials
@@ -149,7 +160,7 @@ write_env() {
     firewall_ports+=(80 443)
   fi
   if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
-    firewall_ports+=(8080 8989 7878 9696 6767 8191)
+    firewall_ports+=("${QBT_HTTP_PORT_HOST}" "${SONARR_PORT}" "${RADARR_PORT}" "${PROWLARR_PORT}" "${BAZARR_PORT}" "${FLARESOLVERR_PORT}")
   fi
 
   local firewall_ports_csv=""

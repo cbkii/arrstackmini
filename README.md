@@ -26,7 +26,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    ```bash
    cp arrconf/userconf.sh.example arrconf/userconf.sh
    ```
-3. **Set your LAN details.** Edit `arrconf/userconf.sh` and set `LAN_IP` to your Pi (example `192.168.1.50`). Keep `LAN_DOMAIN_SUFFIX=home.arpa` unless you already use another private suffix.
+3. **Set your LAN details.** Edit `arrconf/userconf.sh` and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
 4. **Add Proton credentials.**
    ```bash
    cp arrconf/proton.auth.example arrconf/proton.auth
@@ -38,7 +38,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    ```
    The script installs dependencies if needed, renders `.env`, and launches the stack with Docker Compose.
    Compose reads `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
-6. **Open the WebUIs directly by IP.** As soon as the installer finishes, browse to each service using your Pi’s LAN IP (example `192.168.1.50`):
+6. **Open the WebUIs directly by IP.** As soon as the installer finishes, browse to each service using your Pi’s LAN IP (example `192.168.1.50`). The installer refuses to expose ports until `LAN_IP` is a private address, so set the value and re-run if you skipped it the first time:
    - `http://192.168.1.50:8080` (qBittorrent)
    - `http://192.168.1.50:8989` (Sonarr)
    - `http://192.168.1.50:7878` (Radarr)
@@ -52,7 +52,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
 ```bash
 curl -I http://192.168.1.50:8080
 ```
-You should see an HTTP 200/302 response. If not, re-run the installer and confirm the LAN IP detection.
+You should see an HTTP 200/302 response. If not, re-run the installer and confirm `LAN_IP` matches the host you’re testing from.
 
 ## Useful commands
 - `./arrstack.sh --rotate-api-key --yes` regenerates the Gluetun API key and writes it back to `.env`.
