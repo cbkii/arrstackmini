@@ -3,21 +3,12 @@
 
 set -euo pipefail
 
-log() {
-  printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
-}
-
-warn() {
-  printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2
-}
-
-die() {
-  warn "$1"
-  exit 1
-}
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# shellcheck source=scripts/common.sh
+. "${STACK_DIR}/scripts/common.sh"
+
 ENV_FILE="${STACK_DIR}/.env"
 CONTAINER_NAME="qbittorrent"
 
@@ -110,29 +101,29 @@ derive_subnet() {
 }
 
 show_info() {
-  log "qBittorrent Access Information:"
-  log "================================"
-  log "LAN URL:  http://$(webui_domain)/"
-  log "HTTPS:    https://$(webui_domain)/ (trust the Caddy internal CA)"
-  log ""
+  log_info "qBittorrent Access Information:"
+  log_info "================================"
+  log_info "LAN URL:  http://$(webui_domain)/"
+  log_info "HTTPS:    https://$(webui_domain)/ (trust the Caddy internal CA)"
+  log_info ""
 
   local temp_pass
   temp_pass=$(temporary_password || true)
 
   if [[ -n "$temp_pass" ]]; then
-    log "Username: admin"
-    log "Password: ${temp_pass} (temporary - change this!)"
+    log_info "Username: admin"
+    log_info "Password: ${temp_pass} (temporary - change this!)"
   else
-    log "Username: ${QBT_USER:-admin}"
-    log "Password: ${QBT_PASS:-Check logs or use 'reset' command}"
+    log_info "Username: ${QBT_USER:-admin}"
+    log_info "Password: ${QBT_PASS:-Check logs or use 'reset' command}"
   fi
 
-  log ""
-  log "Remote clients must authenticate through Caddy using user '${CADDY_BASIC_AUTH_USER:-user}' and the password hashed in ${ARR_DOCKER_DIR}/caddy/Caddyfile."
+  log_info ""
+  log_info "Remote clients must authenticate through Caddy using user '${CADDY_BASIC_AUTH_USER:-user}' and the password hashed in ${ARR_DOCKER_DIR}/caddy/Caddyfile."
 }
 
 reset_auth() {
-  log "Resetting qBittorrent authentication..."
+  log_info "Resetting qBittorrent authentication..."
   stop_container
 
   local cfg
@@ -141,10 +132,10 @@ reset_auth() {
     local backup
     backup="${cfg}.bak.$(date +%Y%m%d_%H%M%S)"
     cp "$cfg" "$backup"
-    log "  Backed up config to $backup"
+    log_info "  Backed up config to $backup"
     sed -i '/WebUI\\Password_PBKDF2/d' "$cfg" || true
   else
-    warn "Config file not found at $cfg; proceeding without backup"
+    log_warn "Config file not found at $cfg; proceeding without backup"
   fi
 
   start_container
@@ -154,9 +145,9 @@ reset_auth() {
   temp_pass=$(temporary_password || true)
 
   if [[ -n "$temp_pass" ]]; then
-    log "Authentication reset. New temporary password: ${temp_pass}"
+    log_info "Authentication reset. New temporary password: ${temp_pass}"
   else
-    warn "Unable to detect temporary password automatically. Check 'docker logs qbittorrent'."
+    log_warn "Unable to detect temporary password automatically. Check 'docker logs qbittorrent'."
   fi
 }
 
@@ -168,7 +159,7 @@ update_whitelist() {
     die "LAN_IP is not set to a private address; cannot derive whitelist subnet"
   fi
 
-  log "Enabling LAN whitelist for passwordless access..."
+  log_info "Enabling LAN whitelist for passwordless access..."
   stop_container
 
   local cfg
@@ -183,11 +174,11 @@ update_whitelist() {
     } >>"$tmp"
     mv "$tmp" "$cfg"
   else
-    warn "Config file not found at $cfg; whitelist not updated"
+    log_warn "Config file not found at $cfg; whitelist not updated"
   fi
 
   start_container
-  log "LAN whitelist enabled for: $subnet"
+  log_info "LAN whitelist enabled for: $subnet"
 }
 
 usage() {

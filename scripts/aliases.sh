@@ -73,31 +73,17 @@ install_aliases() {
 #!/bin/bash
 set -euo pipefail
 
-msg() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
-warn() { printf '[%s] WARNING: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
-
 ARR_STACK_DIR="__ARR_STACK_DIR__"
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
+SCRIPT_LIB_DIR="${ARR_STACK_DIR}/scripts"
 
-unescape_env_value_from_compose() {
-  local value="${1-}"
-  local sentinel=$'\001__ARRSTACK_DOLLAR__\002'
-
-  value="${value//$'\r'/}"
-
-  if [[ "$value" =~ ^".*"$ ]]; then
-    value="${value:1:${#value}-2}"
-    value="${value//\$\$/${sentinel}}"
-    value="$(printf '%b' "$value")"
-    value="${value//${sentinel}/\$}"
-    printf '%s' "$value"
-    return
-  fi
-
-  value="${value//\$\$/${sentinel}}"
-  value="${value//${sentinel}/\$}"
-  printf '%s' "$value"
-}
+if [[ -f "${SCRIPT_LIB_DIR}/common.sh" ]]; then
+  # shellcheck source=/dev/null
+  . "${SCRIPT_LIB_DIR}/common.sh"
+else
+  printf '[diagnose-vpn] ERROR: common helpers missing at %s\n' "${SCRIPT_LIB_DIR}/common.sh" >&2
+  exit 1
+fi
 
 load_env_file() {
   local file="$1"
@@ -128,37 +114,37 @@ if [[ -f "$GLUETUN_LIB" ]]; then
   # shellcheck source=/dev/null
   . "$GLUETUN_LIB"
 else
-  warn "Gluetun helper library missing at $GLUETUN_LIB"
+  log_warn "Gluetun helper library missing at $GLUETUN_LIB"
   fetch_forwarded_port() { printf '0'; }
   fetch_public_ip() { printf ''; }
   ensure_proton_port_forwarding_ready() { return 1; }
 fi
 
-msg "🔍 VPN Diagnostics Starting..."
+log_info "🔍 VPN Diagnostics Starting..."
 
 GLUETUN_STATUS="$(docker inspect gluetun --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
-msg "Gluetun container: $GLUETUN_STATUS"
+log_info "Gluetun container: $GLUETUN_STATUS"
 
 if [[ "$GLUETUN_STATUS" != "running" ]]; then
-  warn "Gluetun is not running. Attempting to start..."
+  log_warn "Gluetun is not running. Attempting to start..."
   if docker compose version >/dev/null 2>&1; then
     docker compose up -d gluetun
   else
-    warn "Docker Compose not available; please start Gluetun manually."
+    log_warn "Docker Compose not available; please start Gluetun manually."
   fi
   sleep 30
 fi
 
-msg "Checking VPN connection..."
+log_info "Checking VPN connection..."
 PUBLIC_IP="$(fetch_public_ip)"
 
 if [[ -n "$PUBLIC_IP" ]]; then
-  msg "✅ VPN Connected: $PUBLIC_IP"
+  log_info "✅ VPN Connected: $PUBLIC_IP"
 else
-  warn "VPN not connected"
+  log_warn "VPN not connected"
 fi
 
-msg "Checking port forwarding..."
+log_info "Checking port forwarding..."
 PF_PORT="$(fetch_forwarded_port 2>/dev/null || printf '0')"
 
 if [[ "$PF_PORT" == "0" ]]; then
@@ -167,23 +153,23 @@ if [[ "$PF_PORT" == "0" ]]; then
 fi
 
 if [[ "$PF_PORT" != "0" ]]; then
-  msg "✅ Port forwarding active: Port $PF_PORT"
+  log_info "✅ Port forwarding active: Port $PF_PORT"
 else
-  warn "Port forwarding not working"
-  warn "Review 'docker logs gluetun --tail 100 | grep update-qbt-port' for details"
+  log_warn "Port forwarding not working"
+  log_warn "Review 'docker logs gluetun --tail 100 | grep update-qbt-port' for details"
 fi
 
-msg "Checking service health..."
+log_info "Checking service health..."
 for service in qbittorrent sonarr radarr prowlarr bazarr; do
   STATUS="$(docker inspect "$service" --format '{{.State.Status}}' 2>/dev/null || echo "not found")"
   if [[ "$STATUS" == "running" ]]; then
-    msg "  $service: ✅ running"
+    log_info "  $service: ✅ running"
   else
-    warn "  $service: ❌ $STATUS"
+    log_warn "  $service: ❌ $STATUS"
   fi
 done
 
-msg "Diagnostics complete!"
+log_info "Diagnostics complete!"
 DIAG
 
   local diag_tmp
