@@ -12,33 +12,10 @@ Installs the Caddy internal CA certificate into the host trust store.
 USAGE
 }
 
-log() {
-  printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-warn() {
-  printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" >&2
-}
-
-unescape_env_value_from_compose() {
-  local value="${1-}"
-  local sentinel=$'\001__ARRSTACK_DOLLAR__\002'
-
-  value="${value//$'\r'/}"
-
-  if [[ "$value" =~ ^".*"$ ]]; then
-    value="${value:1:${#value}-2}"
-    value="${value//\$\$/${sentinel}}"
-    value="$(printf '%b' "$value")"
-    value="${value//${sentinel}/\$}"
-    printf '%s' "$value"
-    return
-  fi
-
-  value="${value//\$\$/${sentinel}}"
-  value="${value//${sentinel}/\$}"
-  printf '%s' "$value"
-}
+# shellcheck source=scripts/common.sh
+. "${SCRIPT_DIR}/common.sh"
 
 STACK_DIR=""
 DATA_DIR_OVERRIDE=""
@@ -58,14 +35,13 @@ while (($#)); do
       exit 0
       ;;
     *)
-      warn "Unknown argument: $1"
+      log_warn "Unknown argument: $1"
       usage
       exit 1
       ;;
   esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "$STACK_DIR" ]]; then
   STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 fi
@@ -90,8 +66,8 @@ if [[ -z "${CADDY_DATA_DIR:-}" ]]; then
 fi
 
 if [[ ! -d "$CADDY_DATA_DIR" ]]; then
-  warn "Caddy data directory not found at: $CADDY_DATA_DIR"
-  warn "Specify --data-dir explicitly if your stack lives elsewhere."
+  log_warn "Caddy data directory not found at: $CADDY_DATA_DIR"
+  log_warn "Specify --data-dir explicitly if your stack lives elsewhere."
   exit 1
 fi
 
@@ -101,13 +77,13 @@ if [[ ! -f "$ROOT_CERT" ]]; then
   if [[ -f "$alternative" ]]; then
     ROOT_CERT="$alternative"
   else
-    warn "Caddy root certificate not found under ${CADDY_DATA_DIR}/caddy/pki/authorities/local"
-    warn "Start the Caddy container once so it can provision certificates, then rerun this script."
+    log_warn "Caddy root certificate not found under ${CADDY_DATA_DIR}/caddy/pki/authorities/local"
+    log_warn "Start the Caddy container once so it can provision certificates, then rerun this script."
     exit 1
   fi
 fi
 
-log "Found Caddy root certificate: $ROOT_CERT"
+log_info "Found Caddy root certificate: $ROOT_CERT"
 
 OS_ID=""
 OS_LIKE=""
@@ -120,8 +96,7 @@ fi
 
 install_debian_ca() {
   if [[ $(id -u) -ne 0 ]]; then
-    warn "This operation requires root privileges. Re-run with sudo or as root."
-    exit 1
+    die "This operation requires root privileges. Re-run with sudo or as root."
   fi
 
   local target_dir="/usr/local/share/ca-certificates"
@@ -129,14 +104,13 @@ install_debian_ca() {
 
   mkdir -p "$target_dir"
   install -m 0644 "$ROOT_CERT" "$target_cert"
-  log "Installed certificate to $target_cert"
+  log_info "Installed certificate to $target_cert"
 
   if command -v update-ca-certificates >/dev/null 2>&1; then
     update-ca-certificates >/dev/null
-    log "System trust store updated via update-ca-certificates"
+    log_info "System trust store updated via update-ca-certificates"
   else
-    warn "update-ca-certificates not found; install 'ca-certificates' package and rerun."
-    exit 1
+    die "update-ca-certificates not found; install 'ca-certificates' package and rerun."
   fi
 }
 

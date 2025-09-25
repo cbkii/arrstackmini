@@ -270,6 +270,22 @@ msg_color_supported() {
   return 1
 }
 
+arrstack_timestamp() {
+  date '+%H:%M:%S'
+}
+
+log_info() {
+  printf '[%s] %s\n' "$(arrstack_timestamp)" "$*"
+}
+
+log_warn() {
+  printf '[%s] WARNING: %s\n' "$(arrstack_timestamp)" "$*" >&2
+}
+
+log_error() {
+  printf '[%s] ERROR: %s\n' "$(arrstack_timestamp)" "$*" >&2
+}
+
 msg() {
   if msg_color_supported; then
     printf '%b%s%b\n' "$CYAN" "$*" "$RESET"
@@ -287,7 +303,7 @@ warn() {
 }
 
 die() {
-  printf '[%s] ERROR: %s\n' "$(date '+%H:%M:%S')" "$*" >&2
+  log_error "$@"
   exit 1
 }
 
