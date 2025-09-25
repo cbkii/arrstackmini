@@ -97,6 +97,11 @@ trim_whitespace() {
 declare -Ag DOCKER_PORT_BINDINGS=()
 DOCKER_PORT_BINDINGS_LOADED=0
 
+reset_docker_port_bindings_cache() {
+  DOCKER_PORT_BINDINGS=()
+  DOCKER_PORT_BINDINGS_LOADED=0
+}
+
 load_docker_port_bindings() {
   if ((DOCKER_PORT_BINDINGS_LOADED)); then
     return 0
@@ -333,9 +338,78 @@ port_conflict_listeners() {
   printf '%s\n' "${results[@]}"
 }
 
+
+wait_for_conflicts_to_clear() {
+  local -n _targets_ref="$1"
+  local timeout="${2:-20}"
+
+  if ((${#_targets_ref[@]} == 0)); then
+    return 0
+  fi
+
+  local deadline=$((SECONDS + timeout))
+
+  while ((SECONDS < deadline)); do
+    local still_conflicted=0
+
+    reset_docker_port_bindings_cache
+
+    local entry=""
+    for entry in "${_targets_ref[@]}"; do
+      IFS='|' read -r port proto _rest <<<"$entry"
+      proto="${proto,,}"
+
+      local -a _listeners=()
+      mapfile -t _listeners < <(port_conflict_listeners "$proto" "*" "$port")
+      if ((${#_listeners[@]} > 0)); then
+        still_conflicted=1
+        break
+      fi
+    done
+
+    if ((still_conflicted == 0)); then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  return 1
+}
+
 listener_is_arrstack() {
   local desc="${1,,}"
-  [[ "$desc" == *"arrstack"* ]]
+
+  if [[ -z "$desc" ]]; then
+    return 1
+  fi
+
+  local patterns=(
+    "arrstack"
+    "qbittorrent"
+    "sonarr"
+    "radarr"
+    "prowlarr"
+    "jackett"
+    "bazarr"
+    "flaresolverr"
+    "byparr"
+    "proton"
+    "gluetun"
+  )
+
+  local pattern
+  for pattern in "${patterns[@]}"; do
+    if [[ "$desc" == *"$pattern"* ]]; then
+      return 0
+    fi
+  done
+
+  if [[ "$desc" =~ [[:alpha:]]+arr ]]; then
+    return 0
+  fi
+
+  return 1
 }
 
 format_listener_description() {
@@ -354,18 +428,45 @@ format_listener_description() {
   printf '%s\n' "$raw_desc"
 }
 
-prompt_port_conflict_resolution() {
-  local -n _conflicts_ref="$1"
-  local -n _arrstack_conflicts_ref="$2"
+stop_arrstack_services_and_continue() {
+  local _arrstack_conflicts_name="$1"
+  local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
 
   msg ""
+  msg "Stopping existing arrstack services..."
+
+  if safe_cleanup; then
+    msg "Existing arrstack services were stopped."
+    if wait_for_conflicts_to_clear "$_arrstack_conflicts_name"; then
+      msg "Ports previously held by arrstack were released."
+    else
+      warn "Ports are still reported in use after stopping arrstack. Re-checking availability."
+    fi
+    return 0
+  fi
+
+  die "Failed to stop the existing arrstack services. Resolve the conflicts manually and rerun the installer."
+}
+
+prompt_port_conflict_resolution() {
+  local _conflicts_name="$1"
+  local _arrstack_conflicts_name="$2"
+  local -n _conflicts_ref="$_conflicts_name"
+  local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
+
+msg ""
   msg "Port Conflict Detected!"
   msg ""
   msg "The following ports are already in use:"
   local entry
   for entry in "${_conflicts_ref[@]}"; do
     IFS='|' read -r port proto label host desc _is_arrstack <<<"$entry"
-    msg "- Port ${port} (${label}): In use on ${host}${desc:+ by ${desc}}"
+    local display_host
+    display_host="$(trim_whitespace "${host:-}")"
+    if [[ -z "$display_host" ]]; then
+      display_host="*"
+    fi
+    msg "- Port ${port} (${label}): In use on ${display_host}${desc:+ by ${desc}}"
   done
   msg ""
 
@@ -378,6 +479,17 @@ prompt_port_conflict_resolution() {
   fi
 
   msg ""
+  if [[ "${ASSUME_YES}" == 1 ]]; then
+    if ((${#_arrstack_conflicts_ref[@]} > 0)); then
+      msg ""
+      msg "--yes supplied: automatically selecting option 2 to stop the existing arrstack installation."
+      stop_arrstack_services_and_continue "$_arrstack_conflicts_name"
+      return $?
+    fi
+
+    die "--yes supplied but conflicting ports are not held by arrstack services. Resolve the conflicts manually or rerun without --yes."
+  fi
+  
   msg "How would you like to resolve this?"
   msg ""
   msg "1. Edit ports (Keeps existing arrstack running, you'll need to update userconf.sh)"
@@ -420,13 +532,9 @@ prompt_port_conflict_resolution() {
           confirm=""
         fi
         if [[ ${confirm,,} == "yes" ]]; then
-          msg ""
-          msg "Stopping existing arrstack services..."
-          if safe_cleanup; then
-            msg "Existing arrstack services were stopped."
+          if stop_arrstack_services_and_continue "$_arrstack_conflicts_name"; then
             return 0
           fi
-          die "Failed to stop the existing arrstack services. Resolve the conflicts manually and rerun the installer."
         fi
         msg ""
         msg "Installation cancelled."
@@ -564,6 +672,7 @@ check_port_conflicts() {
       done
 
       if prompt_port_conflict_resolution conflicts arrstack_conflicts; then
+        reset_docker_port_bindings_cache
         DOCKER_PORT_BINDINGS=()
         DOCKER_PORT_BINDINGS_LOADED=0
         cleanup_performed=1
