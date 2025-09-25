@@ -1,7 +1,181 @@
 # shellcheck shell=bash
 
+: "${CYAN:=}"
+: "${YELLOW:=}"
+: "${RESET:=}"
+: "${SECRET_FILE_MODE:=600}"
+: "${NONSECRET_FILE_MODE:=600}"
+: "${DATA_DIR_MODE:=700}"
+: "${LOCK_FILE_MODE:=600}"
+
 have_command() {
   command -v "$1" >/dev/null 2>&1
+}
+
+missing_commands() {
+  local -a missing=()
+  local cmd
+
+  for cmd in "$@"; do
+    if ! have_command "$cmd"; then
+      missing+=("$cmd")
+    fi
+  done
+
+  if ((${#missing[@]} == 0)); then
+    return 0
+  fi
+
+  printf '%s\n' "${missing[@]}"
+}
+
+check_dependencies() {
+  local missing
+  missing="$(missing_commands "$@" || true)"
+
+  if [[ -z "$missing" ]]; then
+    return 0
+  fi
+
+  local display
+  display="${missing//$'\n'/, }"
+  warn "Missing recommended command(s): ${display}"
+  return 1
+}
+
+require_dependencies() {
+  local missing
+  missing="$(missing_commands "$@" || true)"
+
+  if [[ -z "$missing" ]]; then
+    return 0
+  fi
+
+  local display
+  display="${missing//$'\n'/, }"
+  die "Missing required command(s): ${display}"
+}
+
+ensure_dir() {
+  local dir="$1"
+  mkdir -p "$dir"
+}
+
+ensure_dir_mode() {
+  local dir="$1"
+  local mode="$2"
+
+  ensure_dir "$dir"
+
+  if [[ -z "$mode" ]]; then
+    return 0
+  fi
+
+  chmod "$mode" "$dir" 2>/dev/null || warn "Could not apply mode ${mode} to ${dir}"
+}
+
+ensure_file_mode() {
+  local file="$1"
+  local mode="$2"
+
+  if [[ ! -e "$file" ]]; then
+    return 0
+  fi
+
+  chmod "$mode" "$file" 2>/dev/null || warn "Could not apply mode ${mode} to ${file}"
+}
+
+ensure_secret_file_mode() {
+  ensure_file_mode "$1" "$SECRET_FILE_MODE"
+}
+
+ensure_nonsecret_file_mode() {
+  ensure_file_mode "$1" "$NONSECRET_FILE_MODE"
+}
+
+ensure_data_dir_mode() {
+  ensure_dir_mode "$1" "$DATA_DIR_MODE"
+}
+
+arrstack_escalate_privileges() {
+  # POSIX-safe locals
+  _euid="${EUID:-$(id -u)}"
+  if [ "${_euid}" -eq 0 ]; then
+    # Already root: nothing to do
+    return 0
+  fi
+
+  # Save original argv for possible su fallback reconstruction
+  _script_path="${0:-}"
+  # If script was invoked via relative path, attempt to get absolute path
+  if [ -n "${_script_path}" ] && [ "${_script_path#./}" = "${_script_path}" ] && [ "${_script_path#/}" = "${_script_path}" ]; then
+    # not absolute, try to resolve
+    if command -v realpath >/dev/null 2>&1; then
+      _script_path="$(realpath "${_script_path}" 2>/dev/null || printf '%s' "${_script_path}")"
+    else
+      # fallback: prefix cwd
+      _script_path="$(pwd)/${_script_path}"
+    fi
+  fi
+
+  # Prefer sudo (preserve env with -E). First try non-interactive.
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n true >/dev/null 2>&1; then
+      # passwordless sudo available: re-exec with preserved env
+      exec sudo -E "${_script_path}" "$@"
+      # unreachable
+      return 0
+    else
+      # Interactive sudo available — notify user and re-exec (will prompt)
+      printf '[%s] escalating privileges with sudo; you may be prompted for your password…\n' "$(basename "${_script_path}")" >&2
+      exec sudo -E "${_script_path}" "$@"
+      # unreachable
+      return 0
+    fi
+  fi
+
+  # If pkexec exists, attempt to use it (polkit). pkexec may not preserve env;
+  # still it's often available on desktop systems where sudo isn't.
+  if command -v pkexec >/dev/null 2>&1; then
+    printf '[%s] escalating privileges with pkexec; you may be prompted for authentication…\n' "$(basename "${_script_path}")" >&2
+    # pkexec requires the binary to be executable; using the interpreter ensures portability
+    # Try to preserve PATH and a minimal env for the invocation
+    if command -v bash >/dev/null 2>&1; then
+      exec pkexec /bin/bash -c "exec \"${_script_path}\" \"\$@\"" -- "$@"
+    else
+      exec pkexec /bin/sh -c "exec \"${_script_path}\" \"\$@\"" -- "$@"
+    fi
+    return 0
+  fi
+
+  # Last resort: try su -c, reconstruct quoted command line
+  if command -v su >/dev/null 2>&1; then
+    printf '[%s] escalating privileges with su; you may be prompted for the root password…\n' "$(basename "${_script_path}")" >&2
+
+    # Build a safely quoted command string to pass to su -c
+    _cmd=""
+    # prefer absolute script path if resolved above; otherwise pass original $0
+    if [ -n "${_script_path}" ]; then
+      _cmd="$(printf '%s' "${_script_path}")"
+    else
+      _cmd="$(printf '%s' "$0")"
+    fi
+
+    for _arg in "$@"; do
+      # escape single quotes by closing, inserting '\'' and re-opening
+      _escaped="$(printf '%s' "${_arg}" | sed "s/'/'\\\\''/g")"
+      _cmd="${_cmd} '${_escaped}'"
+    done
+
+    # Execute via su - root -c 'exec CMD'
+    exec su - root -c "exec ${_cmd}"
+    # unreachable
+    return 0
+  fi
+
+  # No escalation mechanism available
+  printf '[%s] ERROR: root privileges are required. Install sudo, pkexec (polkit) or su, or run this script as root.\n' "$(basename "${_script_path}")" >&2
+  return 2
 }
 
 ss_port_bound() {
@@ -131,11 +305,6 @@ init_logging() {
   msg "Log file: $LOG_FILE"
 }
 
-ensure_dir() {
-  local dir="$1"
-  mkdir -p "$dir"
-}
-
 acquire_lock() {
   local lock_dir="${ARR_STACK_DIR:-/tmp}"
   local timeout=30
@@ -259,6 +428,82 @@ normalize_csv() {
   done
 
   printf '%s' "$joined"
+}
+
+collect_upstream_dns_servers() {
+  local csv=""
+
+  if [[ -n "${UPSTREAM_DNS_1:-}" ]]; then
+    csv+="${UPSTREAM_DNS_1}"
+  fi
+
+  if [[ -n "${UPSTREAM_DNS_SERVERS:-}" ]]; then
+    csv+="${csv:+,}${UPSTREAM_DNS_SERVERS}"
+  fi
+
+  if [[ -n "${UPSTREAM_DNS_2:-}" ]]; then
+    csv+="${csv:+,}${UPSTREAM_DNS_2}"
+  fi
+
+  if [[ -z "$csv" ]]; then
+    if declare -p ARRSTACK_UPSTREAM_DNS_CHAIN >/dev/null 2>&1; then
+      local entry
+      for entry in "${ARRSTACK_UPSTREAM_DNS_CHAIN[@]}"; do
+        csv+="${csv:+,}${entry}"
+      done
+    fi
+  fi
+
+  if [[ -z "$csv" ]]; then
+    csv="1.1.1.1,1.0.0.1"
+  fi
+
+  csv="$(normalize_csv "$csv")"
+
+  local -a servers=()
+  IFS=',' read -r -a servers <<<"$csv"
+
+  local server
+  for server in "${servers[@]}"; do
+    [[ -z "$server" ]] && continue
+    printf '%s\n' "$server"
+  done
+}
+
+probe_dns_resolver() {
+  local server="$1"
+  local domain="${2:-cloudflare.com}"
+  local timeout="${3:-2}"
+
+  if command -v dig >/dev/null 2>&1; then
+    if dig +time="${timeout}" +tries=1 @"${server}" "${domain}" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if command -v drill >/dev/null 2>&1; then
+    if drill -Q "${domain}" @"${server}" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if command -v kdig >/dev/null 2>&1; then
+    if kdig @"${server}" "${domain}" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if command -v nslookup >/dev/null 2>&1; then
+    if nslookup "${domain}" "${server}" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+
+  return 2
 }
 
 verify_single_level_env_placeholders() {

@@ -4,6 +4,19 @@
 
 Use this checklist to decide which `arrconf/userconf.sh` values to edit before running the installer.
 
+## Configuration precedence
+
+Values load in three layers so the last writer wins:
+
+1. **Environment variables** – anything exported in the shell before running `./arrstack.sh` takes top priority (useful for CI or
+   temporary overrides).
+2. **`arrconf/userconf.sh`** – the copy you maintain locally. Edit this file for long-term changes.
+3. **`arrconf/userconf.defaults.sh`** – shipped defaults. The example file is generated from these values via `scripts/dev/sync-
+   userconf-example.sh` to avoid drift.
+
+The installer prints the resolved value for each setting during preflight. If something looks wrong, check for stray environment
+exports before editing `userconf.sh`.
+
 ## Why
 Clear defaults keep the stack reproducible. Changing only what you need reduces mistakes and makes reruns predictable.
 
@@ -18,7 +31,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 ### DNS and networking
 - **`ENABLE_LOCAL_DNS`** – Disabled by default. Set to `1` to run dnsmasq and manage LAN hostnames; requires `LAN_DOMAIN_SUFFIX` and upstream DNS servers.
 - **`DNS_DISTRIBUTION_MODE`** – choose `router` or `per-device` (see [LAN DNS & network pre-start](lan-dns-network-setup.md)).
-- **`UPSTREAM_DNS_1` / `UPSTREAM_DNS_2`** – public resolvers used when the Pi forwards queries. Both must be set when local DNS is enabled.
+- **`UPSTREAM_DNS_SERVERS`** – comma-separated resolver list (e.g. `1.1.1.1,1.0.0.1`). The installer probes them during preflight and prioritises responsive servers first. Legacy `UPSTREAM_DNS_1`/`UPSTREAM_DNS_2` still work and override the first two positions when set.
 - **`GLUETUN_CONTROL_PORT`** – keep `8000` unless another local service uses it.
 - **`EXPOSE_DIRECT_PORTS`** – defaults to `1` so every WebUI is reachable at `http://LAN_IP:PORT`. Leave it enabled and provide a private `LAN_IP`; the installer exits if either requirement is missing.
 

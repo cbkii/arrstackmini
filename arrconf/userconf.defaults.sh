@@ -64,9 +64,87 @@ PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
 # Domain suffix used by optional DNS/Caddy hostnames (default to RFC 8375 recommendation)
 LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}"
 
-# Upstream DNS resolvers for fallback
-UPSTREAM_DNS_1="${UPSTREAM_DNS_1:-1.1.1.1}"
-UPSTREAM_DNS_2="${UPSTREAM_DNS_2:-1.0.0.1}"
+# Helper utilities for defaults that may also be sourced by other scripts
+if ! declare -f arrstack_trim_whitespace >/dev/null 2>&1; then
+  arrstack_trim_whitespace() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+  }
+fi
+
+if ! declare -f arrstack_parse_csv >/dev/null 2>&1; then
+  arrstack_parse_csv() {
+    local raw="$1"
+    local item
+
+    IFS=',' read -r -a _arrstack_csv_items <<<"$raw"
+    for item in "${_arrstack_csv_items[@]}"; do
+      item="$(arrstack_trim_whitespace "$item")"
+      [[ -z "$item" ]] && continue
+      printf '%s\n' "$item"
+    done
+  }
+fi
+
+if ! declare -f arrstack_join_by >/dev/null 2>&1; then
+  arrstack_join_by() {
+    local delimiter="$1"
+    shift || true
+    local first=1
+    local piece
+    for piece in "$@"; do
+      if ((first)); then
+        printf '%s' "$piece"
+        first=0
+      else
+        printf '%s%s' "$delimiter" "$piece"
+      fi
+    done
+  }
+fi
+
+# Upstream DNS resolvers for fallback (support legacy *_1/*_2 and new list form)
+ARRSTACK_DEFAULT_UPSTREAM_DNS=("1.1.1.1" "1.0.0.1")
+
+arrstack__dns_candidates=()
+
+if [[ -n "${UPSTREAM_DNS_1:-}" ]]; then
+  arrstack__dns_candidates+=("$(arrstack_trim_whitespace "$UPSTREAM_DNS_1")")
+fi
+
+if [[ -n "${UPSTREAM_DNS_2:-}" ]]; then
+  arrstack__dns_candidates+=("$(arrstack_trim_whitespace "$UPSTREAM_DNS_2")")
+fi
+
+if [[ -n "${UPSTREAM_DNS_SERVERS:-}" ]]; then
+  while IFS= read -r server; do
+    arrstack__dns_candidates+=("$server")
+  done < <(arrstack_parse_csv "$UPSTREAM_DNS_SERVERS")
+fi
+
+if ((${#arrstack__dns_candidates[@]} == 0)); then
+  arrstack__dns_candidates=("${ARRSTACK_DEFAULT_UPSTREAM_DNS[@]}")
+fi
+
+mapfile -t ARRSTACK_UPSTREAM_DNS_CHAIN < <(
+  printf '%s\n' "${arrstack__dns_candidates[@]}" | awk 'NF && !seen[$0]++'
+)
+
+if ((${#ARRSTACK_UPSTREAM_DNS_CHAIN[@]} == 0)); then
+  ARRSTACK_UPSTREAM_DNS_CHAIN=("${ARRSTACK_DEFAULT_UPSTREAM_DNS[@]}")
+fi
+
+UPSTREAM_DNS_SERVERS="${UPSTREAM_DNS_SERVERS:-$(arrstack_join_by ',' "${ARRSTACK_UPSTREAM_DNS_CHAIN[@]}")}"
+
+if [[ -z "${UPSTREAM_DNS_1:-}" ]]; then
+  UPSTREAM_DNS_1="${ARRSTACK_UPSTREAM_DNS_CHAIN[0]}"
+fi
+
+if [[ -z "${UPSTREAM_DNS_2:-}" ]]; then
+  UPSTREAM_DNS_2="${ARRSTACK_UPSTREAM_DNS_CHAIN[1]:-}"
+fi
 
 # Enable internal local DNS resolver service
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-0}"
