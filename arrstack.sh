@@ -151,6 +151,7 @@ main() {
         LOCALHOST_IP="${LOCALHOST_IP}" \
         DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE}" \
         GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT}" \
+        EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS}" \
         bash "${doctor_script}"; then
         warn "LAN diagnostics reported issues"
       fi

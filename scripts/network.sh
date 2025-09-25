@@ -58,7 +58,9 @@ detect_lan_ip() {
   if ! have_command ip; then
     return 1
   fi
-  local candidates=()
+
+  local -a candidates=()
+  local -a private_candidates=()
 
   local default_iface
   default_iface="$(ip route show default | awk '/default/ {print $5}' | head -n1)"
@@ -75,6 +77,20 @@ detect_lan_ip() {
   done < <(ip -4 addr show | awk '/inet / {print $2}' | cut -d/ -f1)
 
   local candidate
+  for candidate in "${candidates[@]}"; do
+    if ! validate_ipv4 "$candidate"; then
+      continue
+    fi
+    if is_private_ipv4 "$candidate"; then
+      private_candidates+=("$candidate")
+    fi
+  done
+
+  if ((${#private_candidates[@]} > 0)); then
+    printf '%s' "${private_candidates[0]}"
+    return 0
+  fi
+
   for candidate in "${candidates[@]}"; do
     if validate_ipv4 "$candidate"; then
       printf '%s' "$candidate"

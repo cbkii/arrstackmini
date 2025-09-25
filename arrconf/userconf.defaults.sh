@@ -55,13 +55,13 @@ PGID="${PGID:-$(id -g)}"
 
 # Location
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
-LAN_IP="${LAN_IP:-0.0.0.0}"
+LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands}"
 # SERVER_NAMES=""  # Optionally pin Proton server hostnames if PF keeps returning 0 (comma-separated list)
 PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
 
-# Domain suffix used by Caddy hostnames (default to RFC 8375 recommendation)
+# Domain suffix used by optional DNS/Caddy hostnames (default to RFC 8375 recommendation)
 LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}"
 
 # Upstream DNS resolvers for fallback

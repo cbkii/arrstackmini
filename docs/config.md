@@ -9,18 +9,18 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 
 ## Do
 ### Start here (edit these first)
-- **`LAN_IP`** – set to your Pi (example `192.168.1.50`). Required.
-- **`LAN_DOMAIN_SUFFIX`** – defaults to `home.arpa`. Leave it unless you already use another private suffix.
+- **`LAN_IP`** – set to your Pi (example `192.168.1.50`) and reserve it in DHCP so it never changes. The installer refuses to expose ports until this is a private IPv4.
+- **`LAN_DOMAIN_SUFFIX`** – optional suffix for DNS/reverse proxy hostnames. Leave blank unless you plan to enable local DNS/Caddy.
 - **`ARR_BASE`** – default `~/srv`. Change if you store Docker data elsewhere.
 - **`DOWNLOADS_DIR` / `COMPLETED_DIR` / `MEDIA_DIR`** – point these at storage with enough space.
 - **`TIMEZONE`** – set to your region (e.g. `Europe/Amsterdam`).
 
 ### DNS and networking
-- **`ENABLE_LOCAL_DNS`** – `1` keeps the dnsmasq container running. Set `0` only if you plan to manage DNS manually.
+- **`ENABLE_LOCAL_DNS`** – Disabled by default. Set to `1` to run dnsmasq and manage LAN hostnames; requires `LAN_DOMAIN_SUFFIX` and upstream DNS servers.
 - **`DNS_DISTRIBUTION_MODE`** – choose `router` or `per-device` (see [LAN DNS & network pre-start](lan-dns-network-setup.md)).
-- **`UPSTREAM_DNS_1` / `UPSTREAM_DNS_2`** – public resolvers used when the Pi forwards queries. Defaults work for most homes.
+- **`UPSTREAM_DNS_1` / `UPSTREAM_DNS_2`** – public resolvers used when the Pi forwards queries. Both must be set when local DNS is enabled.
 - **`GLUETUN_CONTROL_PORT`** – keep `8000` unless another local service uses it.
-- **`EXPOSE_DIRECT_PORTS`** – defaults to `1` so every WebUI is reachable at `http://LAN_IP:PORT`. Set to `0` if you want Caddy to be the sole LAN entry point.
+- **`EXPOSE_DIRECT_PORTS`** – defaults to `1` so every WebUI is reachable at `http://LAN_IP:PORT`. Leave it enabled and provide a private `LAN_IP`; the installer exits if either requirement is missing.
 
 ### Credentials and security
 - **`QBT_USER` / `QBT_PASS`** – update after first login to qBittorrent. Keep `.env` in sync.

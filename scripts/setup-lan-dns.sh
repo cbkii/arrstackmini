@@ -183,7 +183,28 @@ rewrite_hosts_file() {
 configure_docker_dns() {
   local lan_ip="$1"
   local daemon_json="/etc/docker/daemon.json"
-  local dns_servers="[\"${lan_ip}\", \"1.1.1.1\"]"
+  local -a dns_chain=("${lan_ip}")
+
+  if [[ -n "${UPSTREAM_DNS_1:-}" ]]; then
+    dns_chain+=("${UPSTREAM_DNS_1}")
+  fi
+  if [[ -n "${UPSTREAM_DNS_2:-}" && "${UPSTREAM_DNS_2}" != "${UPSTREAM_DNS_1:-}" ]]; then
+    dns_chain+=("${UPSTREAM_DNS_2}")
+  fi
+
+  local dns_servers="["
+  local dns_entry
+  local first=1
+  for dns_entry in "${dns_chain[@]}"; do
+    [[ -z "$dns_entry" ]] && continue
+    if ((first)); then
+      dns_servers+="\"${dns_entry}\""
+      first=0
+    else
+      dns_servers+="\", \"${dns_entry}\""
+    fi
+  done
+  dns_servers+="]"
 
   if [[ -z "$lan_ip" ]]; then
     return 0
@@ -222,7 +243,7 @@ configure_docker_dns() {
     return 1
   fi
 
-  log "Configured Docker daemon DNS to prefer ${lan_ip} with 1.1.1.1 as fallback."
+  log "Configured Docker daemon DNS to prefer ${lan_ip} with fallback ${dns_servers}."
 
   if command -v systemctl >/dev/null 2>&1; then
     if systemctl is-active --quiet docker; then
