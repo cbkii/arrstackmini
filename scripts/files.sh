@@ -19,7 +19,10 @@ mkdirs() {
 
   local service
   for service in "${ARR_DOCKER_SERVICES[@]}"; do
-    if [[ "$service" == "local_dns" && "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+    if [[ "$service" == "local_dns" && "${ENABLE_LOCAL_DNS:-0}" -ne 1 ]]; then
+      continue
+    fi
+    if [[ "$service" == "caddy" && "${ENABLE_CADDY:-0}" -ne 1 ]]; then
       continue
     fi
     ensure_dir "${ARR_DOCKER_DIR}/${service}"
@@ -140,6 +143,47 @@ write_env() {
   fi
   local gluetun_firewall_outbound
   gluetun_firewall_outbound="$(printf '%s\n' "${outbound_candidates[@]}" | sort -u | paste -sd, -)"
+
+  local -a firewall_ports=()
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    firewall_ports+=(80 443)
+  fi
+  if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
+    firewall_ports+=(8080 8989 7878 9696 6767 8191)
+  fi
+
+  local firewall_ports_csv=""
+  if ((${#firewall_ports[@]})); then
+    local -A seen_firewall_ports=()
+    local firewall_port
+    for firewall_port in "${firewall_ports[@]}"; do
+      if [[ -n "$firewall_port" && -z "${seen_firewall_ports[$firewall_port]:-}" ]]; then
+        seen_firewall_ports["$firewall_port"]=1
+        firewall_ports_csv+="${firewall_ports_csv:+,}${firewall_port}"
+      fi
+    done
+  fi
+
+  local -a compose_profiles=(ipdirect)
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    compose_profiles+=(proxy)
+  fi
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+    compose_profiles+=(localdns)
+  fi
+
+  local compose_profiles_csv=""
+  if ((${#compose_profiles[@]})); then
+    local -A seen_profiles=()
+    local profile
+    for profile in "${compose_profiles[@]}"; do
+      if [[ -n "$profile" && -z "${seen_profiles[$profile]:-}" ]]; then
+        seen_profiles["$profile"]=1
+        compose_profiles_csv+="${compose_profiles_csv:+,}${profile}"
+      fi
+    done
+  fi
+
   local qbt_whitelist_raw
   qbt_whitelist_raw="${QBT_AUTH_WHITELIST:-}"
   if [[ -z "$qbt_whitelist_raw" ]]; then
@@ -162,6 +206,7 @@ write_env() {
     write_env_kv "LAN_IP" "$LAN_IP"
     write_env_kv "LOCALHOST_IP" "$LOCALHOST_IP"
     write_env_kv "EXPOSE_DIRECT_PORTS" "$EXPOSE_DIRECT_PORTS"
+    write_env_kv "ENABLE_CADDY" "$ENABLE_CADDY"
     printf '\n'
 
     printf '# Local DNS\n'
@@ -180,6 +225,7 @@ write_env() {
 
     printf '# Derived values\n'
     write_env_kv "OPENVPN_USER_ENFORCED" "$PU"
+    write_env_kv "COMPOSE_PROFILES" "$compose_profiles_csv"
     printf '\n'
 
     printf '# Gluetun settings\n'
@@ -187,6 +233,7 @@ write_env() {
     write_env_kv "GLUETUN_API_KEY" "$GLUETUN_API_KEY"
     write_env_kv "GLUETUN_CONTROL_PORT" "$GLUETUN_CONTROL_PORT"
     write_env_kv "SERVER_COUNTRIES" "$SERVER_COUNTRIES"
+    write_env_kv "GLUETUN_FIREWALL_INPUT_PORTS" "$firewall_ports_csv"
     write_env_kv "GLUETUN_FIREWALL_OUTBOUND_SUBNETS" "$gluetun_firewall_outbound"
     printf '\n'
 
@@ -246,10 +293,15 @@ write_compose() {
     local tmp
 
     LOCAL_DNS_SERVICE_ENABLED=0
+    local include_caddy=0
     local include_local_dns=0
     local local_dns_state_message="Local DNS container disabled (ENABLE_LOCAL_DNS=0)"
 
-    if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+    if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+      include_caddy=1
+    fi
+
+    if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
       include_local_dns=1
       local_dns_state_message="Local DNS container requested"
     fi
@@ -273,12 +325,13 @@ write_compose() {
     tmp="$(mktemp "${compose_path}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${compose_path}"
     chmod "$NONSECRET_FILE_MODE" "$tmp" 2>/dev/null || true
 
-    {
-      cat <<'YAML'
+    cat <<'YAML' >"$tmp"
 services:
   gluetun:
     image: ${GLUETUN_IMAGE}
     container_name: gluetun
+    profiles:
+      - ipdirect
     cap_add:
       - NET_ADMIN
     devices:
@@ -300,14 +353,14 @@ services:
       QBT_USER: ${QBT_USER}
       QBT_PASS: ${QBT_PASS}
       QBITTORRENT_ADDR: "http://127.0.0.1:8080"
-      PORT_FORWARD_ONLY: "yes"
+      PORT_FORWARD_ONLY: "on"
       HEALTH_TARGET_ADDRESS: "1.1.1.1:443"
       HEALTH_VPN_DURATION_INITIAL: "30s"
       HEALTH_VPN_DURATION_ADDITION: "10s"
       HEALTH_SUCCESS_WAIT_DURATION: "10s"
       DNS_KEEP_NAMESERVER: "off"
       FIREWALL_OUTBOUND_SUBNETS: ${GLUETUN_FIREWALL_OUTBOUND_SUBNETS}
-      FIREWALL_INPUT_PORTS: "80,443,8080,8989,7878,9696,6767,8191"
+      FIREWALL_INPUT_PORTS: ${GLUETUN_FIREWALL_INPUT_PORTS}
       UPDATER_PERIOD: "24h"
       PUID: ${PUID}
       PGID: ${PGID}
@@ -316,19 +369,27 @@ services:
       - ${ARR_DOCKER_DIR}/gluetun:/gluetun
     ports:
       - "${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
+YAML
+
+    if ((include_caddy)); then
+      cat <<'YAML' >>"$tmp"
       - "${LAN_IP}:80:80"
       - "${LAN_IP}:443:443"
 YAML
-      if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
-        cat <<'YAML'
-      - "${LAN_IP}:8080:8080"
-      - "${LAN_IP}:8989:8989"
-      - "${LAN_IP}:7878:7878"
-      - "${LAN_IP}:9696:9696"
-      - "${LAN_IP}:6767:6767"
+    fi
+
+    if [[ "${EXPOSE_DIRECT_PORTS:-0}" -eq 1 ]]; then
+      cat <<'YAML' >>"$tmp"
+      - "${LAN_IP}:${QBT_HTTP_PORT_HOST}:8080"
+      - "${LAN_IP}:${SONARR_PORT}:${SONARR_PORT}"
+      - "${LAN_IP}:${RADARR_PORT}:${RADARR_PORT}"
+      - "${LAN_IP}:${PROWLARR_PORT}:${PROWLARR_PORT}"
+      - "${LAN_IP}:${BAZARR_PORT}:${BAZARR_PORT}"
+      - "${LAN_IP}:${FLARESOLVERR_PORT}:${FLARESOLVERR_PORT}"
 YAML
-      fi
-      cat <<'YAML'
+    fi
+
+    cat <<'YAML' >>"$tmp"
     healthcheck:
       test: /gluetun-entrypoint healthcheck
       interval: 30s
@@ -342,11 +403,14 @@ YAML
         max-size: "1m"
         max-file: "3"
 YAML
+
     if ((include_local_dns)); then
-      cat <<'YAML'
+      cat <<'YAML' >>"$tmp"
   local_dns:
     image: 4km3/dnsmasq:2.90-r3
     container_name: arr_local_dns
+    profiles:
+      - localdns
     cap_add:
       - NET_ADMIN
     ports:
@@ -354,6 +418,8 @@ YAML
       - "${LAN_IP}:53:53/tcp"
     command:
       - --log-facility=-
+      - --log-async=5
+      - --log-queries
       - --no-resolv
       - --server=${UPSTREAM_DNS_1}
       - --server=${UPSTREAM_DNS_2}
@@ -388,11 +454,14 @@ YAML
       start_period: 10s
 
 YAML
-      fi
-      cat <<'YAML'
+    fi
+
+    cat <<'YAML' >>"$tmp"
   qbittorrent:
     image: ${QBITTORRENT_IMAGE}
     container_name: qbittorrent
+    profiles:
+      - ipdirect
     network_mode: "service:gluetun"
     environment:
       PUID: ${PUID}
@@ -407,8 +476,6 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
-      caddy:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/v2/app/version"]
       interval: 30s
@@ -424,6 +491,8 @@ YAML
   sonarr:
     image: ${SONARR_IMAGE}
     container_name: sonarr
+    profiles:
+      - ipdirect
     network_mode: "service:gluetun"
     environment:
       PUID: ${PUID}
@@ -439,8 +508,6 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
-      caddy:
-        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -451,6 +518,8 @@ YAML
   radarr:
     image: ${RADARR_IMAGE}
     container_name: radarr
+    profiles:
+      - ipdirect
     network_mode: "service:gluetun"
     environment:
       PUID: ${PUID}
@@ -466,8 +535,6 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
-      caddy:
-        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -478,6 +545,8 @@ YAML
   prowlarr:
     image: ${PROWLARR_IMAGE}
     container_name: prowlarr
+    profiles:
+      - ipdirect
     network_mode: "service:gluetun"
     environment:
       PUID: ${PUID}
@@ -490,8 +559,6 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
-      caddy:
-        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -502,6 +569,8 @@ YAML
   bazarr:
     image: ${BAZARR_IMAGE}
     container_name: bazarr
+    profiles:
+      - ipdirect
     network_mode: "service:gluetun"
     environment:
       PUID: ${PUID}
@@ -513,18 +582,18 @@ YAML
       - ${TV_DIR}:/tv
       - ${MOVIES_DIR}:/movies
 YAML
-      if [[ -n "${SUBS_DIR:-}" ]]; then
-        cat <<'YAML'
+
+    if [[ -n "${SUBS_DIR:-}" ]]; then
+      cat <<'YAML' >>"$tmp"
       - ${SUBS_DIR}:/subs
 YAML
-      fi
-      cat <<'YAML'
+    fi
+
+    cat <<'YAML' >>"$tmp"
     depends_on:
       gluetun:
         condition: service_healthy
         restart: true
-      caddy:
-        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -535,6 +604,8 @@ YAML
   flaresolverr:
     image: ${FLARESOLVERR_IMAGE}
     container_name: flaresolverr
+    profiles:
+      - ipdirect
     network_mode: "service:gluetun"
     environment:
       LOG_LEVEL: info
@@ -542,8 +613,6 @@ YAML
       gluetun:
         condition: service_healthy
         restart: true
-      caddy:
-        condition: service_healthy
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -565,41 +634,38 @@ YAML
       options:
         max-size: "1m"
         max-file: "2"
+YAML
 
+    if ((include_caddy)); then
+      cat <<'YAML' >>"$tmp"
   caddy:
     image: ${CADDY_IMAGE}
     container_name: caddy
+    profiles:
+      - proxy
     network_mode: "service:gluetun"
     volumes:
       - ${ARR_DOCKER_DIR}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${ARR_DOCKER_DIR}/caddy/data:/data
       - ${ARR_DOCKER_DIR}/caddy/config:/config
       - ${ARR_DOCKER_DIR}/caddy/ca-pub:/ca-pub:ro
-YAML
-      cat <<'YAML'
     depends_on:
       gluetun:
         condition: service_healthy
         restart: true
 YAML
       if ((include_local_dns)); then
-        cat <<'YAML'
+        cat <<'YAML' >>"$tmp"
       local_dns:
         condition: service_healthy
 YAML
       fi
-      cat <<'YAML'
+      cat <<'YAML' >>"$tmp"
     healthcheck:
       test:
         - "CMD-SHELL"
-        - >
-          if command -v wget >/dev/null 2>&1; then
-            wget -qO- http://127.0.0.1:2019/metrics >/dev/null 2>&1;
-          elif command -v curl >/dev/null 2>&1; then
-            curl -fsS --max-time 5 http://127.0.0.1:2019/metrics >/dev/null 2>&1;
-          else
-            exit 1;
-          fi
+        - >-
+          curl -fsS --max-time 3 http://127.0.0.1/healthz >/dev/null 2>&1 || wget -qO- --timeout=3 http://127.0.0.1/healthz >/dev/null 2>&1
       interval: 10s
       timeout: 5s
       retries: 6
@@ -611,7 +677,7 @@ YAML
         max-size: "1m"
         max-file: "2"
 YAML
-    } >"$tmp"
+    fi
 
     if ! verify_single_level_env_placeholders "$tmp"; then
       rm -f "$tmp"
@@ -695,6 +761,11 @@ HOOK
 }
 
 ensure_caddy_auth() {
+  if [[ "${ENABLE_CADDY:-0}" -ne 1 ]]; then
+    msg "🔐 Skipping Caddy Basic Auth setup (ENABLE_CADDY=0)"
+    return 0
+  fi
+
   msg "🔐 Ensuring Caddy Basic Auth"
 
   if [[ -f "$ARR_ENV_FILE" ]]; then
@@ -854,6 +925,11 @@ sync_caddy_ca_public_copy() {
 }
 
 write_caddy_assets() {
+  if [[ "${ENABLE_CADDY:-0}" -ne 1 ]]; then
+    msg "🌐 Skipping Caddy configuration (ENABLE_CADDY=0)"
+    return 0
+  fi
+
   msg "🌐 Writing Caddy reverse proxy config"
 
   local caddy_root="${ARR_DOCKER_DIR}/caddy"
@@ -904,20 +980,6 @@ write_caddy_assets() {
     printf '}\n\n'
 
     # Plain HTTP health endpoint for container healthcheck
-    printf 'http://:80 {\n'
-    printf '    @health {\n'
-    printf '        path /healthz\n'
-    printf '        method GET\n'
-    printf '    }\n'
-    printf '    handle @health {\n'
-    printf '        respond "ok" 200\n'
-    printf '    }\n'
-    printf '\n'
-    printf '    handle / {\n'
-    printf '        respond "ARR Stack Running" 200\n'
-    printf '    }\n'
-    printf '}\n\n'
-
     printf 'http://ca.%s {\n' "$domain_suffix"
     printf '    root * /ca-pub\n'
     printf '    file_server\n'
@@ -950,6 +1012,41 @@ write_caddy_assets() {
       printf '    }\n'
       printf '}\n\n'
     done
+
+    printf ':80, :443 {\n'
+    printf '    encode zstd gzip\n'
+    printf '    @lan remote_ip %s\n' "$lan_cidrs"
+    printf '    route /healthz {\n'
+    printf '        respond "ok" 200\n'
+    printf '    }\n'
+    printf '\n'
+    printf '    handle @lan {\n'
+    for entry in "${services[@]}"; do
+      name="${entry%% *}"
+      port="${entry##* }"
+      printf '        handle_path /apps/%s/* {\n' "$name"
+      printf '            reverse_proxy http://127.0.0.1:%s\n' "$port"
+      printf '        }\n'
+    done
+    printf '        respond "ARR Stack Running" 200\n'
+    printf '    }\n'
+    printf '\n'
+    printf '    handle {\n'
+    printf '        basic_auth * {\n'
+    printf '            %s %s\n' "$CADDY_BASIC_AUTH_USER" "$caddy_auth_hash"
+    printf '        }\n'
+    for entry in "${services[@]}"; do
+      name="${entry%% *}"
+      port="${entry##* }"
+      printf '        handle_path /apps/%s/* {\n' "$name"
+      printf '            reverse_proxy http://127.0.0.1:%s\n' "$port"
+      printf '        }\n'
+    done
+    printf '        respond "ARR Stack Running" 200\n'
+    printf '    }\n'
+    printf '\n'
+    printf '    tls internal\n'
+    printf '}\n\n'
   })"
 
   atomic_write "$caddyfile" "$caddyfile_content" "$NONSECRET_FILE_MODE"

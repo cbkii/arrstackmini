@@ -57,7 +57,7 @@ verify_permissions() {
   local service
   for service in "${ARR_DOCKER_SERVICES[@]}"; do
     if [[ "$service" == "local_dns" ]]; then
-      if [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 || ${LOCAL_DNS_SERVICE_ENABLED:-0} -ne 1 ]]; then
+      if [[ "${ENABLE_LOCAL_DNS:-0}" -ne 1 || ${LOCAL_DNS_SERVICE_ENABLED:-0} -ne 1 ]]; then
         continue
       fi
     fi

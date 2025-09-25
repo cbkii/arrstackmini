@@ -9,8 +9,8 @@ arrstack_err_trap() {
   trap - ERR
   local src="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
   local line="${BASH_LINENO[0]:-${LINENO}}"
-  printf '[arrstack] error at %s:%s (status=%s)\n' "$src" "$line" "$rc" >&2
-  exit "$rc"
+  printf '[arrstack] error at %s:%s (status=%s)\n' "${src}" "${line}" "${rc}" >&2
+  exit "${rc}"
 }
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -117,16 +117,22 @@ main() {
   preflight_compose_interpolation
   validate_compose_or_die
   write_gluetun_control_assets
-  ensure_caddy_auth
-  write_caddy_assets
-  validate_caddy_config
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    ensure_caddy_auth
+    write_caddy_assets
+    validate_caddy_config
+  else
+    msg "Skipping Caddy assets (ENABLE_CADDY=0)"
+  fi
   sync_gluetun_library
   write_qbt_helper_script
   write_qbt_config
   if ! write_aliases_file; then
     warn "Helper aliases file could not be generated"
   fi
-  configure_local_dns_entries
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+    configure_local_dns_entries
+  fi
   if [[ "${SETUP_HOST_DNS:-0}" -eq 1 ]]; then
     run_host_dns_setup
   fi
@@ -134,7 +140,7 @@ main() {
   install_aliases
   start_stack
 
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
     local doctor_script="${REPO_ROOT}/scripts/doctor.sh"
     if [[ -x "${doctor_script}" ]]; then
       msg "🩺 Running LAN diagnostics"

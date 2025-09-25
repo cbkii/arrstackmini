@@ -57,7 +57,8 @@ PGID="${PGID:-$(id -g)}"
 TIMEZONE="${TIMEZONE:-Australia/Sydney}"
 LAN_IP="${LAN_IP:-0.0.0.0}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
-SERVER_COUNTRIES="${SERVER_COUNTRIES:-Switzerland,Iceland,Romania,Czech Republic,Netherlands}"
+SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands}"
+# SERVER_NAMES=""  # Optionally pin Proton server hostnames if PF keeps returning 0 (comma-separated list)
 PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
 
 # Domain suffix used by Caddy hostnames (default to RFC 8375 recommendation)
@@ -68,7 +69,8 @@ UPSTREAM_DNS_1="${UPSTREAM_DNS_1:-1.1.1.1}"
 UPSTREAM_DNS_2="${UPSTREAM_DNS_2:-1.0.0.1}"
 
 # Enable internal local DNS resolver service
-ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-1}"
+ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-0}"
+ENABLE_CADDY="${ENABLE_CADDY:-0}"
 
 # How LAN clients learn the resolver address
 #   router     – configure DHCP Option 6 on your router to ${LAN_IP}
@@ -92,7 +94,7 @@ BAZARR_PORT="${BAZARR_PORT:-6767}"
 FLARESOLVERR_PORT="${FLARESOLVERR_PORT:-8191}"
 
 # Expose application ports directly on the host alongside Caddy's reverse proxy
-EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS:-0}"
+EXPOSE_DIRECT_PORTS="${EXPOSE_DIRECT_PORTS:-1}"
 
 # qBittorrent credentials (override after first login)
 QBT_USER="${QBT_USER:-admin}"

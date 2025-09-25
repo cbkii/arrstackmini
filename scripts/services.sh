@@ -166,6 +166,11 @@ validate_compose_or_die() {
 }
 
 validate_caddy_config() {
+  if [[ "${ENABLE_CADDY:-0}" -ne 1 ]]; then
+    msg "🧪 Skipping Caddy validation (ENABLE_CADDY=0)"
+    return 0
+  fi
+
   local caddyfile="${ARR_DOCKER_DIR}/caddy/Caddyfile"
 
   if [[ ! -f "$caddyfile" ]]; then
@@ -422,13 +427,14 @@ wait_for_vpn_connection() {
 
 show_service_status() {
   msg "Service status summary:"
-  local service
-  local -a services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy)
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
+  local -a services=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    services+=(caddy)
+  fi
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
     services+=(local_dns)
   fi
 
-  local service
   for service in "${services[@]}"; do
     local container
     container="$(service_container_name "$service")"
@@ -438,12 +444,74 @@ show_service_status() {
   done
 }
 
+ensure_docker_userland_proxy_disabled() {
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -ne 1 ]]; then
+    return 0
+  fi
+
+  local conf="/etc/docker/daemon.json"
+  if [[ -f "$conf" ]] && grep -q '"userland-proxy"[[:space:]]*:[[:space:]]*false' "$conf" 2>/dev/null; then
+    return 0
+  fi
+
+  local -a sudo_prefix=()
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo_prefix=(sudo)
+    else
+      warn "[dns] Root privileges required to adjust ${conf}; skipping userland-proxy update"
+      return 0
+    fi
+  fi
+
+  msg "[dns] Disabling Docker userland-proxy for reliable :53 publishing"
+
+  local sh_script
+  read -r -d '' sh_script <<'EOS' || true
+set -e
+conf="$1"
+mkdir -p /etc/docker
+if command -v jq >/dev/null 2>&1 && [ -s "$conf" ]; then
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  jq -S --argjson v false '."userland-proxy"=$v' "$conf" >"$tmp"
+  mv "$tmp" "$conf"
+else
+  printf '{\n  "userland-proxy": false\n}\n' >"$conf"
+fi
+EOS
+
+  if ! "${sudo_prefix[@]}" sh -c "$sh_script" sh "$conf" 2>/dev/null; then
+    warn "[dns] Failed to update ${conf}"
+    return 0
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    if ! "${sudo_prefix[@]}" systemctl restart docker >/dev/null 2>&1; then
+      warn "[dns] Failed to restart Docker after updating ${conf}"
+      return 0
+    fi
+  elif command -v service >/dev/null 2>&1; then
+    if ! "${sudo_prefix[@]}" service docker restart >/dev/null 2>&1; then
+      warn "[dns] Failed to restart Docker after updating ${conf}"
+      return 0
+    fi
+  else
+    warn "[dns] Docker restart command not found; restart Docker manually to apply userland-proxy change"
+    return 0
+  fi
+
+  return 0
+}
+
 start_stack() {
   msg "🚀 Starting services"
 
   cd "${ARR_STACK_DIR}" || die "Failed to change to ${ARR_STACK_DIR}"
 
   safe_cleanup
+
+  ensure_docker_userland_proxy_disabled
 
   validate_images
 
@@ -505,19 +573,27 @@ start_stack() {
   pf_port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
 
   if [[ -z "$pf_port" || "$pf_port" == "0" ]]; then
+    ensure_proton_port_forwarding_ready || true
+    pf_port="${PF_ENSURED_PORT:-$pf_port}"
+  fi
+
+  if [[ -n "$pf_port" && "$pf_port" != "0" ]]; then
+    msg "✅ Port forwarding active: Port $pf_port"
+  else
     warn "================================================"
     warn "Port forwarding is not active yet."
     warn "This is normal - it can take a few minutes."
     warn "================================================"
-  else
-    msg "✅ Port forwarding active: Port $pf_port"
   fi
 
   local services=()
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 && ${LOCAL_DNS_SERVICE_ENABLED:-0} -eq 1 ]]; then
     services+=(local_dns)
   fi
-  services+=(caddy qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    services+=(caddy)
+  fi
+  services+=(qbittorrent sonarr radarr prowlarr bazarr flaresolverr)
   local service
   local qb_started=0
   for service in "${services[@]}"; do
@@ -586,8 +662,10 @@ start_stack() {
     done
   fi
 
-  if ! sync_caddy_ca_public_copy --wait; then
-    warn "Caddy CA root certificate is not published yet; fetch http://ca.${ARR_DOMAIN_SUFFIX_CLEAN}/root.crt after Caddy issues it."
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    if ! sync_caddy_ca_public_copy --wait; then
+      warn "Caddy CA root certificate is not published yet; fetch http://ca.${ARR_DOMAIN_SUFFIX_CLEAN}/root.crt after Caddy issues it."
+    fi
   fi
 
   if ((qb_started)); then

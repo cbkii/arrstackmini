@@ -9,7 +9,7 @@ configure_local_dns_entries() {
 
   local helper_script="${REPO_ROOT}/scripts/setup-lan-dns.sh"
 
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 || ${LOCAL_DNS_SERVICE_ENABLED:-0} -ne 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -ne 1 || ${LOCAL_DNS_SERVICE_ENABLED:-0} -ne 1 ]]; then
     msg "  Local DNS container disabled; skipping host entries helper"
     return 0
   fi
@@ -53,7 +53,7 @@ configure_local_dns_entries() {
 }
 
 run_host_dns_setup() {
-  if [[ "${ENABLE_LOCAL_DNS:-1}" -ne 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -ne 1 ]]; then
     msg "Skipping host DNS setup (--setup-host-dns) because ENABLE_LOCAL_DNS=0"
     return 0
   fi

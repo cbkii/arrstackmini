@@ -27,19 +27,21 @@ PGID="$(id -g)"                        # Numeric group ID with write access to m
 TIMEZONE="Australia/Sydney"            # Timezone for container logs and schedules
 
 # --- Networking ---
-LAN_IP=""                              # Bind services to one LAN IP (leave blank to listen on all)
+LAN_IP=""                              # Bind services to one LAN IP (leave blank to auto-detect during install)
 LOCALHOST_IP="127.0.0.1"               # Loopback used by the Gluetun control API
 LAN_DOMAIN_SUFFIX="home.arpa"          # Suffix appended to service hostnames (RFC 8375 default)
 CADDY_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}"  # Override Caddy hostname suffix independently of LAN DNS
-SERVER_COUNTRIES="Switzerland,Iceland,Romania,Czech Republic,Netherlands"  # ProtonVPN exit country list
-PVPN_ROTATE_COUNTRIES="${SERVER_COUNTRIES},France,Germany"  # Optional rotation order for arr.vpn switch (always includes SERVER_COUNTRIES)
+SERVER_COUNTRIES="Netherlands"              # ProtonVPN exit country list (single PF-capable country by default)
+# SERVER_NAMES=""                          # Optionally pin Proton server hostnames (comma-separated) if PF stays at 0
+PVPN_ROTATE_COUNTRIES="${SERVER_COUNTRIES}"  # Optional rotation order for arr.vpn switch (always includes SERVER_COUNTRIES)
 GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API
-ENABLE_LOCAL_DNS="1"                   # Enable the bundled dnsmasq container on LAN_IP
+ENABLE_LOCAL_DNS="0"                   # Advanced: enable the optional dnsmasq container (localdns profile)
+ENABLE_CADDY="0"                       # Advanced: enable the optional Caddy reverse proxy (proxy profile)
 DNS_DISTRIBUTION_MODE="router"         # router (DHCP Option 6) or per-device DNS settings
 UPSTREAM_DNS_1="1.1.1.1"               # First upstream resolver when local DNS is enabled
 UPSTREAM_DNS_2="1.0.0.1"               # Second upstream resolver when local DNS is enabled
 CADDY_LAN_CIDRS="127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # Clients allowed to skip Caddy auth
-EXPOSE_DIRECT_PORTS="0"                # Publish raw app ports on the LAN alongside Caddy (troubleshooting aid)
+EXPOSE_DIRECT_PORTS="1"                # Default LAN access: expose WebUIs on http://${LAN_IP}:PORT (ipdirect profile)
 
 # --- Credentials ---
 QBT_USER="admin"                       # Initial qBittorrent username (change after first login)

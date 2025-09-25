@@ -283,3 +283,74 @@ fetch_public_ip() {
 
   printf ''
 }
+
+ensure_proton_port_forwarding_ready() {
+  # shellcheck disable=SC2034  # exported for callers to read the ensured port
+  PF_ENSURED_PORT=""
+
+  if [[ "${VPN_SERVICE_PROVIDER:-}" != "protonvpn" ]]; then
+    return 0
+  fi
+
+  if [[ "${VPN_PORT_FORWARDING:-on}" != "on" ]]; then
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "[pf] curl is required to manage Proton port forwarding; skipping ensure loop"
+    return 1
+  fi
+
+  local api_base
+  api_base="$(_gluetun_control_base)"
+
+  local -a curl_common=(-fsS)
+  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+    curl_common+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
+  fi
+
+  local max_attempts wait_secs attempt port
+  max_attempts="${PF_MAX_ATTEMPTS:-8}"
+  wait_secs="${PF_WAIT_SECS:-90}"
+  attempt=1
+  port="0"
+
+  while ((attempt <= max_attempts)); do
+    msg "[pf] Attempt ${attempt}/${max_attempts}: waiting up to ${wait_secs}s..."
+
+    local waited=0
+    while ((waited < wait_secs)); do
+      port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
+      if [[ -n "$port" && "$port" != "0" ]]; then
+        msg "[pf] Forwarded port: $port"
+        PF_ENSURED_PORT="$port"
+        return 0
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+
+    msg "[pf] Still 0; cycling OpenVPN to pick another PF server..."
+    if ! curl "${curl_common[@]}" -X PUT -H 'Content-Type: application/json' \
+      --data '{"status":"stopped"}' "${api_base}/v1/openvpn/status" >/dev/null 2>&1; then
+      warn "[pf] Failed to stop OpenVPN via Gluetun control API"
+      break
+    fi
+
+    sleep 2
+
+    if ! curl "${curl_common[@]}" -X PUT -H 'Content-Type: application/json' \
+      --data '{"status":"running"}' "${api_base}/v1/openvpn/status" >/dev/null 2>&1; then
+      warn "[pf] Failed to start OpenVPN via Gluetun control API"
+      break
+    fi
+
+    sleep 10
+    attempt=$((attempt + 1))
+  done
+
+  # shellcheck disable=SC2034  # exported for callers to read the ensured port
+  PF_ENSURED_PORT="${port:-0}"
+  warn "[pf] Port forwarding still unavailable after ${max_attempts} attempts. Consider pinning SERVER_HOSTNAMES."
+  return 1
+}

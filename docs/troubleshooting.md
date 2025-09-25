@@ -9,7 +9,7 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
 
 ## Do
 ### Symptom: `ERR_NAME_NOT_RESOLVED`
-- **Fix:** Ensure clients use the Pi as their first DNS server. Follow [LAN DNS & network pre-start](lan-dns-network-setup.md) and reboot the device or renew its DHCP lease.
+- **Fix:** (Only applies if you enabled the optional local DNS profile.) Ensure clients use the Pi as their first DNS server. Follow [LAN DNS & network pre-start](lan-dns-network-setup.md) and reboot the device or renew its DHCP lease.
 - **Verify:**
   ```bash
   nslookup qbittorrent.home.arpa
@@ -32,7 +32,7 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
 - **Verify:** Re-run `nslookup` or `dig` from the device and confirm the server is the Pi.
 
 ### Symptom: Browser warns about HTTPS certificate
-- **Fix:** Import `root.crt` using [Local HTTPS and CA trust](https-and-ca.md). Make sure you fetched it from `http://ca.home.arpa/root.crt`.
+- **Fix:** (Only when `ENABLE_CADDY=1`.) Import `root.crt` using [Local HTTPS and CA trust](https-and-ca.md). Make sure you fetched it from `http://ca.home.arpa/root.crt`.
 - **Verify:** Visit `https://qbittorrent.home.arpa` and confirm the lock icon is present.
 
 ### Symptom: Containers stuck in `starting`
@@ -86,7 +86,7 @@ If you edited configuration files, follow up with:
 ```bash
 ./arrstack.sh --yes
 ```
-This regenerates `.env` and restarts containers. Review the summary, then browse to `https://qbittorrent.home.arpa` to confirm everything loads.
+This regenerates `.env` and restarts containers. Review the summary, then browse to `http://<LAN_IP>:8080` to confirm everything loads.
 
 ## See also
 - [LAN DNS & network pre-start](lan-dns-network-setup.md)
