@@ -14,6 +14,16 @@ fi
 # shellcheck source=../../arrconf/userconf.defaults.sh
 . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
 
+COMMON_LIB="${REPO_ROOT}/scripts/common.sh"
+if [[ -f "$COMMON_LIB" ]]; then
+  # shellcheck disable=SC1091
+  # shellcheck source=../../scripts/common.sh
+  . "$COMMON_LIB"
+else
+  echo "scripts/common.sh is required for temporary file helpers" >&2
+  exit 4
+fi
+
 if ! command -v envsubst >/dev/null 2>&1; then
   echo "envsubst is required to render ${OUTPUT}. Install gettext." >&2
   exit 2
@@ -32,7 +42,10 @@ render() {
 }
 
 if [[ "$MODE" == "check" ]]; then
-  tmp="$(mktemp "${OUTPUT##*/}.XXXXXX")"
+  if ! tmp="$(arrstack_mktemp_file "${OUTPUT##*/}.XXXXXX" 600)"; then
+    echo "Failed to create temporary file while checking ${OUTPUT}" >&2
+    exit 4
+  fi
   trap 'rm -f "$tmp"' EXIT
   render >"$tmp"
   if ! cmp -s "$tmp" "$OUTPUT"; then

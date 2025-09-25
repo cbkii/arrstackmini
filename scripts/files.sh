@@ -214,8 +214,7 @@ write_env() {
   fi
   QBT_AUTH_WHITELIST="$(normalize_csv "$qbt_whitelist_raw")"
   local tmp
-  tmp="$(mktemp "${ARR_ENV_FILE}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${ARR_ENV_FILE}"
-  chmod 600 "$tmp" 2>/dev/null || true
+  tmp="$(arrstack_mktemp_file "${ARR_ENV_FILE}.XXXXXX.tmp")" || die "Failed to create temp file for ${ARR_ENV_FILE}"
 
   {
     printf '# Core settings\n'
@@ -346,7 +345,7 @@ write_compose() {
       fi
     fi
 
-    tmp="$(mktemp "${compose_path}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${compose_path}"
+    tmp="$(arrstack_mktemp_file "${compose_path}.XXXXXX.tmp" "$NONSECRET_FILE_MODE")" || die "Failed to create temp file for ${compose_path}"
     ensure_nonsecret_file_mode "$tmp"
 
     cat <<'YAML' >"$tmp"

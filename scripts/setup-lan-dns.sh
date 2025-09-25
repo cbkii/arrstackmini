@@ -81,7 +81,9 @@ rewrite_hosts_file() {
   local content="$2"
   local tmp
 
-  tmp="$(mktemp "${file}.XXXXXX" 2>/dev/null)" || die "Unable to create temporary file for ${file}"
+  if ! tmp="$(arrstack_mktemp_file "${file}.XXXXXX")"; then
+    die "Unable to create temporary file for ${file}"
+  fi
   trap 'rm -f "${tmp}"' EXIT
 
   printf '%s\n' "${content}" >"${tmp}"
@@ -164,9 +166,8 @@ configure_docker_dns() {
     return 0
   fi
 
-  local tmp
-  tmp="$(mktemp "${daemon_json}.XXXXXX" 2>/dev/null || printf '')"
-  if [[ -z "${tmp}" ]]; then
+  local tmp=""
+  if ! tmp="$(arrstack_mktemp_file "${daemon_json}.XXXXXX" 644)"; then
     warn "Unable to create temporary file for ${daemon_json}; skipping Docker DNS configuration."
     return 1
   fi

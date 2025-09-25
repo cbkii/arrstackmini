@@ -97,6 +97,42 @@ ensure_data_dir_mode() {
   ensure_dir_mode "$1" "$DATA_DIR_MODE"
 }
 
+arrstack_mktemp_file() {
+  local template="${1-}"
+  local mode="${2:-600}"
+  local tmp=""
+
+  if [[ -n "$template" ]]; then
+    tmp="$(mktemp "$template" 2>/dev/null)" || return 1
+  else
+    tmp="$(mktemp 2>/dev/null)" || return 1
+  fi
+
+  if [[ -n "$mode" ]]; then
+    chmod "$mode" "$tmp" 2>/dev/null || warn "Could not set mode ${mode} on temporary file ${tmp}"
+  fi
+
+  printf '%s\n' "$tmp"
+}
+
+arrstack_mktemp_dir() {
+  local template="${1-}"
+  local mode="${2:-700}"
+  local tmp=""
+
+  if [[ -n "$template" ]]; then
+    tmp="$(mktemp -d "$template" 2>/dev/null)" || return 1
+  else
+    tmp="$(mktemp -d 2>/dev/null)" || return 1
+  fi
+
+  if [[ -n "$mode" ]]; then
+    chmod "$mode" "$tmp" 2>/dev/null || warn "Could not set mode ${mode} on temporary directory ${tmp}"
+  fi
+
+  printf '%s\n' "$tmp"
+}
+
 arrstack_escalate_privileges() {
   # POSIX-safe locals
   _euid="${EUID:-$(id -u)}"
@@ -357,7 +393,7 @@ atomic_write() {
   local mode="${3:-600}"
   local tmp
 
-  tmp="$(mktemp "${target}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${target}"
+  tmp="$(arrstack_mktemp_file "${target}.XXXXXX.tmp" '')" || die "Failed to create temp file for ${target}"
 
   if ! printf '%s\n' "$content" >"$tmp" 2>/dev/null; then
     rm -f "$tmp"
@@ -549,8 +585,7 @@ portable_sed() {
   local file="$2"
   local tmp
 
-  tmp="$(mktemp "${file}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for sed"
-  chmod 600 "$tmp" 2>/dev/null || true
+  tmp="$(arrstack_mktemp_file "${file}.XXXXXX.tmp")" || die "Failed to create temp file for sed"
 
   local perms=""
   if [ -e "$file" ]; then
@@ -607,8 +642,7 @@ set_qbt_conf_value() {
   local value="$3"
   local tmp
 
-  tmp="$(mktemp)"
-  chmod 600 "$tmp" 2>/dev/null || true
+  tmp="$(arrstack_mktemp_file)" || die "Failed to create temporary file while updating ${file}"
 
   if [ -f "$file" ]; then
     local replaced=0

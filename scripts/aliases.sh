@@ -12,8 +12,10 @@ write_aliases_file() {
   fi
 
   local tmp_file
-  tmp_file="$(mktemp "${aliases_file}.XXXX")"
-  ensure_secret_file_mode "$tmp_file"
+  if ! tmp_file="$(arrstack_mktemp_file "${aliases_file}.XXXX" "$SECRET_FILE_MODE")"; then
+    warn "Failed to create temporary aliases file"
+    return 1
+  fi
 
   local stack_dir_escaped env_file_escaped docker_dir_escaped arrconf_dir_escaped
   stack_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
@@ -173,8 +175,10 @@ log_info "Diagnostics complete!"
 DIAG
 
   local diag_tmp
-  diag_tmp="$(mktemp "${diag_script}.XXXX")"
-  chmod 600 "$diag_tmp" 2>/dev/null || true
+  if ! diag_tmp="$(arrstack_mktemp_file "${diag_script}.XXXX")"; then
+    warn "Failed to create temporary diagnostic script"
+    return 1
+  fi
   local diag_dir_escaped
   diag_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
   diag_dir_escaped=${diag_dir_escaped//&/\&}
