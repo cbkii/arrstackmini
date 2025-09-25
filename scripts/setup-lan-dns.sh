@@ -1,104 +1,21 @@
 #!/usr/bin/env bash
 # shellcheck enable=require-variable-braces
 # shellcheck enable=quote-safe-variables
-escalate_privileges() {
-  # POSIX-safe locals
-  _euid="${EUID:-$(id -u)}"
-  if [ "${_euid}" -eq 0 ]; then
-    # Already root: nothing to do
-    return 0
-  fi
 
-  # Save original argv for possible su fallback reconstruction
-  _script_path="${0:-}"
-  # If script was invoked via relative path, attempt to get absolute path
-  if [ -n "$_script_path" ] && [ "${_script_path#./}" = "$_script_path" ] && [ "${_script_path#/}" = "$_script_path" ]; then
-    # not absolute, try to resolve
-    if command -v realpath >/dev/null 2>&1; then
-      _script_path="$(realpath "$_script_path" 2>/dev/null || printf '%s' "$_script_path")"
-    else
-      # fallback: prefix cwd
-      _script_path="$(pwd)/${_script_path}"
-    fi
-  fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 
-  # Prefer sudo (preserve env with -E). First try non-interactive.
-  if command -v sudo >/dev/null 2>&1; then
-    if sudo -n true >/dev/null 2>&1; then
-      # passwordless sudo available: re-exec with preserved env
-      exec sudo -E "$_script_path" "$@"
-      # unreachable
-      return 0
-    else
-      # Interactive sudo available — notify user and re-exec (will prompt)
-      printf '[%s] escalating privileges with sudo; you may be prompted for your password…\n' "$(basename "$_script_path")" >&2
-      exec sudo -E "$_script_path" "$@"
-      # unreachable
-      return 0
-    fi
-  fi
-
-  # If pkexec exists, attempt to use it (polkit). pkexec may not preserve env;
-  # still it's often available on desktop systems where sudo isn't.
-  if command -v pkexec >/dev/null 2>&1; then
-    printf '[%s] escalating privileges with pkexec; you may be prompted for authentication…\n' "$(basename "$_script_path")" >&2
-    # pkexec requires the binary to be executable; using the interpreter ensures portability
-    # Try to preserve PATH and a minimal env for the invocation
-    if command -v bash >/dev/null 2>&1; then
-      exec pkexec /bin/bash -c "exec \"$_script_path\" \"\$@\"" -- "$@"
-    else
-      exec pkexec /bin/sh -c "exec \"$_script_path\" \"\$@\"" -- "$@"
-    fi
-    return 0
-  fi
-
-  # Last resort: try su -c, reconstruct quoted command line
-  if command -v su >/dev/null 2>&1; then
-    printf '[%s] escalating privileges with su; you may be prompted for the root password…\n' "$(basename "$_script_path")" >&2
-
-    # Build a safely quoted command string to pass to su -c
-    _cmd=""
-    # prefer absolute script path if resolved above; otherwise pass original $0
-    if [ -n "$_script_path" ]; then
-      _cmd="$(printf '%s' "$_script_path")"
-    else
-      _cmd="$(printf '%s' "$0")"
-    fi
-
-    for _arg in "$@"; do
-      # escape single quotes by closing, inserting '\'' and re-opening
-      _escaped="$(printf '%s' "$_arg" | sed "s/'/'\\\\''/g")"
-      _cmd="$_cmd '$_escaped'"
-    done
-
-    # Execute via su - root -c 'exec CMD'
-    exec su - root -c "exec $_cmd"
-    # unreachable
-    return 0
-  fi
-
-  # No escalation mechanism available
-  printf '[%s] ERROR: root privileges are required. Install sudo, pkexec (polkit) or su, or run this script as root.\n' "$(basename "$_script_path")" >&2
-  return 2
-}
+# shellcheck source=scripts/common.sh
+. "${REPO_ROOT}/scripts/common.sh"
 
 # Escalation insertion point: call this at top of scripts that need root
-escalate_privileges "$@"
+arrstack_escalate_privileges "$@"
 
 set -euo pipefail
 IFS=$'\n\t'
 
 log() {
-  printf '%s\n' "$*"
-}
-
-warn() {
-  printf 'WARN: %s\n' "$*" >&2
-}
-
-die() {
-  printf 'ERROR: %s\n' "$*" >&2
-  exit 1
+  msg "$@"
 }
 
 is_debian_like() {
@@ -113,11 +30,11 @@ is_debian_like() {
   id_like_lower="${id_like_lower,,}"
   id_lower="${id_lower,,}"
 
-  if [[ "$id_lower" == debian* || "$id_lower" == raspbian* ]]; then
+  if [[ "${id_lower}" == debian* || "${id_lower}" == raspbian* ]]; then
     return 0
   fi
 
-  if [[ "$id_like_lower" == *debian* || "$id_like_lower" == *raspbian* ]]; then
+  if [[ "${id_like_lower}" == *debian* || "${id_like_lower}" == *raspbian* ]]; then
     return 0
   fi
 
@@ -126,15 +43,15 @@ is_debian_like() {
 
 validate_ipv4() {
   local ip="$1"
-  if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    die "Invalid IPv4 address: $ip"
+  if [[ ! "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    die "Invalid IPv4 address: ${ip}"
   fi
 
   local segment
-  IFS='.' read -r -a segment <<<"$ip"
+  IFS='.' read -r -a segment <<<"${ip}"
   for part in "${segment[@]}"; do
     if ((part < 0 || part > 255)); then
-      die "Invalid IPv4 segment in $ip"
+      die "Invalid IPv4 segment in ${ip}"
     fi
   done
 }
@@ -144,7 +61,7 @@ fuzzy_remove_entries() {
   local begin_marker="$2"
   local end_marker="$3"
 
-  awk -v begin="$begin_marker" -v end="$end_marker" '
+  awk -v begin="${begin_marker}" -v end="${end_marker}" '
     BEGIN { skip=0 }
     $0 == begin { skip=1; next }
     $0 == end { skip=0; next }
@@ -156,7 +73,7 @@ fuzzy_remove_entries() {
       }
       print $0
     }
-  ' "$file"
+  ' "${file}"
 }
 
 rewrite_hosts_file() {
@@ -165,94 +82,165 @@ rewrite_hosts_file() {
   local tmp
 
   tmp="$(mktemp "${file}.XXXXXX" 2>/dev/null)" || die "Unable to create temporary file for ${file}"
-  trap 'rm -f "$tmp"' EXIT
+  trap 'rm -f "${tmp}"' EXIT
 
-  printf '%s\n' "$content" >"$tmp"
-  chmod 644 "$tmp" 2>/dev/null || true
+  printf '%s\n' "${content}" >"${tmp}"
+  chmod 644 "${tmp}" 2>/dev/null || true
 
-  if ! cat "$tmp" >"$file" 2>/dev/null; then
-    rm -f "$tmp"
+  if ! cat "${tmp}" >"${file}" 2>/dev/null; then
+    rm -f "${tmp}"
     trap - EXIT
     die "Failed to update ${file}; try running with elevated privileges"
   fi
 
-  rm -f "$tmp"
+  rm -f "${tmp}"
   trap - EXIT
 }
 
 configure_docker_dns() {
   local lan_ip="$1"
   local daemon_json="/etc/docker/daemon.json"
-  local -a dns_chain=("${lan_ip}")
 
-  if [[ -n "${UPSTREAM_DNS_1:-}" ]]; then
-    dns_chain+=("${UPSTREAM_DNS_1}")
-  fi
-  if [[ -n "${UPSTREAM_DNS_2:-}" && "${UPSTREAM_DNS_2}" != "${UPSTREAM_DNS_1:-}" ]]; then
-    dns_chain+=("${UPSTREAM_DNS_2}")
+  if [[ -z "${lan_ip}" || "${lan_ip}" == "0.0.0.0" ]]; then
+    warn "LAN IP not provided; skipping Docker DNS configuration."
+    return 0
   fi
 
-  local dns_servers="["
-  local dns_entry
-  local first=1
-  for dns_entry in "${dns_chain[@]}"; do
-    [[ -z "$dns_entry" ]] && continue
-    if ((first)); then
-      dns_servers+="\"${dns_entry}\""
-      first=0
-    else
-      dns_servers+="\", \"${dns_entry}\""
+  local -a dns_chain=()
+  dns_chain+=("${lan_ip}")
+
+  local csv="${UPSTREAM_DNS_SERVERS:-}"
+  if [[ -z "${csv}" ]]; then
+    if [[ -n "${UPSTREAM_DNS_1:-}" ]]; then
+      csv+="${UPSTREAM_DNS_1}"
+    fi
+    if [[ -n "${UPSTREAM_DNS_2:-}" ]]; then
+      csv+="${csv:+,}${UPSTREAM_DNS_2}"
+    fi
+  fi
+  if [[ -z "${csv}" ]]; then
+    csv="1.1.1.1,1.0.0.1"
+  fi
+
+  IFS=',' read -r -a _upstreams <<<"${csv}"
+  declare -A seen=()
+  local resolver
+  for resolver in "${_upstreams[@]}"; do
+    resolver="$(trim_string "${resolver}")"
+    [[ -z "${resolver}" ]] && continue
+    if [[ -z "${seen["${resolver}"]:-}" ]]; then
+      seen["${resolver}"]=1
+      dns_chain+=("${resolver}")
     fi
   done
-  dns_servers+="]"
 
-  if [[ -z "$lan_ip" ]]; then
+  local dns_json="[]"
+  if ((${#dns_chain[@]} > 0)); then
+    local first=1
+    dns_json="["
+    for resolver in "${dns_chain[@]}"; do
+      [[ -z "${resolver}" ]] && continue
+      if ((first)); then
+        dns_json+="\"${resolver}\""
+        first=0
+      else
+        dns_json+=", \"${resolver}\""
+      fi
+    done
+    dns_json+="]"
+  fi
+
+  local rootless=0
+  if command -v docker >/dev/null 2>&1; then
+    local security_opts
+    security_opts="$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null || echo '')"
+    if [[ "${security_opts}" == *"rootless"* ]]; then
+      rootless=1
+    fi
+  fi
+
+  if ((rootless)); then
+    warn "Rootless Docker detected; configure ~/.config/docker/daemon.json manually with DNS ${dns_chain[*]}."
     return 0
   fi
 
   local tmp
   tmp="$(mktemp "${daemon_json}.XXXXXX" 2>/dev/null || printf '')"
-  if [[ -z "$tmp" ]]; then
+  if [[ -z "${tmp}" ]]; then
     warn "Unable to create temporary file for ${daemon_json}; skipping Docker DNS configuration."
     return 1
   fi
 
-  if [[ -f "$daemon_json" ]]; then
-    if ! command -v jq >/dev/null 2>&1; then
-      warn "jq not available; skipping Docker daemon DNS update."
-      rm -f "$tmp"
-      return 1
+  if [[ -f "${daemon_json}" ]]; then
+    local backup
+    backup="${daemon_json}.arrstack.$(date +%Y%m%d-%H%M%S).bak"
+    if cp "${daemon_json}" "${backup}" 2>/dev/null; then
+      log "Backed up existing ${daemon_json} to ${backup}"
+    else
+      warn "Failed to back up ${daemon_json}; continuing with update."
     fi
-    if ! jq ".dns = ${dns_servers}" "$daemon_json" >"$tmp" 2>/dev/null; then
-      warn "Failed to update ${daemon_json} with jq; leaving existing configuration untouched."
-      rm -f "$tmp"
+
+    if command -v jq >/dev/null 2>&1; then
+      if ! jq --argjson dns "${dns_json}" '.dns = $dns' "${daemon_json}" >"${tmp}" 2>/dev/null; then
+        warn "Failed to update ${daemon_json} with jq; leaving existing configuration untouched."
+        rm -f "${tmp}"
+        return 1
+      fi
+    elif command -v python3 >/dev/null 2>&1; then
+      if ! DNS_JSON="${dns_json}" python3 - "${daemon_json}" "${tmp}" <<'PYTHON'
+import json, os, sys
+source = sys.argv[1]
+target = sys.argv[2]
+dns = json.loads(os.environ["DNS_JSON"])
+try:
+    with open(source, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+
+data["dns"] = dns
+with open(target, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+PYTHON
+      then
+        warn "Failed to update ${daemon_json} with python3; leaving existing configuration untouched."
+        rm -f "${tmp}"
+        return 1
+      fi
+    else
+      warn "Neither jq nor python3 available; cannot update ${daemon_json}."
+      rm -f "${tmp}"
       return 1
     fi
   else
-    if ! printf '{"dns": %s}\n' "$dns_servers" >"$tmp" 2>/dev/null; then
+    if ! printf '{"dns": %s}\n' "${dns_json}" >"${tmp}" 2>/dev/null; then
       warn "Failed to write Docker daemon DNS configuration."
-      rm -f "$tmp"
+      rm -f "${tmp}"
       return 1
     fi
   fi
 
-  chmod 644 "$tmp" 2>/dev/null || true
-  if ! mv -f "$tmp" "$daemon_json" 2>/dev/null; then
+  chmod 644 "${tmp}" 2>/dev/null || true
+  if ! mv -f "${tmp}" "${daemon_json}" 2>/dev/null; then
     warn "Unable to install ${daemon_json}; check permissions."
-    rm -f "$tmp"
+    rm -f "${tmp}"
     return 1
   fi
 
-  log "Configured Docker daemon DNS to prefer ${lan_ip} with fallback ${dns_servers}."
+  log "Configured Docker daemon DNS chain: ${dns_chain[*]}"
 
   if command -v systemctl >/dev/null 2>&1; then
     if systemctl is-active --quiet docker; then
       if ! systemctl reload docker >/dev/null 2>&1; then
         warn "systemctl reload docker failed; restart Docker manually to apply DNS changes."
       else
-        log "Reloaded Docker daemon with LAN DNS resolver ${lan_ip}."
+        log "Reloaded Docker daemon with updated DNS chain."
       fi
+    else
+      warn "Docker service not active under systemd; restart Docker manually to apply DNS changes."
     fi
+  else
+    warn "systemctl not available; restart Docker manually to apply DNS changes."
   fi
 
   return 0
@@ -266,15 +254,15 @@ main() {
   local domain_suffix="$1"
   local lan_ip="$2"
 
-  if [[ -z "$domain_suffix" ]]; then
+  if [[ -z "${domain_suffix}" ]]; then
     die "Domain suffix is required"
   fi
 
-  if [[ -z "$lan_ip" ]]; then
+  if [[ -z "${lan_ip}" ]]; then
     die "LAN IP is required"
   fi
 
-  if [[ "$lan_ip" == "0.0.0.0" ]]; then
+  if [[ "${lan_ip}" == "0.0.0.0" ]]; then
     warn "LAN_IP is 0.0.0.0; skipping hosts update"
     exit 3
   fi
@@ -284,11 +272,11 @@ main() {
     exit 0
   fi
 
-  validate_ipv4 "$lan_ip"
+  validate_ipv4 "${lan_ip}"
 
   local hosts_file="/etc/hosts"
-  if [[ ! -w "$hosts_file" ]]; then
-    if [[ $EUID -ne 0 ]]; then
+  if [[ ! -w "${hosts_file}" ]]; then
+    if [[ ${EUID} -ne 0 ]]; then
       die "Insufficient permissions to modify ${hosts_file}; rerun with sudo"
     fi
   fi
@@ -297,7 +285,7 @@ main() {
   local end_marker="# <<< arrstack-managed hosts <<<"
 
   local sanitized
-  sanitized="$(fuzzy_remove_entries "$hosts_file" "$begin_marker" "$end_marker")"
+  sanitized="$(fuzzy_remove_entries "${hosts_file}" "${begin_marker}" "${end_marker}")"
 
   local services=(qbittorrent sonarr radarr prowlarr bazarr flaresolverr gluetun caddy)
   local host_line
@@ -310,16 +298,16 @@ main() {
 
   local newline=$'\n'
   local new_content
-  if [[ -n "$sanitized" ]]; then
+  if [[ -n "${sanitized}" ]]; then
     new_content="${sanitized}${newline}${begin_marker}${newline}${host_line}${newline}${end_marker}"
   else
     new_content="${begin_marker}${newline}${host_line}${newline}${end_marker}"
   fi
 
-  rewrite_hosts_file "$hosts_file" "$new_content"
+  rewrite_hosts_file "${hosts_file}" "${new_content}"
   log "Updated ${hosts_file} with arrstack-managed host entries"
 
-  configure_docker_dns "$lan_ip" || true
+  configure_docker_dns "${lan_ip}" || true
 }
 
 main "$@"
