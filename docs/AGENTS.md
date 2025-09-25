@@ -15,7 +15,7 @@ You are an AI coding agent for the `cbkii/arrstackmini` project. Your responsibi
 ## Repository Overview
 
 - Entry script: `arrstack.sh` — orchestrates setup on Debian hosts, handles flags like `--yes`, `--rotate-caddy-auth`, `--setup-host-dns`, etc.
-- Config directory: `arrconf/` — contains `proton.auth.example`, `userconf.sh.example`, template/user configuration.
+- Config directory: `arrconf/` — contains `proton.auth.example`, `userconf.sh.example`, and the defaults used to render it.
 - Scripts directory: `scripts/` — contains helper scripts like DNS-setup/rollback, version-fixing, others.
 - Example env file: `.env.example`
 - Docs: `README.md`, `docs/TROUBLESHOOTING.md`, etc.
@@ -27,6 +27,8 @@ You are an AI coding agent for the `cbkii/arrstackmini` project. Your responsibi
 - Use **Bash** scripts with strict safety: `#!/usr/bin/env bash`, `set -Eeuo pipefail`.
 - Shell scripts should check for missing dependencies (e.g. `curl`, `jq`, `openssl`) and fail gracefully with informative messages.
 - Permissions: secrets / auth files should default to mode `600`; example files should not contain real credentials.
+- Standalone helpers must bootstrap with `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`, derive `REPO_ROOT`, source `scripts/common.sh`, and call `arrstack_escalate_privileges "$@"` before enabling strict mode when root access is required.
+- Reuse the shared helpers in `scripts/common.sh` (`ensure_dir_mode`, `ensure_secret_file_mode`, `check_dependencies`, etc.) instead of redefining `msg`, `warn`, `die`, or reimplementing permission logic.
 - Use consistent indenting, quoting, and avoid unsafe expansions (e.g. always quote variables when used in paths).
 - Example / template files (with `.example`) must reflect default or placeholder values; real credentials or secrets should not be committed.
 

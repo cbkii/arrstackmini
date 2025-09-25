@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 
 if [[ -n "${SCRIPT_LIB_DIR:-}" && -f "${SCRIPT_LIB_DIR}/network.sh" ]]; then
+  # shellcheck disable=SC1091
   # shellcheck source=scripts/network.sh
   . "${SCRIPT_LIB_DIR}/network.sh"
 fi
@@ -88,6 +89,7 @@ run_host_dns_setup() {
     cd "${ARR_STACK_DIR}" 2>/dev/null \
       && LAN_IP="${LAN_IP}" \
         LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}" \
+        UPSTREAM_DNS_SERVERS="${UPSTREAM_DNS_SERVERS}" \
         UPSTREAM_DNS_1="${UPSTREAM_DNS_1}" \
         UPSTREAM_DNS_2="${UPSTREAM_DNS_2}" \
         bash "$helper_script"

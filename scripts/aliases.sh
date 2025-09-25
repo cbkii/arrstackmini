@@ -13,7 +13,7 @@ write_aliases_file() {
 
   local tmp_file
   tmp_file="$(mktemp "${aliases_file}.XXXX")"
-  chmod 600 "$tmp_file" 2>/dev/null || true
+  ensure_secret_file_mode "$tmp_file"
 
   local stack_dir_escaped env_file_escaped docker_dir_escaped arrconf_dir_escaped
   stack_dir_escaped=${ARR_STACK_DIR//\\/\\\\}
@@ -43,9 +43,9 @@ write_aliases_file() {
 
   mv "$tmp_file" "$aliases_file"
 
-  chmod "$SECRET_FILE_MODE" "$aliases_file"
+  ensure_secret_file_mode "$aliases_file"
   cp "$aliases_file" "$configured_template"
-  chmod "$NONSECRET_FILE_MODE" "$configured_template" 2>/dev/null || true
+  ensure_nonsecret_file_mode "$configured_template"
   msg "✅ Helper aliases written to: $aliases_file"
   msg "   Source them with: source $aliases_file"
   msg "   Repo copy updated: $configured_template"

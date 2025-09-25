@@ -11,11 +11,9 @@ caddy_bcrypt() {
 
 mkdirs() {
   msg "📁 Creating directories"
-  ensure_dir "$ARR_STACK_DIR"
-  chmod 755 "$ARR_STACK_DIR" 2>/dev/null || true
+  ensure_dir_mode "$ARR_STACK_DIR" 755
 
-  ensure_dir "$ARR_DOCKER_DIR"
-  chmod "$DATA_DIR_MODE" "$ARR_DOCKER_DIR" 2>/dev/null || true
+  ensure_dir_mode "$ARR_DOCKER_DIR" "$DATA_DIR_MODE"
 
   local service
   for service in "${ARR_DOCKER_SERVICES[@]}"; do
@@ -25,20 +23,18 @@ mkdirs() {
     if [[ "$service" == "caddy" && "${ENABLE_CADDY:-0}" -ne 1 ]]; then
       continue
     fi
-    ensure_dir "${ARR_DOCKER_DIR}/${service}"
-    chmod "$DATA_DIR_MODE" "${ARR_DOCKER_DIR}/${service}" 2>/dev/null || true
+    ensure_dir_mode "${ARR_DOCKER_DIR}/${service}" "$DATA_DIR_MODE"
   done
 
   ensure_dir "$DOWNLOADS_DIR"
   ensure_dir "$COMPLETED_DIR"
 
-  ensure_dir "$ARR_STACK_DIR/scripts"
-  chmod 755 "$ARR_STACK_DIR/scripts" 2>/dev/null || true
+  ensure_dir_mode "$ARR_STACK_DIR/scripts" 755
 
   if [[ -d "$ARRCONF_DIR" ]]; then
-    chmod 700 "$ARRCONF_DIR" 2>/dev/null || true
+    ensure_dir_mode "$ARRCONF_DIR" 700
     if [[ -f "${ARRCONF_DIR}/proton.auth" ]]; then
-      chmod 600 "${ARRCONF_DIR}/proton.auth" 2>/dev/null || true
+      ensure_secret_file_mode "${ARRCONF_DIR}/proton.auth"
     fi
   fi
 
@@ -163,6 +159,19 @@ write_env() {
     firewall_ports+=("${QBT_HTTP_PORT_HOST}" "${SONARR_PORT}" "${RADARR_PORT}" "${PROWLARR_PORT}" "${BAZARR_PORT}" "${FLARESOLVERR_PORT}")
   fi
 
+  local -a upstream_dns_servers=()
+  mapfile -t upstream_dns_servers < <(collect_upstream_dns_servers)
+
+  if ((${#upstream_dns_servers[@]} > 0)); then
+    UPSTREAM_DNS_SERVERS="$(IFS=','; printf '%s' "${upstream_dns_servers[*]}")"
+    UPSTREAM_DNS_1="${upstream_dns_servers[0]}"
+    UPSTREAM_DNS_2="${upstream_dns_servers[1]:-}"
+  else
+    UPSTREAM_DNS_SERVERS=""
+    UPSTREAM_DNS_1=""
+    UPSTREAM_DNS_2=""
+  fi
+
   local firewall_ports_csv=""
   if ((${#firewall_ports[@]})); then
     local -A seen_firewall_ports=()
@@ -224,6 +233,7 @@ write_env() {
     write_env_kv "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
     write_env_kv "ENABLE_LOCAL_DNS" "$ENABLE_LOCAL_DNS"
     write_env_kv "DNS_DISTRIBUTION_MODE" "$DNS_DISTRIBUTION_MODE"
+    write_env_kv "UPSTREAM_DNS_SERVERS" "$UPSTREAM_DNS_SERVERS"
     write_env_kv "UPSTREAM_DNS_1" "$UPSTREAM_DNS_1"
     write_env_kv "UPSTREAM_DNS_2" "$UPSTREAM_DNS_2"
     write_env_kv "DNS_HOST_ENTRY" "$dns_host_entry"
@@ -307,6 +317,9 @@ write_compose() {
     local include_caddy=0
     local include_local_dns=0
     local local_dns_state_message="Local DNS container disabled (ENABLE_LOCAL_DNS=0)"
+    local -a upstream_dns_servers=()
+
+    mapfile -t upstream_dns_servers < <(collect_upstream_dns_servers)
 
     if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
       include_caddy=1
@@ -334,7 +347,7 @@ write_compose() {
     fi
 
     tmp="$(mktemp "${compose_path}.XXXXXX.tmp" 2>/dev/null)" || die "Failed to create temp file for ${compose_path}"
-    chmod "$NONSECRET_FILE_MODE" "$tmp" 2>/dev/null || true
+    ensure_nonsecret_file_mode "$tmp"
 
     cat <<'YAML' >"$tmp"
 services:
@@ -432,8 +445,12 @@ YAML
       - --log-async=5
       - --log-queries
       - --no-resolv
-      - --server=${UPSTREAM_DNS_1}
-      - --server=${UPSTREAM_DNS_2}
+YAML
+      local server
+      for server in "${upstream_dns_servers[@]}"; do
+        printf '      - --server=%s\n' "$server"
+      done >>"$tmp"
+      cat <<'YAML' >>"$tmp"
       - --domain-needed
       - --bogus-priv
       - --local-service
@@ -695,8 +712,8 @@ YAML
       die "Generated docker-compose.yml contains nested environment placeholders"
     fi
 
-    chmod "$NONSECRET_FILE_MODE" "$tmp" 2>/dev/null || true
     mv "$tmp" "$compose_path"
+    ensure_nonsecret_file_mode "$compose_path"
 
     msg "  Local DNS status: ${local_dns_state_message} (LOCAL_DNS_SERVICE_ENABLED=${LOCAL_DNS_SERVICE_ENABLED})"
 }
@@ -708,8 +725,7 @@ write_gluetun_control_assets() {
   local hooks_dir="${gluetun_root}/hooks"
 
   ensure_dir "$gluetun_root"
-  ensure_dir "$hooks_dir"
-  chmod 700 "$hooks_dir" 2>/dev/null || true
+  ensure_dir_mode "$hooks_dir" 700
 
   cat >"${hooks_dir}/update-qbt-port.sh" <<'HOOK'
 #!/bin/sh
@@ -768,7 +784,7 @@ else
 fi
 HOOK
 
-  chmod 700 "${hooks_dir}/update-qbt-port.sh" 2>/dev/null || true
+  ensure_file_mode "${hooks_dir}/update-qbt-port.sh" 700
 }
 
 ensure_caddy_auth() {
@@ -1068,7 +1084,8 @@ write_caddy_assets() {
     warn "Caddyfile is missing the configured Basic Auth user; verify CADDY_BASIC_AUTH_USER"
   fi
 
-  if ! grep -qE '\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}' "$caddyfile"; then
+  # shellcheck disable=SC2016  # intentional literal $ in regex
+  if ! grep -qE '\\$2[aby]\\$[0-9]{2}\\$[./A-Za-z0-9]{53}' "$caddyfile"; then
     warn "Caddyfile bcrypt string may be invalid; hash regeneration fixes this (use --rotate-caddy-auth)."
   fi
 }
@@ -1076,20 +1093,19 @@ write_caddy_assets() {
 sync_gluetun_library() {
   msg "📚 Syncing Gluetun helper library"
 
-  ensure_dir "$ARR_STACK_DIR/scripts"
-  chmod 755 "$ARR_STACK_DIR/scripts" 2>/dev/null || true
+  ensure_dir_mode "$ARR_STACK_DIR/scripts" 755
 
   cp "${REPO_ROOT}/scripts/gluetun.sh" "$ARR_STACK_DIR/scripts/gluetun.sh"
-  chmod 644 "$ARR_STACK_DIR/scripts/gluetun.sh"
+  ensure_file_mode "$ARR_STACK_DIR/scripts/gluetun.sh" 644
 }
 
 write_qbt_helper_script() {
   msg "🧰 Writing qBittorrent helper script"
 
-  ensure_dir "$ARR_STACK_DIR/scripts"
+  ensure_dir_mode "$ARR_STACK_DIR/scripts" 755
 
   cp "${REPO_ROOT}/scripts/qbt-helper.sh" "$ARR_STACK_DIR/scripts/qbt-helper.sh"
-  chmod 755 "$ARR_STACK_DIR/scripts/qbt-helper.sh"
+  ensure_file_mode "$ARR_STACK_DIR/scripts/qbt-helper.sh" 755
 
   msg "  qBittorrent helper: ${ARR_STACK_DIR}/scripts/qbt-helper.sh"
 }
@@ -1107,7 +1123,7 @@ write_qbt_config() {
   if [[ -f "$legacy_conf" && ! -f "$conf_file" ]]; then
     msg "  Migrating legacy config from ${legacy_conf}"
     mv "$legacy_conf" "$conf_file"
-    chmod 600 "$conf_file"
+    ensure_secret_file_mode "$conf_file"
   fi
 
   if [[ -f "$legacy_conf" ]]; then

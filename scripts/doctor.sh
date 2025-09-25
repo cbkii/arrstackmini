@@ -4,19 +4,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 
+# shellcheck source=scripts/common.sh
+. "${REPO_ROOT}/scripts/common.sh"
+
 if [[ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ]]; then
+  # shellcheck disable=SC1091
   # shellcheck source=arrconf/userconf.defaults.sh
   . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
 fi
 
 if [[ -f "${REPO_ROOT}/arrconf/userconf.sh" ]]; then
+  # shellcheck disable=SC1091
   # shellcheck source=arrconf/userconf.sh
   . "${REPO_ROOT}/arrconf/userconf.sh"
 fi
-
-have_command() {
-  command -v "$1" >/dev/null 2>&1
-}
 
 normalize_bind_address() {
   local address="$1"
@@ -340,6 +341,107 @@ test_lan_connectivity() {
   done
 }
 
+doctor_dns_health() {
+  echo "[doctor] Checking upstream DNS reachability"
+
+  local -a resolvers=()
+  mapfile -t resolvers < <(collect_upstream_dns_servers)
+
+  if ((${#resolvers[@]} == 0)); then
+    echo "[doctor][warn] No upstream DNS servers defined. Configure UPSTREAM_DNS_SERVERS or legacy UPSTREAM_DNS_1/2."
+    return
+  fi
+
+  local resolver
+  local tool_missing=0
+  for resolver in "${resolvers[@]}"; do
+    if probe_dns_resolver "$resolver" "cloudflare.com" 2; then
+      echo "[doctor][ok] Resolver ${resolver} responded within 2s"
+      continue
+    fi
+
+    local rc=$?
+    if ((rc == 2)); then
+      echo "[doctor][warn] DNS probe skipped: install dig, drill, kdig, or nslookup to verify upstream reachability."
+      tool_missing=1
+      break
+    fi
+
+    echo "[doctor][warn] Resolver ${resolver} did not answer probe queries (check connectivity or replace it)."
+  done
+
+  if ((tool_missing)); then
+    echo "[doctor][info] Configured upstream DNS servers: ${resolvers[*]}"
+  fi
+}
+
+check_docker_dns_configuration() {
+  echo "[doctor] Inspecting Docker daemon DNS settings"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "[doctor][warn] docker CLI not available; cannot inspect daemon DNS configuration."
+    return
+  fi
+
+  local dns_json
+  if ! dns_json="$(docker info --format '{{json .DNS}}' 2>/dev/null)"; then
+    echo "[doctor][warn] Unable to query docker info; ensure Docker is running and accessible."
+    return
+  fi
+
+  if [[ -z "$dns_json" || "$dns_json" == "null" ]]; then
+    echo "[doctor][warn] Docker daemon reports no custom DNS servers; containers may inherit host defaults."
+    return
+  fi
+
+  local -a docker_dns=()
+  if command -v jq >/dev/null 2>&1; then
+    mapfile -t docker_dns < <(docker info --format '{{json .DNS}}' | jq -r '.[]' 2>/dev/null || true)
+  else
+    dns_json="${dns_json#[}"
+    dns_json="${dns_json%]}"
+    IFS=',' read -r -a docker_dns <<<"${dns_json}"
+    local idx trimmed
+    for idx in "${!docker_dns[@]}"; do
+      trimmed="$(trim_string "${docker_dns[idx]//\"/}")"
+      docker_dns[idx]="${trimmed}"
+    done
+  fi
+
+  local -a cleaned=()
+  local entry
+  for entry in "${docker_dns[@]}"; do
+    [[ -z "${entry}" ]] && continue
+    cleaned+=("${entry}")
+  done
+  docker_dns=("${cleaned[@]}")
+
+  if ((${#docker_dns[@]} == 0)); then
+    echo "[doctor][warn] Docker daemon DNS list empty; containers may fall back to host defaults."
+    return
+  fi
+
+  echo "[doctor][info] Docker daemon DNS chain: ${docker_dns[*]}"
+
+  local -a expected=()
+  if [[ -n "${LAN_IP:-}" && "${LAN_IP}" != "0.0.0.0" ]]; then
+    expected+=("${LAN_IP}")
+  fi
+  local -a upstream_chain=()
+  mapfile -t upstream_chain < <(collect_upstream_dns_servers)
+  expected+=("${upstream_chain[@]}")
+
+  if ((${#expected[@]} > 0)); then
+    if [[ "${docker_dns[*]}" == "${expected[*]}" ]]; then
+      echo "[doctor][ok] Docker DNS matches expected LAN + upstream resolver order."
+    else
+      echo "[doctor][warn] Docker DNS order differs from expected (${expected[*]})."
+    fi
+  fi
+}
+
+
+
 SUFFIX="${LAN_DOMAIN_SUFFIX:-}"
 LAN_IP="${LAN_IP:-}"
 DNS_IP="${LAN_IP:-127.0.0.1}"
@@ -385,6 +487,9 @@ fi
 printf '[doctor] LAN domain suffix: %s\n' "${SUFFIX:-<unset>}"
 printf '[doctor] LAN IP: %s\n' "${LAN_IP:-<unset>}"
 printf '[doctor] Using DNS server at: %s\n' "${DNS_IP}"
+doctor_dns_health
+check_docker_dns_configuration
+
 printf '[doctor] DNS distribution mode: %s\n' "${DNS_DISTRIBUTION_MODE}"
 
 if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then

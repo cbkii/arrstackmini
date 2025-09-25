@@ -274,20 +274,65 @@ validate_dns_configuration() {
     return
   fi
 
-  local missing=()
-  if [[ -z "${UPSTREAM_DNS_1:-}" ]]; then
-    missing+=("UPSTREAM_DNS_1")
-  fi
-  if [[ -z "${UPSTREAM_DNS_2:-}" ]]; then
-    missing+=("UPSTREAM_DNS_2")
-  fi
-
   if [[ -z "${LAN_DOMAIN_SUFFIX:-}" ]]; then
-    missing+=("LAN_DOMAIN_SUFFIX")
+    die "Local DNS requires LAN_DOMAIN_SUFFIX to be set to a non-empty domain suffix."
   fi
 
-  if ((${#missing[@]} > 0)); then
-    die "Local DNS requires ${missing[*]} to be set to reachable resolvers. Update arrconf/userconf.sh before continuing."
+  local -a resolvers=()
+  mapfile -t resolvers < <(collect_upstream_dns_servers)
+
+  if ((${#resolvers[@]} == 0)); then
+    die "Local DNS requires at least one upstream resolver via UPSTREAM_DNS_SERVERS or the legacy UPSTREAM_DNS_1/2 variables."
+  fi
+
+  local -a healthy=()
+  local -a unhealthy=()
+  local probe_rc=0
+  local resolver
+
+  for resolver in "${resolvers[@]}"; do
+    local rc=0
+    if probe_dns_resolver "$resolver" "cloudflare.com" 2; then
+      healthy+=("$resolver")
+      continue
+    fi
+
+    rc=$?
+    if ((rc == 2)); then
+      probe_rc=2
+      warn "Skipping DNS reachability probe: install dig, drill, kdig, or nslookup to enable upstream validation."
+      healthy=("${resolvers[@]}")
+      unhealthy=()
+      break
+    fi
+
+    unhealthy+=("$resolver")
+  done
+
+  if ((probe_rc != 2)); then
+    if ((${#healthy[@]} == 0)); then
+      die "None of the upstream DNS servers responded (${resolvers[*]}). Update UPSTREAM_DNS_SERVERS with reachable resolvers before continuing."
+    fi
+
+    if ((${#unhealthy[@]} > 0)); then
+      warn "Upstream DNS servers unreachable during preflight probe: ${unhealthy[*]}"
+    fi
+
+    local -a ordered=()
+    ordered+=("${healthy[@]}")
+    ordered+=("${unhealthy[@]}")
+    if [[ "${ordered[*]}" != "${resolvers[*]}" ]]; then
+      # shellcheck disable=SC2034  # propagated to downstream scripts
+      UPSTREAM_DNS_SERVERS="$(IFS=','; printf '%s' "${ordered[*]}")"
+      # shellcheck disable=SC2034  # propagated to downstream scripts
+      UPSTREAM_DNS_1="${ordered[0]}"
+      # shellcheck disable=SC2034  # propagated to downstream scripts
+      UPSTREAM_DNS_2="${ordered[1]:-}"
+      if declare -p ARRSTACK_UPSTREAM_DNS_CHAIN >/dev/null 2>&1; then
+        ARRSTACK_UPSTREAM_DNS_CHAIN=("${ordered[@]}")
+      fi
+      msg "  Reordered upstream DNS preference: ${ordered[*]}"
+    fi
   fi
 }
 
