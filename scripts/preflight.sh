@@ -338,6 +338,7 @@ port_conflict_listeners() {
   printf '%s\n' "${results[@]}"
 }
 
+
 wait_for_conflicts_to_clear() {
   local -n _targets_ref="$1"
   local timeout="${2:-20}"
@@ -453,7 +454,7 @@ prompt_port_conflict_resolution() {
   local -n _conflicts_ref="$_conflicts_name"
   local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
 
-  msg ""
+msg ""
   msg "Port Conflict Detected!"
   msg ""
   msg "The following ports are already in use:"
@@ -488,7 +489,7 @@ prompt_port_conflict_resolution() {
 
     die "--yes supplied but conflicting ports are not held by arrstack services. Resolve the conflicts manually or rerun without --yes."
   fi
-
+  
   msg "How would you like to resolve this?"
   msg ""
   msg "1. Edit ports (Keeps existing arrstack running, you'll need to update userconf.sh)"
@@ -672,6 +673,8 @@ check_port_conflicts() {
 
       if prompt_port_conflict_resolution conflicts arrstack_conflicts; then
         reset_docker_port_bindings_cache
+        DOCKER_PORT_BINDINGS=()
+        DOCKER_PORT_BINDINGS_LOADED=0
         cleanup_performed=1
         continue
       fi
