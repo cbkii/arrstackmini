@@ -166,7 +166,9 @@ update_whitelist() {
   cfg=$(config_file_path)
   if [[ -f "$cfg" ]]; then
     local tmp
-    tmp=$(mktemp)
+    if ! tmp=$(arrstack_mktemp_file); then
+      die "Failed to create temporary whitelist file"
+    fi
     awk '!(/^WebUI\\AuthSubnetWhitelistEnabled=/ || /^WebUI\\AuthSubnetWhitelist=/)' "$cfg" >"$tmp"
     {
       printf 'WebUI\\AuthSubnetWhitelistEnabled=true\n'

@@ -28,8 +28,7 @@ install_vuetorrent() {
   fi
 
   local temp_extract=""
-  temp_extract="$(mktemp -d "/tmp/vuetorrent.XXXX" 2>/dev/null || printf '')"
-  if [[ -z "$temp_extract" ]]; then
+  if ! temp_extract="$(arrstack_mktemp_dir "/tmp/vuetorrent.XXXX")"; then
     rm -f "$temp_zip"
     warn "  Failed to create temporary directory for VueTorrent, continuing without it"
     return 0
