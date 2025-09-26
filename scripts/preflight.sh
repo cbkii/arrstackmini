@@ -181,6 +181,7 @@ docker_port_conflict_listeners() {
   local expected_ip="$2"
   local port="$3"
 
+  # address_conflicts is provided by scripts/common.sh (sourced via arrstack.sh).
   load_docker_port_bindings || true
 
   local key="${proto,,}|${port}"
@@ -197,32 +198,6 @@ docker_port_conflict_listeners() {
     fi
     printf '%s|%s\n' "$bind_host" "$docker_desc"
   done <<<"$data"
-}
-
-address_conflicts() {
-  local desired_raw="$1"
-  local actual_raw="$2"
-
-  local desired
-  local actual
-  desired="$(normalize_bind_address "$desired_raw")"
-  actual="$(normalize_bind_address "$actual_raw")"
-
-  if [[ "$desired" == "0.0.0.0" || "$desired" == "*" ]]; then
-    return 0
-  fi
-
-  case "$actual" in
-    "0.0.0.0" | "::" | "*")
-      return 0
-      ;;
-  esac
-
-  if [[ "$desired" == "$actual" ]]; then
-    return 0
-  fi
-
-  return 1
 }
 
 port_conflict_listeners() {

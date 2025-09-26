@@ -680,6 +680,26 @@ unescape_env_value_from_compose() {
   printf '%s' "$value"
 }
 
+get_env_kv() {
+  local key="${1:-}"
+  local file="${2:-}"
+
+  if [[ -z "$key" || -z "$file" || ! -f "$file" ]]; then
+    return 1
+  fi
+
+  local line
+  line="$(grep -m1 "^${key}=" "$file" 2>/dev/null || true)"
+  if [[ -z "$line" ]]; then
+    return 1
+  fi
+
+  local value
+  value="${line#*=}"
+  value="$(unescape_env_value_from_compose "$value")"
+  printf '%s\n' "$value"
+}
+
 set_qbt_conf_value() {
   local file="$1"
   local key="$2"

@@ -15,7 +15,8 @@ REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 
 arrstack_escalate_privileges "$@"
 
-set -euo pipefail
+# -E included to preserve ERR trap behavior in function/subshell contexts (Bash manual §"The ERR Trap").
+set -Eeuo pipefail
 
 parse_upstream_list() {
   local raw="$1"

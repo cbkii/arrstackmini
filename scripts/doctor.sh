@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# -E included to preserve ERR trap behavior in function/subshell contexts (Bash manual §"The ERR Trap").
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
