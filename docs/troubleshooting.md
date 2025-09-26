@@ -27,6 +27,15 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
   ```
   Expect to see `dnsmasq` bound to `192.168.1.50:53`.
 
+### Symptom: Installer reports port conflicts
+- **Fix:** The installer now collects a full snapshot of `ss`, `lsof`, and Docker listeners before showing the menu. Review the summary and choose among:
+  1. **Stop existing arrstack containers** (only offered if *all* conflicts belong to the same compose project).
+  2. **Force stop/kill other services** — prints the exact PID/container list and requires typing `FORCE`. `systemd-resolved` bindings are skipped with a warning.
+  3. **Apply contextual override** — currently offers to disable local DNS for this run when port 53 is occupied.
+  4. **Re-scan** after you clear listeners in another terminal.
+- **Debug:** set `ARRSTACK_DEBUG_PORTS=1` (or `ARRSTACK_PORT_TRACE=1`) before running `./arrstack.sh`. The installer writes JSONL snapshots to `logs/port-scan-YYYYmmdd-HHMMSS.jsonl` so you can inspect who owned each port.
+- **Tip:** The detailed diagnostics (`D`) option prints a table showing protocol, binding, process/container, and classification so you can decide whether to kill a listener or adjust ports.
+
 ### Symptom: Android ignores LAN DNS (DoT enabled)
 - **Fix:** On the device open **Settings → Network & Internet → Internet → Private DNS** and choose **Off** or **Automatic**. Remove any custom DoT hostname.
 - **Verify:** Re-run `nslookup` or `dig` from the device and confirm the server is the Pi.
