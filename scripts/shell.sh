@@ -29,7 +29,10 @@ reload_shell_rc() {
 
   local kind=""
   local omz=""
-  IFS=' ' read -r kind omz <<<"$(detect_shell_kind)"
+  local shell_signature=""
+  shell_signature="$(detect_shell_kind)"
+  local IFS=' '
+  read -r kind omz <<<"$shell_signature"
   [ -n "$kind" ] || kind="other"
   [ -n "$omz" ] || omz=0
 
