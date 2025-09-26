@@ -2,8 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${STACK_DIR}/.env"
+STACK_DIR_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+STACK_DIR="${ARR_STACK_DIR:-${STACK_DIR_DEFAULT}}"
+if ! STACK_DIR="$(cd "${STACK_DIR}" 2>/dev/null && pwd)"; then
+  echo "Stack directory not found: ${ARR_STACK_DIR:-${STACK_DIR_DEFAULT}}" >&2
+  exit 1
+fi
+ENV_FILE="${ARR_ENV_FILE:-${STACK_DIR}/.env}"
 
 # shellcheck source=scripts/common.sh
 . "${STACK_DIR}/scripts/common.sh"
