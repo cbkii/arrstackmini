@@ -61,6 +61,7 @@ You should see an HTTP 200/302 response. If not, re-run the installer and confir
 - `./arrstack.sh --refresh-aliases` rebuilds `.arraliases` and reloads your shell so helper commands (such as `arr.vpn status`) stay up to date.
 - `./scripts/qbt-helper.sh {show|reset|whitelist}` shows connection info, clears the qBittorrent password, or enables LAN whitelisting.
 - `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
+- `ARRSTACK_DEBUG_PORTS=1 ./arrstack.sh` writes `logs/port-scan-*.jsonl` snapshots for each port check so you can diagnose who bound a port.
 
 ## Docs
 - [LAN DNS & network pre-start](docs/lan-dns-network-setup.md)

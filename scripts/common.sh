@@ -12,6 +12,87 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+read_proc_cmdline() {
+  local pid="$1"
+
+  if [[ -z "$pid" || ! -r "/proc/${pid}/cmdline" ]]; then
+    return 1
+  fi
+
+  tr '\0' ' ' <"/proc/${pid}/cmdline" | sed 's/[[:space:]]\+$//'
+}
+
+read_proc_comm() {
+  local pid="$1"
+
+  if [[ -z "$pid" || ! -r "/proc/${pid}/comm" ]]; then
+    return 1
+  fi
+
+  tr -d '\n' <"/proc/${pid}/comm"
+}
+
+safe_kill() {
+  local pid="$1"
+  local label="${2:-process}";
+  local timeout="${3:-10}"
+
+  if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+    warn "safe_kill called with invalid pid '${pid}' for ${label}"
+    return 1
+  fi
+
+  if ((pid == 1)); then
+    warn "Refusing to kill PID 1 (${label})"
+    return 1
+  fi
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  if kill -TERM "$pid" 2>/dev/null; then
+    local deadline=$((SECONDS + timeout))
+    while kill -0 "$pid" 2>/dev/null; do
+      if ((SECONDS >= deadline)); then
+        break
+      fi
+      sleep 0.2
+    done
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "Failed to terminate ${label} (pid ${pid})"
+    return 1
+  fi
+
+  return 0
+}
+
+arrstack_json_log() {
+  local json_line="$1"
+
+  if [[ -z "$json_line" ]]; then
+    return 0
+  fi
+
+  local target="${LOG_FILE:-}"
+  if [[ -n "$target" ]]; then
+    printf '%s\n' "$json_line" >>"$target" 2>/dev/null || true
+    return 0
+  fi
+
+  local log_dir="${ARR_LOG_DIR:-${ARR_STACK_DIR:-}/logs}"
+  if [[ -n "$log_dir" ]]; then
+    ensure_dir "$log_dir"
+    printf '%s\n' "$json_line" >>"${log_dir}/latest.log" 2>/dev/null || true
+  fi
+}
+
 missing_commands() {
   local -a missing=()
   local cmd
