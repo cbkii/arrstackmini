@@ -1206,10 +1206,14 @@ EOF
   managed_spec+=$'WebUI\\HostHeaderValidation=true\n'
   managed_spec+="WebUI\\AuthSubnetWhitelist=${auth_whitelist}"
 
+  local managed_spec_for_awk
+  # Escape backslashes so awk -v does not treat sequences like \A as escapes
+  managed_spec_for_awk="${managed_spec//\\/\\\\}"
+
   local updated_content
   updated_content="$(
     printf '%s' "$source_content" \
-      | awk -v managed="$managed_spec" '
+      | awk -v managed="$managed_spec_for_awk" '
         BEGIN {
           FS = "=";
           OFS = "=";
