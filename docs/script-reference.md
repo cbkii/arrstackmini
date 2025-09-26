@@ -14,7 +14,7 @@ The main installer orchestrates the whole build:
 - Accepts flags such as `--yes`, `--rotate-api-key`, `--rotate-caddy-auth`, `--setup-host-dns`, and `--refresh-aliases` for non-interactive runs, credential rotation, or alias regeneration.【F:arrstack.sh†L34-L92】
 - Runs preflight checks that ensure Docker, Docker Compose v2, `curl`, `jq`, `openssl`, and your Proton credentials are present before anything else happens.【F:scripts/preflight.sh†L1-L74】【F:scripts/preflight.sh†L90-L128】
 - Creates required directories with safe permissions, migrates legacy files, and cleans old Compose projects before writing new assets.【F:scripts/files.sh†L12-L87】【F:scripts/migrations.sh†L1-L46】【F:scripts/services.sh†L44-L69】
-- Generates secrets and configuration files: `.env`, `docker-compose.yml`, Gluetun hook scripts, Caddy credentials, helper aliases, and the qBittorrent config.【F:arrstack.sh†L102-L114】【F:scripts/files.sh†L40-L345】【F:scripts/files.sh†L604-L672】【F:scripts/files.sh†L674-L921】【F:scripts/aliases.sh†L1-L62】
+- Generates secrets and configuration files: `.env`, `docker-compose.yml`, Gluetun hook scripts, Caddy credentials, helper aliases, and the qBittorrent config (now written in a single atomic pass to avoid drift).【F:arrstack.sh†L102-L114】【F:scripts/files.sh†L40-L345】【F:scripts/files.sh†L604-L672】【F:scripts/files.sh†L674-L921】【F:scripts/files.sh†L1132-L1273】【F:scripts/aliases.sh†L1-L62】
 - Starts containers with retries, installs the VueTorrent WebUI theme, waits for Gluetun to report healthy, and records the forwarded port before launching other services.【F:scripts/services.sh†L1-L199】【F:scripts/services.sh†L233-L403】
 - Runs LAN diagnostics when local DNS is enabled and prints a summary of URLs, credentials, and next steps.【F:arrstack.sh†L123-L143】【F:scripts/summary.sh†L1-L78】
 
@@ -23,6 +23,8 @@ The main installer orchestrates the whole build:
 - **`defaults.sh`** – sets calculated defaults, permission profiles, and image tags before any user overrides run.【F:scripts/defaults.sh†L1-L92】【F:scripts/defaults.sh†L117-L148】
 - **`network.sh`** – validates IPs/ports and warns about missing tools that Gluetun health checks depend on.【F:scripts/network.sh†L1-L54】
 - **`config.sh`** – enforces Proton credential format, previews the configuration, and validates ports before writing `.env`.【F:scripts/config.sh†L1-L69】【F:scripts/config.sh†L72-L113】【F:scripts/config.sh†L115-L127】
+- **`common.sh`** – shared logging, locking, env writers, and helpers such as `get_env_kv` for safely unescaping `.env` values on reuse.【F:scripts/common.sh†L324-L347】【F:scripts/common.sh†L360-L388】
+- **`files.sh`** – generates `.env`, rehydrates existing Caddy credentials through `hydrate_caddy_auth_from_env_file`, and persists service configs including the atomic qBittorrent writer.【F:scripts/files.sh†L96-L180】【F:scripts/files.sh†L820-L916】【F:scripts/files.sh†L1084-L1273】
 - **`permissions.sh`** – keeps secrets (`.env`, `proton.auth`, qBittorrent config) at `600` and tightens data directories according to the chosen profile.【F:scripts/permissions.sh†L1-L69】
 - **`dns.sh`** – populates `/etc/hosts` via `scripts/setup-lan-dns.sh` and optionally runs the host takeover helper when you pass `--setup-host-dns`.【F:scripts/dns.sh†L1-L64】
 

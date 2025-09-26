@@ -99,6 +99,8 @@ If these checks exist in scripts, run them; if not, propose creating them.
 - For new features, ensure clear default behaviour and documentation of overrides (env vars, userconf).
 - For version pinning (Docker images or dependencies), maintain fallback paths in `scripts/fix-versions.sh` or similar.
 - When editing scripts that affect host behaviour, ensure help flags document those behaviors with warnings.
+- `address_conflicts()` now lives solely in `scripts/common.sh`; reuse it instead of redefining per-script variants.
+- Prefer the shared `get_env_kv` helper when reading values from `.env` so escaping stays consistent.
 
 ---
 

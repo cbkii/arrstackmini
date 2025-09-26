@@ -107,34 +107,34 @@ generate_api_key() {
   msg "Generated new API key"
 }
 
-write_env() {
-  msg "📝 Writing .env file"
+hydrate_caddy_auth_from_env_file() {
+  if [[ -z "${ARR_ENV_FILE:-}" || ! -f "$ARR_ENV_FILE" ]]; then
+    return 0
+  fi
 
-  if [[ -f "$ARR_ENV_FILE" ]]; then
-    if [[ -z "${CADDY_BASIC_AUTH_USER:-}" || "${CADDY_BASIC_AUTH_USER}" == "user" ]]; then
-      local env_user_line env_user_value
-      env_user_line="$(grep '^CADDY_BASIC_AUTH_USER=' "$ARR_ENV_FILE" | head -n1 || true)"
-      if [[ -n "$env_user_line" ]]; then
-        env_user_value="${env_user_line#CADDY_BASIC_AUTH_USER=}"
-        env_user_value="$(unescape_env_value_from_compose "$env_user_value")"
-        if [[ -n "$env_user_value" ]]; then
-          CADDY_BASIC_AUTH_USER="$env_user_value"
-        fi
-      fi
-    fi
-
-    if [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]]; then
-      local env_hash_line env_hash_value
-      env_hash_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "$ARR_ENV_FILE" | head -n1 || true)"
-      if [[ -n "$env_hash_line" ]]; then
-        env_hash_value="${env_hash_line#CADDY_BASIC_AUTH_HASH=}"
-        env_hash_value="$(unescape_env_value_from_compose "$env_hash_value")"
-        if [[ -n "$env_hash_value" ]]; then
-          CADDY_BASIC_AUTH_HASH="$env_hash_value"
-        fi
+  if [[ -z "${CADDY_BASIC_AUTH_USER:-}" || "${CADDY_BASIC_AUTH_USER}" == "user" ]]; then
+    local hydrated_user=""
+    if hydrated_user="$(get_env_kv "CADDY_BASIC_AUTH_USER" "$ARR_ENV_FILE" 2>/dev/null)"; then
+      if [[ -n "$hydrated_user" ]]; then
+        CADDY_BASIC_AUTH_USER="$hydrated_user"
       fi
     fi
   fi
+
+  if [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]]; then
+    local hydrated_hash=""
+    if hydrated_hash="$(get_env_kv "CADDY_BASIC_AUTH_HASH" "$ARR_ENV_FILE" 2>/dev/null)"; then
+      if [[ -n "$hydrated_hash" ]]; then
+        CADDY_BASIC_AUTH_HASH="$hydrated_hash"
+      fi
+    fi
+  fi
+}
+
+write_env() {
+  msg "📝 Writing .env file"
+
+  hydrate_caddy_auth_from_env_file
 
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
@@ -166,7 +166,16 @@ write_env() {
   PU="$OPENVPN_USER_VALUE"
   PW="$PROTON_PASS_VALUE"
 
-  validate_config
+  validate_config "$PU" "$PW"
+
+  if [[ -z "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    local existing_project_name=""
+    if existing_project_name="$(get_env_kv "COMPOSE_PROJECT_NAME" "$ARR_ENV_FILE" 2>/dev/null)"; then
+      COMPOSE_PROJECT_NAME="$existing_project_name"
+    else
+      COMPOSE_PROJECT_NAME="arrstack"
+    fi
+  fi
   local dns_host_entry="${LAN_IP:-0.0.0.0}"
   if [[ -z "$dns_host_entry" || "$dns_host_entry" == "0.0.0.0" ]]; then
     dns_host_entry="HOST_IP"
@@ -256,7 +265,8 @@ write_env() {
     write_env_kv "ENABLE_CADDY" "$ENABLE_CADDY"
     printf '\n'
 
-    printf '# Local DNS\n'
+    printf '# Local DNS (disabled by default)\n'
+    printf '# Preferred comma-separated chain (legacy UPSTREAM_DNS_1/UPSTREAM_DNS_2 remain supported).\n'
     write_env_kv "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
     write_env_kv "ENABLE_LOCAL_DNS" "$ENABLE_LOCAL_DNS"
     write_env_kv "DNS_DISTRIBUTION_MODE" "$DNS_DISTRIBUTION_MODE"
@@ -273,6 +283,7 @@ write_env() {
 
     printf '# Derived values\n'
     write_env_kv "OPENVPN_USER_ENFORCED" "$PU"
+    write_env_kv "COMPOSE_PROJECT_NAME" "$COMPOSE_PROJECT_NAME"
     write_env_kv "COMPOSE_PROFILES" "$compose_profiles_csv"
     printf '\n'
 
@@ -822,31 +833,7 @@ ensure_caddy_auth() {
 
   msg "🔐 Ensuring Caddy Basic Auth"
 
-  if [[ -f "$ARR_ENV_FILE" ]]; then
-    if [[ -z "${CADDY_BASIC_AUTH_USER:-}" || "${CADDY_BASIC_AUTH_USER}" == "user" ]]; then
-      local env_user_line env_user_value
-      env_user_line="$(grep '^CADDY_BASIC_AUTH_USER=' "$ARR_ENV_FILE" | head -n1 || true)"
-      if [[ -n "$env_user_line" ]]; then
-        env_user_value="${env_user_line#CADDY_BASIC_AUTH_USER=}"
-        env_user_value="$(unescape_env_value_from_compose "$env_user_value")"
-        if [[ -n "$env_user_value" ]]; then
-          CADDY_BASIC_AUTH_USER="$env_user_value"
-        fi
-      fi
-    fi
-
-    if [[ -z "${CADDY_BASIC_AUTH_HASH:-}" ]]; then
-      local env_hash_line env_hash_value
-      env_hash_line="$(grep '^CADDY_BASIC_AUTH_HASH=' "$ARR_ENV_FILE" | head -n1 || true)"
-      if [[ -n "$env_hash_line" ]]; then
-        env_hash_value="${env_hash_line#CADDY_BASIC_AUTH_HASH=}"
-        env_hash_value="$(unescape_env_value_from_compose "$env_hash_value")"
-        if [[ -n "$env_hash_value" ]]; then
-          CADDY_BASIC_AUTH_HASH="$env_hash_value"
-        fi
-      fi
-    fi
-  fi
+  hydrate_caddy_auth_from_env_file
 
   local sanitized_user
   sanitized_user="$(sanitize_user "${CADDY_BASIC_AUTH_USER}")"
@@ -1162,8 +1149,8 @@ write_qbt_config() {
   QBT_AUTH_WHITELIST="$auth_whitelist"
   msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
 
-  if [[ ! -f "$conf_file" ]]; then
-    cat >"$conf_file" <<EOF
+  local default_conf
+  default_conf="$(cat <<EOF
 [AutoRun]
 enabled=false
 
@@ -1201,15 +1188,69 @@ WebUI\HostHeaderValidation=true
 WebUI\HTTPS\Enabled=false
 WebUI\ServerDomains=*
 EOF
-    chmod 600 "$conf_file"
+)"
+
+  local source_content="$default_conf"
+  if [[ -f "$conf_file" ]]; then
+    source_content="$(<"$conf_file")"
   fi
-  set_qbt_conf_value "$conf_file" 'WebUI\AlternativeUIEnabled' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\RootFolder' '/config/vuetorrent'
-  set_qbt_conf_value "$conf_file" 'WebUI\ServerDomains' '*'
-  set_qbt_conf_value "$conf_file" 'WebUI\LocalHostAuth' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelistEnabled' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\CSRFProtection' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\ClickjackingProtection' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\HostHeaderValidation' 'true'
-  set_qbt_conf_value "$conf_file" 'WebUI\AuthSubnetWhitelist' "$auth_whitelist"
+
+  local managed_spec
+  managed_spec=$'WebUI\\AlternativeUIEnabled=true\n'
+  managed_spec+=$'WebUI\\RootFolder=/config/vuetorrent\n'
+  managed_spec+=$'WebUI\\ServerDomains=*\n'
+  managed_spec+=$'WebUI\\LocalHostAuth=true\n'
+  managed_spec+=$'WebUI\\AuthSubnetWhitelistEnabled=true\n'
+  managed_spec+=$'WebUI\\CSRFProtection=true\n'
+  managed_spec+=$'WebUI\\ClickjackingProtection=true\n'
+  managed_spec+=$'WebUI\\HostHeaderValidation=true\n'
+  managed_spec+="WebUI\\AuthSubnetWhitelist=${auth_whitelist}"
+
+  local updated_content
+  updated_content="$(
+    printf '%s' "$source_content" \
+      | awk -v managed="$managed_spec" '
+        BEGIN {
+          FS = "=";
+          OFS = "=";
+          order_count = 0;
+          count = split(managed, arr, "\n");
+          for (i = 1; i <= count; i++) {
+            if (arr[i] == "") {
+              continue;
+            }
+            split(arr[i], kv, "=");
+            key = kv[1];
+            value = substr(arr[i], length(key) + 2);
+            replacements[key] = value;
+            order[++order_count] = key;
+          }
+        }
+        {
+          line = $0;
+          if (index(line, "=") == 0) {
+            print line;
+            next;
+          }
+          split(line, kv, "=");
+          key = kv[1];
+          if (key in replacements) {
+            print key, replacements[key];
+            seen[key] = 1;
+          } else {
+            print line;
+          }
+        }
+        END {
+          for (i = 1; i <= order_count; i++) {
+            key = order[i];
+            if (!(key in seen)) {
+              print key, replacements[key];
+            }
+          }
+        }
+      '
+  )"
+
+  atomic_write "$conf_file" "$updated_content" "$SECRET_FILE_MODE"
 }

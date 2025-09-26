@@ -133,7 +133,11 @@ If anything looks incorrect, edit arrconf/userconf.sh before continuing.
 CONFIG
 }
 
+# Accepts explicit credentials but falls back to global PU/PW for backward compatibility.
 validate_config() {
+  local _vu="${1:-${PU:-}}"
+  local _vp="${2:-${PW:-}}"
+
   if [ -n "${LAN_IP:-}" ] && [ "${LAN_IP}" != "0.0.0.0" ]; then
     validate_ipv4 "${LAN_IP}" || die "Invalid LAN_IP: ${LAN_IP}"
   fi
@@ -145,5 +149,5 @@ validate_config() {
   validate_port "${BAZARR_PORT}" || die "Invalid BAZARR_PORT: ${BAZARR_PORT}"
   validate_port "${FLARESOLVERR_PORT}" || die "Invalid FLARESOLVERR_PORT: ${FLARESOLVERR_PORT}"
 
-  validate_proton_creds "$PU" "$PW" || die "Invalid ProtonVPN credentials format"
+  validate_proton_creds "${_vu}" "${_vp}" || die "Invalid ProtonVPN credentials format"
 }
