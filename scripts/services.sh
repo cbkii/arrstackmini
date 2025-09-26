@@ -408,11 +408,13 @@ wait_for_vpn_connection() {
           local ip_summary
           if ip_summary="$(gluetun_public_ip_summary "$ip_payload" 2>/dev/null || true)" && [[ -n "$ip_summary" ]]; then
             msg "  🌐 Public IP: ${ip_summary}"
+          elif [[ "$ip_payload" =~ \"public_ip\"[[:space:]]*:[[:space:]]*\"\" ]]; then
+            msg "  🌐 Public IP: (pending assignment)"
           else
             msg "  🌐 Public IP response: ${ip_payload}"
           fi
         else
-          msg "  🌐 Public IP: (pending)"
+          msg "  🌐 Public IP: (pending assignment)"
         fi
 
         return 0
@@ -571,21 +573,83 @@ start_stack() {
   fi
 
   msg "Checking port forwarding status..."
+  PF_ENSURE_RESULT=0
+  PF_ASYNC_RETRY_LOG=""
+  PF_ENSURE_STATUS_MESSAGE=""
   local pf_port
-  pf_port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
+  local pf_ensure_invoked=0
+  local schedule_retry=0
+  local is_proton_pf=0
 
-  if [[ -z "$pf_port" || "$pf_port" == "0" ]]; then
-    ensure_proton_port_forwarding_ready || true
-    pf_port="${PF_ENSURED_PORT:-$pf_port}"
+  if [[ "${VPN_SERVICE_PROVIDER:-}" == "protonvpn" && "${VPN_PORT_FORWARDING:-on}" == "on" ]]; then
+    is_proton_pf=1
   fi
 
-  if [[ -n "$pf_port" && "$pf_port" != "0" ]]; then
+  pf_port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
+
+  if [[ "$pf_port" =~ ^[0-9]+$ && "$pf_port" != "0" ]]; then
+    PF_ENSURED_PORT="$pf_port"
+    PF_ENSURE_STATUS_MESSAGE="detected existing port ${pf_port}"
+  elif ((is_proton_pf)); then
+    pf_ensure_invoked=1
+    if ensure_proton_port_forwarding_ready; then
+      pf_port="${PF_ENSURED_PORT:-$pf_port}"
+    else
+      PF_ENSURE_RESULT=$?
+      pf_port="${PF_ENSURED_PORT:-$pf_port}"
+      if ((PF_ENSURE_RESULT == 0)); then
+        PF_ENSURE_RESULT=1
+      fi
+    fi
+  fi
+
+  if [[ "$pf_port" =~ ^[0-9]+$ && "$pf_port" != "0" ]]; then
     msg "✅ Port forwarding active: Port $pf_port"
+    local pf_file="${ARR_DOCKER_DIR}/gluetun/forwarded_port"
+    ensure_dir "$(dirname "$pf_file")"
+    atomic_write "$pf_file" "$pf_port" "$NONSECRET_FILE_MODE"
   else
-    warn "================================================"
-    warn "Port forwarding is not active yet."
-    warn "This is normal - it can take a few minutes."
-    warn "================================================"
+    if ((is_proton_pf)); then
+      ((PF_ENSURE_RESULT == 0)) && PF_ENSURE_RESULT=1
+      warn "[pf] Port forwarding not yet available; continuing without it."
+      if [[ -n "${PF_ENSURE_STATUS_MESSAGE:-}" ]]; then
+        msg "  Last attempt: ${PF_ENSURE_STATUS_MESSAGE}"
+      fi
+      msg "  ↪️  Run 'arr.vpn.port' or 'arr.vpn.port.sync' after the VPN settles to retry."
+
+      if ((pf_ensure_invoked)); then
+        case "${PF_ENSURE_STATUS_MESSAGE:-}" in
+          skipped* | curl\ unavailable)
+            schedule_retry=0
+            ;;
+          *)
+            schedule_retry=1
+            ;;
+        esac
+      fi
+
+      if ((schedule_retry)); then
+        local pf_retry_log="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}/port-forwarding-retry.log"
+        ensure_dir "$(dirname "$pf_retry_log")"
+        (
+          PF_MAX_TOTAL_WAIT="${PF_ASYNC_MAX_TOTAL_WAIT:-45}"
+          PF_POLL_INTERVAL="${PF_ASYNC_POLL_INTERVAL:-5}"
+          PF_CYCLE_AFTER="${PF_ASYNC_CYCLE_AFTER:-30}"
+          if ensure_proton_port_forwarding_ready; then
+            local async_port="${PF_ENSURED_PORT:-0}"
+            if [[ "$async_port" =~ ^[0-9]+$ && "$async_port" != "0" ]]; then
+              local async_file="${ARR_DOCKER_DIR}/gluetun/forwarded_port"
+              ensure_dir "$(dirname "$async_file")"
+              atomic_write "$async_file" "$async_port" "$NONSECRET_FILE_MODE"
+            fi
+          fi
+        ) >>"$pf_retry_log" 2>&1 &
+        PF_ASYNC_RETRY_LOG="$pf_retry_log"
+        msg "  Background port-forward retry scheduled (logs: $pf_retry_log)"
+      fi
+    elif [[ "$pf_port" =~ ^[0-9]+$ && "$pf_port" == "0" ]]; then
+      msg "[pf] Port forwarding not configured for provider ${VPN_SERVICE_PROVIDER:-unknown}."
+    fi
   fi
 
   local services=()
