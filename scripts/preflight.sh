@@ -1,5 +1,24 @@
 # shellcheck shell=bash
 
+# Advisory on Port 53:
+# Pros of keeping DNS on port 53:
+# - Standards-compliant DNS (RFC 1035)
+# - Universal client compatibility without configuration
+# - Compatible with DHCP Option 6/Option 119 distribution
+# - No need for client-side port customization
+# Cons:
+# - Commonly occupied by systemd-resolved, Pi-hole, AdGuard Home
+# - Requires host takeover or alternative architectural approach
+# Alternative ports (5053, 1053, 5335):
+# - Reduce collision probability but break seamless LAN consumption
+# - Clients/DHCP cannot use non-53 without stub forwarders
+# Recommendation: retain port 53 by default; only advanced users should remap
+# if they run external DNS aggregators.
+
+# Global structures for enhanced port conflict detection
+declare -Ag PID_CONTAINER_INDEX=()
+declare -ig PID_CONTAINER_INDEX_LOADED=0
+
 install_missing() {
   msg "🔧 Checking dependencies"
 
@@ -200,11 +219,339 @@ docker_port_conflict_listeners() {
   done <<<"$data"
 }
 
+# Build PID→container mapping for enriched process descriptions
+build_pid_container_index() {
+  PID_CONTAINER_INDEX=()
+  PID_CONTAINER_INDEX_LOADED=1
+
+  if ! have_command docker; then
+    return 0
+  fi
+
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    
+    local container_id container_name
+    IFS='|' read -r container_id container_name <<<"$line"
+    [[ -z "$container_id" || -z "$container_name" ]] && continue
+    
+    # Get all PIDs for this container
+    local pid_line
+    while IFS= read -r pid_line; do
+      [[ -z "$pid_line" ]] && continue
+      PID_CONTAINER_INDEX["$pid_line"]="$container_name"
+    done < <(docker exec "$container_id" ps -eo pid --no-headers 2>/dev/null | tr -d ' ' || true)
+    
+    # Also map docker-proxy PIDs if available
+    local proxy_pids
+    proxy_pids="$(pgrep -f "docker-proxy.*${container_id:0:12}" 2>/dev/null || true)"
+    if [[ -n "$proxy_pids" ]]; then
+      local proxy_pid
+      while read -r proxy_pid; do
+        [[ -n "$proxy_pid" ]] && PID_CONTAINER_INDEX["$proxy_pid"]="$container_name"
+      done <<<"$proxy_pids"
+    fi
+  done < <(docker ps --format '{{.ID}}|{{.Names}}' 2>/dev/null || true)
+}
+
+# Collect detailed listener information for a specific port with strict matching
+# Returns TSV-like format: addr|pid|cmd|exe|user|container|proto|port|tools
+collect_port_listeners_strict() {
+  local proto="$1"
+  local port="$2"
+  
+  # Ensure PID→container index is loaded
+  if ((PID_CONTAINER_INDEX_LOADED == 0)); then
+    build_pid_container_index
+  fi
+  
+  local -A seen_records=()
+  local -a results=()
+  
+  # Primary tool: ss
+  if have_command ss; then
+    local flag="lntp"
+    [[ "$proto" == "udp" ]] && flag="lnup"
+    
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      
+      # Extract address and port - strict matching only
+      local addr_field
+      addr_field="$(awk '{print $4}' <<<"$line" 2>/dev/null || true)"
+      [[ -z "$addr_field" ]] && continue
+      
+      local line_port="${addr_field##*:}"
+      [[ "$line_port" != "$port" ]] && continue
+      
+      local bind_addr="${addr_field%:*}"
+      bind_addr="$(normalize_bind_address "$bind_addr")"
+      
+      # Extract process info
+      local pid="" cmd="" exe="" user=""
+      if [[ $line == *'users:(('* ]]; then
+        local proc_segment="${line#*users:((}"
+        proc_segment="${proc_segment#\"}"
+        cmd="${proc_segment%%\"*}"
+        
+        if [[ $line =~ pid=([0-9]+) ]]; then
+          pid="${BASH_REMATCH[1]}"
+        fi
+        
+        if [[ -n "$pid" ]]; then
+          exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || echo "")"
+          user="$(ps -o user= -p "$pid" 2>/dev/null | tr -d ' ' || echo "")"
+        fi
+      fi
+      
+      local container="${PID_CONTAINER_INDEX[$pid]:-}"
+      local record="${bind_addr}|${pid}|${cmd}|${exe}|${user}|${container}|${proto}|${port}|ss"
+      
+      if [[ -z "${seen_records[$record]:-}" ]]; then
+        results+=("$record")
+        seen_records["$record"]=1
+      fi
+    done < <(ss -H -${flag} "sport = :${port}" 2>/dev/null || true)
+  fi
+  
+  # Secondary tool: lsof
+  if have_command lsof; then
+    local -a spec
+    if [[ "$proto" == "udp" ]]; then
+      spec=(-iUDP:"${port}")
+    else
+      spec=(-iTCP:"${port}" -sTCP:LISTEN)
+    fi
+    
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      [[ "$line" =~ ^COMMAND ]] && continue
+      
+      # Extract process info
+      local cmd pid user name
+      cmd="$(awk '{print $1}' <<<"$line" 2>/dev/null || true)"
+      pid="$(awk '{print $2}' <<<"$line" 2>/dev/null || true)"
+      user="$(awk '{print $3}' <<<"$line" 2>/dev/null || true)"
+      name="$(awk '{print $9}' <<<"$line" 2>/dev/null || true)"
+      
+      [[ -z "$name" || -z "$pid" ]] && continue
+      
+      # Strict port matching
+      name="${name%%->*}"
+      name="${name% (LISTEN)}"
+      local line_port="${name##*:}"
+      [[ "$line_port" != "$port" ]] && continue
+      
+      local bind_addr="${name%:*}"
+      bind_addr="$(normalize_bind_address "$bind_addr")"
+      
+      local exe
+      exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || echo "")"
+      
+      local container="${PID_CONTAINER_INDEX[$pid]:-}"
+      local tools="lsof"
+      
+      # Check if we already have this from ss
+      local existing_key="${bind_addr}|${pid}|${cmd}|${exe}|${user}|${container}|${proto}|${port}"
+      local updated_record="${existing_key}|ss,lsof"
+      local ss_record="${existing_key}|ss"
+      
+      if [[ -n "${seen_records[$ss_record]:-}" ]]; then
+        # Update existing ss record to include lsof
+        local idx
+        for idx in "${!results[@]}"; do
+          if [[ "${results[idx]}" == "$ss_record" ]]; then
+            results[idx]="$updated_record"
+            seen_records["$updated_record"]=1
+            unset "seen_records[$ss_record]"
+            break
+          fi
+        done
+      else
+        local record="${bind_addr}|${pid}|${cmd}|${exe}|${user}|${container}|${proto}|${port}|lsof"
+        if [[ -z "${seen_records[$record]:-}" ]]; then
+          results+=("$record")
+          seen_records["$record"]=1
+        fi
+      fi
+    done < <(lsof -nP "${spec[@]}" 2>/dev/null || true)
+  fi
+  
+  # Tertiary tool: netstat (if available)
+  if have_command netstat; then
+    local netstat_flag="-lnpt"
+    [[ "$proto" == "udp" ]] && netstat_flag="-lnpu"
+    
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      [[ "$line" =~ ^(Active|Proto) ]] && continue
+      
+      local addr_field
+      addr_field="$(awk '{print $4}' <<<"$line" 2>/dev/null || true)"
+      [[ -z "$addr_field" ]] && continue
+      
+      local line_port="${addr_field##*:}"
+      [[ "$line_port" != "$port" ]] && continue
+      
+      local bind_addr="${addr_field%:*}"
+      bind_addr="$(normalize_bind_address "$bind_addr")"
+      
+      local pid_prog
+      pid_prog="$(awk '{print $7}' <<<"$line" 2>/dev/null || true)"
+      [[ -z "$pid_prog" || "$pid_prog" == "-" ]] && continue
+      
+      local pid="${pid_prog%%/*}"
+      local cmd="${pid_prog##*/}"
+      local exe user
+      
+      if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+        exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || echo "")"
+        user="$(ps -o user= -p "$pid" 2>/dev/null | tr -d ' ' || echo "")"
+      fi
+      
+      local container="${PID_CONTAINER_INDEX[$pid]:-}"
+      local record="${bind_addr}|${pid}|${cmd}|${exe}|${user}|${container}|${proto}|${port}|netstat"
+      
+      # Check for existing records from ss/lsof and merge tools
+      local base_key="${bind_addr}|${pid}|${cmd}|${exe}|${user}|${container}|${proto}|${port}"
+      local found_existing=0
+      local idx
+      for idx in "${!results[@]}"; do
+        if [[ "${results[idx]}" == "${base_key}|"* ]]; then
+          local existing_tools="${results[idx]##*|}"
+          results[idx]="${base_key}|${existing_tools},netstat"
+          found_existing=1
+          break
+        fi
+      done
+      
+      if ((!found_existing)) && [[ -z "${seen_records[$record]:-}" ]]; then
+        results+=("$record")
+        seen_records["$record"]=1
+      fi
+    done < <(netstat $netstat_flag 2>/dev/null | grep ":${port}[[:space:]]" || true)
+  fi
+  
+  # Optional tool: fuser
+  if have_command fuser; then
+    local fuser_output
+    fuser_output="$(fuser -v "${port}/${proto}" 2>/dev/null || true)"
+    
+    if [[ -n "$fuser_output" ]]; then
+      local line
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*(USER|root) ]] && continue
+        
+        local fields
+        read -r -a fields <<<"$line"
+        
+        if ((${#fields[@]} >= 3)); then
+          local user="${fields[0]}"
+          local pid="${fields[1]}"  
+          local access="${fields[2]}"
+          local cmd="${fields[3]:-}"
+          
+          [[ "$access" != *"F"* ]] && continue  # Only listening processes
+          [[ ! "$pid" =~ ^[0-9]+$ ]] && continue
+          
+          local exe
+          exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || echo "")"
+          
+          local container="${PID_CONTAINER_INDEX[$pid]:-}"
+          
+          # Try to match with existing records and add fuser to tools
+          local found_existing=0
+          local idx
+          for idx in "${!results[@]}"; do
+            if [[ "${results[idx]}" == *"|${pid}|"* ]]; then
+              local existing_tools="${results[idx]##*|}"
+              results[idx]="${results[idx]%|*}|${existing_tools},fuser"
+              found_existing=1
+              break
+            fi
+          done
+          
+          if ((!found_existing)); then
+            local record="*|${pid}|${cmd}|${exe}|${user}||${proto}|${port}|fuser"
+            if [[ -z "${seen_records[$record]:-}" ]]; then
+              results+=("$record")
+              seen_records["$record"]=1
+            fi
+          fi
+        fi
+      done <<<"$fuser_output"
+    fi
+  fi
+  
+  printf '%s\n' "${results[@]}"
+}
+
+# Format listener record for display
+describe_listener_record() {
+  local record="$1"
+  
+  IFS='|' read -r addr pid cmd exe user container proto port tools <<<"$record"
+  
+  local desc=""
+  if [[ -n "$container" ]]; then
+    desc="PID ${pid} (${cmd}) container:${container}"
+  else
+    desc="PID ${pid} (${cmd})"
+  fi
+  
+  [[ -n "$exe" ]] && desc+=" exe:${exe}"
+  [[ -n "$user" ]] && desc+=" user:${user}"
+  [[ -n "$tools" ]] && desc+=" tools:${tools}"
+  
+  printf '%s\n' "$desc"
+}
+
 port_conflict_listeners() {
   local proto="$1"
   local expected_ip="$2"
   local port="$3"
 
+  # Use enhanced version if strict matching tools are available
+  if have_command ss || have_command lsof; then
+    # For exact port matching, we ignore expected_ip for the initial collection
+    # and filter by address conflicts later to maintain existing behavior
+    local -a strict_listeners=()
+    mapfile -t strict_listeners < <(collect_port_listeners_strict "$proto" "$port")
+    
+    local -a results=()
+    local -A seen=()
+    
+    local record
+    for record in "${strict_listeners[@]}"; do
+      [[ -z "$record" ]] && continue
+      
+      IFS='|' read -r bind_addr pid cmd exe user container record_proto record_port tools <<<"$record"
+      
+      # Apply address conflict logic for backward compatibility
+      if ! address_conflicts "$expected_ip" "$bind_addr"; then
+        continue
+      fi
+      
+      local rich_desc
+      rich_desc="$(describe_listener_record "$record")"
+      
+      local entry="${bind_addr}|${rich_desc}"
+      if [[ -z "${seen[$entry]:-}" ]]; then
+        results+=("$entry")
+        seen["$entry"]=1
+      fi
+    done
+    
+    printf '%s\n' "${results[@]}"
+    return 0
+  fi
+
+  # Original implementation as fallback when no enhanced tools available
   local found=0
   local -a results=()
   local -A seen=()
@@ -226,7 +573,7 @@ port_conflict_listeners() {
       fi
       local proc_desc=""
       if [[ $line == *'users:(('* ]]; then
-        local proc_segment="${line#*users:(()}"
+        local proc_segment="${line#*users:((}"
         proc_segment="${proc_segment#\"}"
         local proc="${proc_segment%%\"*}"
         if [[ $line =~ pid=([0-9]+) ]]; then
@@ -409,6 +756,177 @@ stop_arrstack_services_and_continue() {
   die "Failed to stop the existing arrstack services. Resolve the conflicts manually and rerun the installer."
 }
 
+# Check if PID is safe to kill (not PID 1 or kernel thread)
+is_safe_to_kill() {
+  local pid="$1"
+  
+  # Block PID 1 (init)
+  if [[ "$pid" == "1" ]]; then
+    return 1
+  fi
+  
+  # Block kernel threads (PIDs with [ ] in comm)
+  if [[ -f "/proc/$pid/comm" ]]; then
+    local comm
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || echo "")"
+    if [[ "$comm" == \[*\] ]]; then
+      return 1
+    fi
+  fi
+  
+  return 0
+}
+
+# Force stop conflicting processes/containers
+force_stop_conflicts() {
+  local _conflicts_name="$1"
+  local -n _conflicts_ref="$_conflicts_name"
+  
+  msg ""
+  msg "Force stopping conflicting processes/containers..."
+  
+  local -a strict_records=()
+  local entry
+  for entry in "${_conflicts_ref[@]}"; do
+    IFS='|' read -r port proto label host desc is_arrstack <<<"$entry"
+    
+    # Get detailed info for this port
+    local -a port_listeners=()
+    mapfile -t port_listeners < <(collect_port_listeners_strict "$proto" "$port")
+    
+    local record
+    for record in "${port_listeners[@]}"; do
+      [[ -z "$record" ]] && continue
+      
+      IFS='|' read -r bind_addr pid cmd exe user container record_proto record_port tools <<<"$record"
+      
+      # Apply address conflict logic
+      if ! address_conflicts "$host" "$bind_addr"; then
+        continue
+      fi
+      
+      strict_records+=("$record")
+    done
+  done
+  
+  local -A processed_pids=()
+  local -A processed_containers=()
+  local stopped_any=0
+  
+  local record
+  for record in "${strict_records[@]}"; do
+    [[ -z "$record" ]] && continue
+    
+    IFS='|' read -r bind_addr pid cmd exe user container record_proto record_port tools <<<"$record"
+    
+    # Handle containers first
+    if [[ -n "$container" && -z "${processed_containers[$container]:-}" ]]; then
+      processed_containers["$container"]=1
+      msg "  Stopping container: $container"
+      
+      if have_command docker; then
+        if docker stop "$container" >/dev/null 2>&1; then
+          msg "    Container $container stopped successfully"
+          stopped_any=1
+          sleep 2
+          
+          # Check if still running, if so try kill
+          if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+            warn "    Container $container still running, trying docker kill..."
+            if docker kill "$container" >/dev/null 2>&1; then
+              msg "    Container $container killed successfully"
+              sleep 1
+            else
+              warn "    Failed to kill container $container"
+            fi
+          fi
+        else
+          warn "    Failed to stop container $container"
+        fi
+      fi
+    fi
+    
+    # Handle individual processes
+    if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ && -z "${processed_pids[$pid]:-}" ]]; then
+      processed_pids["$pid"]=1
+      
+      if ! is_safe_to_kill "$pid"; then
+        warn "  Skipping unsafe PID $pid ($cmd)"
+        continue
+      fi
+      
+      # Special handling for systemd-resolved
+      if [[ "$cmd" == "systemd-resolved" ]]; then
+        if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+          msg "  systemd-resolved detected with ENABLE_LOCAL_DNS=1"
+          msg "  Recommendation: Run 'scripts/host-dns-setup.sh' after installation"
+          msg "  For now, stopping systemd-resolved (not disabling)"
+        else
+          msg "  Stopping systemd-resolved (PID $pid)"
+        fi
+        
+        if have_command systemctl; then
+          if systemctl stop systemd-resolved >/dev/null 2>&1; then
+            msg "    systemd-resolved stopped successfully"
+            stopped_any=1
+            sleep 2
+          else
+            warn "    Failed to stop systemd-resolved"
+          fi
+        fi
+        continue
+      fi
+      
+      # Generic process handling
+      msg "  Stopping process: PID $pid ($cmd)"
+      
+      # Send SIGTERM first
+      if kill -TERM "$pid" 2>/dev/null; then
+        msg "    Sent SIGTERM to PID $pid"
+        stopped_any=1
+        
+        # Wait up to 5 seconds for graceful shutdown
+        local waited=0
+        while ((waited < 5)) && kill -0 "$pid" 2>/dev/null; do
+          sleep 1
+          ((waited++))
+        done
+        
+        # If still running, send SIGKILL
+        if kill -0 "$pid" 2>/dev/null; then
+          warn "    Process $pid still running after SIGTERM, sending SIGKILL"
+          if kill -KILL "$pid" 2>/dev/null; then
+            msg "    Sent SIGKILL to PID $pid"
+            sleep 1
+          else
+            warn "    Failed to kill PID $pid"
+          fi
+        else
+          msg "    Process PID $pid terminated gracefully"
+        fi
+      else
+        warn "    Failed to send signal to PID $pid (may have already exited)"
+      fi
+    fi
+  done
+  
+  if ((stopped_any)); then
+    msg "  Waiting for ports to be released..."
+    sleep 3
+    
+    # Reset caches
+    reset_docker_port_bindings_cache
+    PID_CONTAINER_INDEX=()
+    PID_CONTAINER_INDEX_LOADED=0
+    
+    msg "  Force stop completed"
+    return 0
+  else
+    warn "  No processes were stopped"
+    return 1
+  fi
+}
+
 prompt_port_conflict_resolution() {
   local _conflicts_name="$1"
   local _arrstack_conflicts_name="$2"
@@ -456,11 +974,12 @@ msg ""
   msg "1. Edit ports (Keeps existing arrstack running, you'll need to update userconf.sh)"
   msg "2. Stop existing arrstack and continue installation"
   msg "3. Use existing services (Stops this installation)"
+  msg "4. Force stop conflicting processes/containers and continue"
   msg ""
 
   local choice=""
   while true; do
-    printf 'Enter 1, 2, or 3: '
+    printf 'Enter 1, 2, 3, or 4: '
     if ! IFS= read -r choice; then
       choice=""
     fi
@@ -510,9 +1029,32 @@ msg ""
         msg "No changes were made."
         exit 0
         ;;
+      4)
+        msg ""
+        warn "This will forcibly terminate conflicting processes/containers!"
+        warn "This may cause data loss or service interruption."
+        msg ""
+        printf 'Are you sure you want to force stop conflicts? (yes/no): '
+        local confirm=""
+        if ! IFS= read -r confirm; then
+          confirm=""
+        fi
+        if [[ ${confirm,,} == "yes" ]]; then
+          if force_stop_conflicts "$_conflicts_name"; then
+            msg "Force stop completed. Continuing installation..."
+            return 0
+          else
+            warn "Force stop failed or no processes were stopped."
+            msg "Please resolve conflicts manually and try again."
+            exit 1
+          fi
+        fi
+        msg ""
+        msg "Force stop cancelled."
+        ;;
       *)
         msg ""
-        msg "Please enter 1, 2, or 3 only."
+        msg "Please enter 1, 2, 3, or 4 only."
         ;;
     esac
   done
@@ -631,6 +1173,23 @@ check_port_conflicts() {
           arrstack_conflicts+=("$record")
         fi
       done
+
+      # Handle automatic force-stop if --force-stop-conflicts was supplied
+      if [[ "${FORCE_STOP_CONFLICTS:-0}" -eq 1 ]]; then
+        msg ""
+        msg "--force-stop-conflicts supplied: automatically force stopping conflicting processes/containers."
+        
+        if force_stop_conflicts conflicts; then
+          msg "Force stop completed. Continuing installation..."
+          reset_docker_port_bindings_cache
+          DOCKER_PORT_BINDINGS=()
+          DOCKER_PORT_BINDINGS_LOADED=0
+          cleanup_performed=1
+          continue
+        else
+          die "Force stop failed. Unable to free required ports automatically."
+        fi
+      fi
 
       if prompt_port_conflict_resolution conflicts arrstack_conflicts; then
         reset_docker_port_bindings_cache

@@ -51,6 +51,7 @@ Options:
   --rotate-caddy-auth   Force regeneration of the Caddy basic auth credentials
   --setup-host-dns      Run the host DNS takeover helper during installation
   --refresh-aliases     Regenerate helper aliases and reload your shell
+  --force-stop-conflicts Force stop conflicting processes/containers and continue
   --help                Show this help message
 USAGE
 }
@@ -85,6 +86,10 @@ main() {
         ;;
       --refresh-aliases)
         REFRESH_ALIASES=1
+        shift
+        ;;
+      --force-stop-conflicts)
+        FORCE_STOP_CONFLICTS=1
         shift
         ;;
       --help | -h)
