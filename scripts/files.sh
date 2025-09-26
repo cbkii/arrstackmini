@@ -6,6 +6,20 @@ caddy_bcrypt() {
     return 1
   fi
 
+  local hash_output=""
+
+  if command -v openssl >/dev/null 2>&1; then
+    hash_output="$(
+      printf '%s\n' "$plaintext" \
+        | openssl passwd -bcrypt -stdin 2>/dev/null
+    )" || true
+
+    if [[ -n "$hash_output" ]]; then
+      printf '%s\n' "$hash_output"
+      return 0
+    fi
+  fi
+
   docker run --rm "${CADDY_IMAGE}" caddy hash-password --algorithm bcrypt --plaintext "$plaintext" 2>/dev/null
 }
 
@@ -57,7 +71,21 @@ mkdirs() {
   fi
 
   if [[ -n "${PUID:-}" && -n "${PGID:-}" ]]; then
-    chown -R "${PUID}:${PGID}" "$ARR_DOCKER_DIR" 2>/dev/null || true
+    local ownership_marker="${ARR_DOCKER_DIR}/.arrstack-owner"
+    local desired_owner="${PUID}:${PGID}"
+    local current_owner=""
+
+    if [[ -f "$ownership_marker" ]]; then
+      current_owner="$(<"$ownership_marker")"
+    fi
+
+    if [[ "$current_owner" != "$desired_owner" ]]; then
+      if chown -R "${desired_owner}" "$ARR_DOCKER_DIR" 2>/dev/null; then
+        printf '%s\n' "$desired_owner" >"$ownership_marker" 2>/dev/null || true
+      else
+        warn "Could not update ownership on $ARR_DOCKER_DIR"
+      fi
+    fi
   fi
 }
 

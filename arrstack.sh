@@ -2,7 +2,6 @@
 # shellcheck enable=require-variable-braces
 # shellcheck enable=quote-safe-variables
 set -Eeuo pipefail
-IFS=$'\n\t'
 
 arrstack_err_trap() {
   local rc=$?
@@ -65,6 +64,7 @@ else
 fi
 
 main() {
+  local IFS=$'\n\t'
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --yes)

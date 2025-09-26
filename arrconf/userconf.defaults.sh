@@ -79,7 +79,8 @@ if ! declare -f arrstack_parse_csv >/dev/null 2>&1; then
     local raw="$1"
     local item
 
-    IFS=',' read -r -a _arrstack_csv_items <<<"$raw"
+    local IFS=','
+    read -r -a _arrstack_csv_items <<<"$raw"
     for item in "${_arrstack_csv_items[@]}"; do
       item="$(arrstack_trim_whitespace "$item")"
       [[ -z "$item" ]] && continue

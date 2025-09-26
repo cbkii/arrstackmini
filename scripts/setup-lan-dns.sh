@@ -11,8 +11,7 @@ REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 # Escalation insertion point: call this at top of scripts that need root
 arrstack_escalate_privileges "$@"
 
-set -euo pipefail
-IFS=$'\n\t'
+set -Eeuo pipefail
 
 log() {
   msg "$@"
@@ -248,6 +247,7 @@ PYTHON
 }
 
 main() {
+  local IFS=$'\n\t'
   if [[ $# -lt 2 ]]; then
     die "Usage: $0 <domain_suffix> <lan_ip>"
   fi

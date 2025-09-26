@@ -27,6 +27,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 - **`ARR_BASE`** – default `~/srv`. Change if you store Docker data elsewhere.
 - **`DOWNLOADS_DIR` / `COMPLETED_DIR` / `MEDIA_DIR`** – point these at storage with enough space.
 - **`TIMEZONE`** – set to your region (e.g. `Europe/Amsterdam`).
+- **`SERVER_COUNTRIES`** – choose the ProtonVPN exit country list (comma-separated) that matches where you want traffic to appear.
 
 ### DNS and networking
 - **`ENABLE_LOCAL_DNS`** – Disabled by default. Set to `1` to run dnsmasq and manage LAN hostnames; requires `LAN_DOMAIN_SUFFIX` and upstream DNS servers.
