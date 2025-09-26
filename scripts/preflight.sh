@@ -1,5 +1,60 @@
 # shellcheck shell=bash
 
+# Enhanced port conflict detection environment variables
+: "${ARRSTACK_DEBUG_PORTS:=0}"
+: "${ARRSTACK_PORT_TRACE:=0}"
+: "${ARRSTACK_LEGACY_PORTCHECK:=0}"
+
+# Structured logging for debugging
+json_log() {
+  local level="$1"
+  shift
+  
+  if [[ "${ARRSTACK_DEBUG_PORTS}" != "1" ]]; then
+    return 0
+  fi
+  
+  local timestamp
+  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%S.%3NZ')"
+  
+  # Create logs directory if it doesn't exist
+  local log_dir="${ARR_STACK_DIR:-/tmp}/logs"
+  mkdir -p "$log_dir" 2>/dev/null || log_dir="/tmp"
+  
+  local log_file
+  log_file="${log_dir}/port-scan-$(date +%Y%m%d).jsonl"
+  
+  # Build JSON message
+  local json_msg="{\"timestamp\":\"$timestamp\",\"level\":\"$level\""
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --*)
+        local key="${1#--}"
+        local value="$2"
+        # Escape JSON values
+        value="${value//\\/\\\\}"
+        value="${value//\"/\\\"}"
+        json_msg="$json_msg,\"$key\":\"$value\""
+        shift 2
+        ;;
+      *)
+        json_msg="$json_msg,\"message\":\"$1\""
+        shift
+        ;;
+    esac
+  done
+  
+  json_msg="$json_msg}"
+  
+  printf '%s\n' "$json_msg" >> "$log_file"
+  
+  # Also log to stderr if trace mode is enabled
+  if [[ "${ARRSTACK_PORT_TRACE}" == "1" ]]; then
+    printf '[PORT-TRACE] %s\n' "$json_msg" >&2
+  fi
+}
+
 install_missing() {
   msg "🔧 Checking dependencies"
 
@@ -200,7 +255,354 @@ docker_port_conflict_listeners() {
   done <<<"$data"
 }
 
+# Enhanced port conflict detection functions
+
+# Gather comprehensive port snapshot from multiple sources
+gather_port_snapshot() {
+  local proto="$1"
+  local port="$2"
+  local expected_ip="${3:-*}"
+  
+  json_log "debug" "Starting port snapshot" --proto "$proto" --port "$port" --expected_ip "$expected_ip"
+  
+  local -a listeners=()
+  local -A seen=()
+  
+  # Source 1: ss command (preferred)
+  if have_command ss; then
+    json_log "debug" "Gathering from ss command"
+    local flag="lntp"
+    if [[ "$proto" == "udp" ]]; then
+      flag="lnup"
+    fi
+    
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local addr_field
+      addr_field="$(awk '{print $4}' <<<"$line" 2>/dev/null || true)"
+      [[ -z "$addr_field" ]] && continue
+      local host="${addr_field%:*}"
+      
+      if ! address_conflicts "$expected_ip" "$host"; then
+        continue
+      fi
+      
+      local proc_desc=""
+      local pid=""
+      if [[ $line == *'users:(('* ]]; then
+        local proc_segment="${line#*users:(()}"
+        proc_segment="${proc_segment#\"}"
+        local proc="${proc_segment%%\"*}"
+        if [[ $line =~ pid=([0-9]+) ]]; then
+          pid="${BASH_REMATCH[1]}"
+          proc_desc="${proc} (pid ${pid})"
+        else
+          proc_desc="$proc"
+        fi
+      fi
+      
+      local normalized_host
+      normalized_host="$(normalize_bind_address "$host")"
+      local entry="${normalized_host}|${proc_desc:-}|${pid:-}|ss"
+      
+      if [[ -z "${seen[$entry]:-}" ]]; then
+        listeners+=("$entry")
+        seen["$entry"]=1
+        json_log "debug" "Found listener via ss" --host "$normalized_host" --desc "$proc_desc" --pid "$pid"
+      fi
+    done < <(ss -H -${flag} "sport = :${port}" 2>/dev/null || true)
+  fi
+  
+  # Source 2: lsof command (fallback)
+  if have_command lsof; then
+    json_log "debug" "Gathering from lsof command"
+    local -a spec
+    if [[ "$proto" == "udp" ]]; then
+      spec=(-iUDP:"${port}")
+    else
+      spec=(-iTCP:"${port}" -sTCP:LISTEN)
+    fi
+    
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      [[ "$line" =~ ^COMMAND ]] && continue
+      local name
+      name="$(awk '{print $9}' <<<"$line" 2>/dev/null || true)"
+      [[ -z "$name" ]] && continue
+      name="${name%%->*}"
+      name="${name% (LISTEN)}"
+      local host="${name%:*}"
+      
+      if ! address_conflicts "$expected_ip" "$host"; then
+        continue
+      fi
+      
+      local proc
+      proc="$(awk '{print $1}' <<<"$line" 2>/dev/null || true)"
+      local pid
+      pid="$(awk '{print $2}' <<<"$line" 2>/dev/null || true)"
+      local proc_desc="${proc:-}"
+      if [[ -n "$pid" ]]; then
+        proc_desc+="${proc_desc:+ }(pid ${pid})"
+      fi
+      
+      local normalized_host
+      normalized_host="$(normalize_bind_address "$host")"
+      local entry="${normalized_host}|${proc_desc}|${pid:-}|lsof"
+      
+      if [[ -z "${seen[$entry]:-}" ]]; then
+        listeners+=("$entry")
+        seen["$entry"]=1
+        json_log "debug" "Found listener via lsof" --host "$normalized_host" --desc "$proc_desc" --pid "$pid"
+      fi
+    done < <(lsof -nP "${spec[@]}" 2>/dev/null || true)
+  fi
+  
+  # Source 3: /proc/net fallback (basic)
+  if [[ ${#listeners[@]} -eq 0 ]]; then
+    json_log "debug" "Gathering from /proc/net fallback"
+    local proc_file="/proc/net/tcp"
+    if [[ "$proto" == "udp" ]]; then
+      proc_file="/proc/net/udp"
+    fi
+    
+    if [[ -r "$proc_file" ]]; then
+      local port_hex
+      port_hex="$(printf '%04X' "$port")"
+      
+      while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*sl ]] && continue
+        local local_addr
+        local_addr="$(awk '{print $2}' <<<"$line" 2>/dev/null || true)"
+        [[ -z "$local_addr" ]] && continue
+        
+        if [[ "$local_addr" == *":${port_hex}" ]]; then
+          local host_hex="${local_addr%:*}"
+          local host_ip
+          # Convert hex IP to dotted decimal (basic IPv4 only)
+          if [[ ${#host_hex} -eq 8 ]]; then
+            local a=$((0x${host_hex:6:2}))
+            local b=$((0x${host_hex:4:2}))
+            local c=$((0x${host_hex:2:2}))
+            local d=$((0x${host_hex:0:2}))
+            host_ip="$a.$b.$c.$d"
+          else
+            host_ip="unknown"
+          fi
+          
+          if address_conflicts "$expected_ip" "$host_ip"; then
+            local normalized_host
+            normalized_host="$(normalize_bind_address "$host_ip")"
+            local entry="${normalized_host}|unknown process||proc"
+            
+            if [[ -z "${seen[$entry]:-}" ]]; then
+              listeners+=("$entry")
+              seen["$entry"]=1
+              json_log "debug" "Found listener via /proc/net" --host "$normalized_host"
+            fi
+          fi
+        fi
+      done < "$proc_file"
+    fi
+  fi
+  
+  # Source 4: Docker containers
+  json_log "debug" "Gathering from Docker containers"
+  while IFS= read -r docker_entry; do
+    [[ -z "$docker_entry" ]] && continue
+    local entry="$docker_entry"
+    if [[ -z "${seen[$entry]:-}" ]]; then
+      listeners+=("$entry")
+      seen["$entry"]=1
+      json_log "debug" "Found listener via Docker" --entry "$entry"
+    fi
+  done < <(docker_port_conflict_listeners "$proto" "$expected_ip" "$port")
+  
+  # Source 5: systemd-resolved detection for port 53
+  if [[ "$port" == "53" ]] && have_command systemctl; then
+    json_log "debug" "Checking systemd-resolved for port 53"
+    local resolved_pid
+    resolved_pid="$(systemctl show systemd-resolved --property MainPID --value 2>/dev/null || true)"
+    
+    if [[ -n "$resolved_pid" && "$resolved_pid" != "0" ]]; then
+      # Check if this PID is actually listening on port 53
+      local listening=0
+      if have_command ss; then
+        if ss -ln | grep -q ":53 "; then
+          if ss -lnp | grep ":53 " | grep -q "pid=${resolved_pid}"; then
+            listening=1
+          fi
+        fi
+      fi
+      
+      if ((listening)); then
+        local entry="*|systemd-resolved (pid ${resolved_pid})|${resolved_pid}|systemd-resolved"
+        if [[ -z "${seen[$entry]:-}" ]]; then
+          listeners+=("$entry")
+          seen["$entry"]=1
+          json_log "debug" "Found systemd-resolved on port 53" --pid "$resolved_pid"
+        fi
+      fi
+    fi
+  fi
+  
+  json_log "debug" "Port snapshot complete" --listeners_found "${#listeners[@]}"
+  printf '%s\n' "${listeners[@]}"
+}
+
+# Debounce conflicts by taking two snapshots and only keeping persistent listeners
+debounce_conflicts() {
+  local proto="$1"
+  local port="$2" 
+  local expected_ip="${3:-*}"
+  local delay="${4:-1}"
+  
+  json_log "debug" "Starting conflict debouncing" --proto "$proto" --port "$port" --delay "$delay"
+  
+  # First snapshot
+  local -a snapshot1=()
+  mapfile -t snapshot1 < <(gather_port_snapshot "$proto" "$port" "$expected_ip")
+  
+  json_log "debug" "First snapshot complete" --count "${#snapshot1[@]}"
+  
+  # Wait between snapshots
+  sleep "$delay"
+  
+  # Second snapshot
+  local -a snapshot2=()
+  mapfile -t snapshot2 < <(gather_port_snapshot "$proto" "$port" "$expected_ip")
+  
+  json_log "debug" "Second snapshot complete" --count "${#snapshot2[@]}"
+  
+  # Find persistent listeners (present in both snapshots)
+  local -A persistent=()
+  local -A first_snapshot=()
+  
+  # Index first snapshot
+  local entry
+  for entry in "${snapshot1[@]}"; do
+    first_snapshot["$entry"]=1
+  done
+  
+  # Check second snapshot for persistence
+  for entry in "${snapshot2[@]}"; do
+    IFS='|' read -r host desc pid _source <<<"$entry"
+    
+    # Special case: always include arrstack containers even if they appear in only one snapshot
+    # (they might be starting up or shutting down)
+    local classification
+    classification="$(classify_listener_strict "$desc" "$pid" "$host")"
+    
+    if [[ "$classification" == "arrstack" ]]; then
+      persistent["$entry"]=1
+      json_log "debug" "Including arrstack container despite single snapshot" --entry "$entry"
+      continue
+    fi
+    
+    # Regular persistence check
+    if [[ -n "${first_snapshot[$entry]:-}" ]]; then
+      persistent["$entry"]=1
+      json_log "debug" "Confirmed persistent listener" --entry "$entry"
+    else
+      json_log "debug" "Transient listener filtered out" --entry "$entry"
+    fi
+  done
+  
+  # Output persistent listeners in legacy format (host|desc)
+  for entry in "${!persistent[@]}"; do
+    IFS='|' read -r host desc _pid _source <<<"$entry"
+    printf '%s|%s\n' "$host" "$desc"
+  done
+  
+  json_log "debug" "Debouncing complete" --persistent_count "${#persistent[@]}"
+}
+
+# Strict listener classification to replace fuzzy matching
+classify_listener_strict() {
+  local desc="$1"
+  local pid="${2:-}"
+  local host="${3:-}"
+  local container_name="${4:-}"
+  
+  json_log "debug" "Classifying listener" --desc "$desc" --pid "$pid" --host "$host" --container_name "$container_name"
+  
+  # Check if it's an arrstack container based on compose project or service name
+  if [[ -n "$container_name" ]]; then
+    # Check against current COMPOSE_PROJECT_NAME if set
+    if [[ -n "${COMPOSE_PROJECT_NAME:-}" && "$container_name" == *"${COMPOSE_PROJECT_NAME}"* ]]; then
+      printf "arrstack\n"
+      json_log "debug" "Classified as arrstack via compose project" --project "$COMPOSE_PROJECT_NAME"
+      return
+    fi
+    
+    # Check against known arrstack services
+    if [[ -n "${ARR_DOCKER_SERVICES:-}" ]]; then
+      local service
+      while IFS= read -r service; do
+        if [[ -n "$service" && "$container_name" == *"$service"* ]]; then
+          printf "arrstack\n" 
+          json_log "debug" "Classified as arrstack via service match" --service "$service"
+          return
+        fi
+      done <<<"${ARR_DOCKER_SERVICES}"
+    fi
+  fi
+  
+  # Check if it's a known arr process by exact executable name
+  local desc_lower="${desc,,}"
+  if [[ "$desc_lower" == *"qbittorrent-nox"* ]] || \
+     [[ "$desc_lower" == *"mono"* && "$desc_lower" == *"sonarr"* ]] || \
+     [[ "$desc_lower" == *"mono"* && "$desc_lower" == *"radarr"* ]] || \
+     [[ "$desc_lower" == *"mono"* && "$desc_lower" == *"prowlarr"* ]] || \
+     [[ "$desc_lower" == *"mono"* && "$desc_lower" == *"bazarr"* ]] || \
+     [[ "$desc_lower" == *"jackett"* ]] || \
+     [[ "$desc_lower" == *"flaresolverr"* ]] || \
+     [[ "$desc_lower" == *"gluetun"* ]]; then
+    printf "arrstack\n"
+    json_log "debug" "Classified as arrstack via executable match"
+    return
+  fi
+  
+  # Check for systemd-resolved
+  if [[ "$desc_lower" == *"systemd-resolved"* ]]; then
+    printf "systemd-resolved\n"
+    json_log "debug" "Classified as systemd-resolved"
+    return
+  fi
+  
+  # Verify systemd-resolved by PID if available
+  if [[ -n "$pid" ]] && have_command systemctl; then
+    local resolved_pid
+    resolved_pid="$(systemctl show systemd-resolved --property MainPID --value 2>/dev/null || true)"
+    if [[ -n "$resolved_pid" && "$resolved_pid" == "$pid" ]]; then
+      printf "systemd-resolved\n"
+      json_log "debug" "Classified as systemd-resolved via PID match" --pid "$pid"
+      return
+    fi
+  fi
+  
+  # Default: other
+  printf "other\n"
+  json_log "debug" "Classified as other"
+}
+
 port_conflict_listeners() {
+  local proto="$1"
+  local expected_ip="$2"
+  local port="$3"
+  
+  # Use legacy implementation if requested
+  if [[ "${ARRSTACK_LEGACY_PORTCHECK}" == "1" ]]; then
+    legacy_port_conflict_listeners "$@"
+    return
+  fi
+  
+  # Use new debounced approach
+  debounce_conflicts "$proto" "$port" "$expected_ip"
+}
+
+# Legacy port conflict detection (original implementation)
+legacy_port_conflict_listeners() {
   local proto="$1"
   local expected_ip="$2"
   local port="$3"
@@ -345,32 +747,41 @@ listener_is_arrstack() {
     return 1
   fi
 
-  local patterns=(
-    "arrstack"
-    "qbittorrent"
-    "sonarr"
-    "radarr"
-    "prowlarr"
-    "jackett"
-    "bazarr"
-    "flaresolverr"
-    "byparr"
-    "proton"
-    "gluetun"
-  )
+  # Use legacy classification if requested
+  if [[ "${ARRSTACK_LEGACY_PORTCHECK}" == "1" ]]; then
+    local patterns=(
+      "arrstack"
+      "qbittorrent"
+      "sonarr"
+      "radarr"
+      "prowlarr"
+      "jackett"
+      "bazarr"
+      "flaresolverr"
+      "byparr"
+      "proton"
+      "gluetun"
+    )
 
-  local pattern
-  for pattern in "${patterns[@]}"; do
-    if [[ "$desc" == *"$pattern"* ]]; then
+    local pattern
+    for pattern in "${patterns[@]}"; do
+      if [[ "$desc" == *"$pattern"* ]]; then
+        return 0
+      fi
+    done
+
+    if [[ "$desc" =~ [[:alpha:]]+arr ]]; then
       return 0
     fi
-  done
 
-  if [[ "$desc" =~ [[:alpha:]]+arr ]]; then
-    return 0
+    return 1
   fi
-
-  return 1
+  
+  # Use new strict classification
+  local classification
+  classification="$(classify_listener_strict "$desc" "" "")"
+  
+  [[ "$classification" == "arrstack" ]]
 }
 
 format_listener_description() {
