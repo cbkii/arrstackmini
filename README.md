@@ -46,7 +46,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    - `http://192.168.1.50:6767` (Bazarr)
    - `http://192.168.1.50:8191` (FlareSolverr health page)
    The default qBittorrent credentials are `admin` / `adminadmin` — change them immediately.
-7. **(Optional) Enable extras later.** Set `ENABLE_CADDY=1` for HTTPS reverse proxying (Caddy issues its own LAN certificates) or `ENABLE_LOCAL_DNS=1` for dnsmasq, then rerun `./arrstack.sh`. Using DNS alone keeps the apps on plain `http://LAN_IP:PORT`, so enable Caddy only when you want hostname-based HTTPS. The defaults keep both disabled so IP:PORT access works everywhere without touching your router.
+7. **(Optional) Enable extras later.** Either set `ENABLE_CADDY=1` (or run `./arrstack.sh --enable-caddy`) for HTTPS reverse proxying, or set `ENABLE_LOCAL_DNS=1` for dnsmasq, then rerun `./arrstack.sh`. Using DNS alone keeps the apps on plain `http://LAN_IP:PORT`, so enable Caddy only when you want hostname-based HTTPS. The defaults keep both disabled so IP:PORT access works everywhere without touching your router.
 
 **Verify:**
 ```bash
