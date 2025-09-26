@@ -35,6 +35,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 - **`UPSTREAM_DNS_SERVERS`** – comma-separated resolver list (e.g. `1.1.1.1,1.0.0.1`). The installer probes them during preflight and prioritises responsive servers first. Legacy `UPSTREAM_DNS_1`/`UPSTREAM_DNS_2` still work and override the first two positions when set.
 - **`GLUETUN_CONTROL_PORT`** – keep `8000` unless another local service uses it.
 - **`EXPOSE_DIRECT_PORTS`** – defaults to `1` so every WebUI is reachable at `http://LAN_IP:PORT`. Leave it enabled and provide a private `LAN_IP`; the installer exits if either requirement is missing.
+- **`ENABLE_CADDY`** – defaults to `0`. Set to `1` (or run `./arrstack.sh --enable-caddy`) to install the optional Caddy reverse proxy and publish HTTPS hostnames on ports 80/443.
 
 ### Credentials and security
 - **`QBT_USER` / `QBT_PASS`** – update after first login to qBittorrent. Keep `.env` in sync.

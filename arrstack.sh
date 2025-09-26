@@ -47,6 +47,7 @@ Usage: ./arrstack.sh [options]
 
 Options:
   --yes                 Run non-interactively and assume yes to prompts
+  --enable-caddy        Enable the optional Caddy reverse proxy (sets ENABLE_CADDY=1)
   --rotate-api-key      Force regeneration of the Gluetun API key
   --rotate-caddy-auth   Force regeneration of the Caddy basic auth credentials
   --setup-host-dns      Run the host DNS takeover helper during installation
@@ -69,6 +70,10 @@ main() {
     case "$1" in
       --yes)
         ASSUME_YES=1
+        shift
+        ;;
+      --enable-caddy)
+        ENABLE_CADDY=1
         shift
         ;;
       --rotate-api-key)
