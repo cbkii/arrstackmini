@@ -36,8 +36,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    ```bash
    ./arrstack.sh --yes
    ```
-   The script installs dependencies if needed, renders `.env`, and launches the stack with Docker Compose.
-   Compose reads `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
+   The script installs dependencies if needed, renders `${ARR_STACK_DIR}/.env` (default `~/srv/arrstack/.env`), and launches the stack with Docker Compose from that directory.
+   Compose reads that `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
 6. **Open the WebUIs directly by IP.** As soon as the installer finishes, browse to each service using your Pi’s LAN IP (example `192.168.1.50`). The installer refuses to expose ports until `LAN_IP` is a private address, so set the value and re-run if you skipped it the first time:
    - `http://192.168.1.50:8080` (qBittorrent)
    - `http://192.168.1.50:8989` (Sonarr)

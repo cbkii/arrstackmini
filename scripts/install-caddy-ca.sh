@@ -43,13 +43,18 @@ while (($#)); do
 done
 
 if [[ -z "$STACK_DIR" ]]; then
-  STACK_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  STACK_DIR="${ARR_STACK_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+fi
+
+STACK_DIR_INPUT="$STACK_DIR"
+if ! STACK_DIR="$(cd "$STACK_DIR_INPUT" 2>/dev/null && pwd)"; then
+  die "Stack directory not found: ${STACK_DIR_INPUT}"
 fi
 
 if [[ -n "$DATA_DIR_OVERRIDE" ]]; then
   CADDY_DATA_DIR="$DATA_DIR_OVERRIDE"
 else
-  ENV_FILE="${STACK_DIR}/.env"
+  ENV_FILE="${ARR_ENV_FILE:-${STACK_DIR}/.env}"
   if [[ -f "$ENV_FILE" ]]; then
     env_value="$(grep '^ARR_DOCKER_DIR=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
     if [[ -n "$env_value" ]]; then

@@ -415,7 +415,20 @@ compose() {
     die "Docker Compose command not detected; run preflight first"
   fi
 
-  "${DOCKER_COMPOSE_CMD[@]}" "$@"
+  local project_dir="${ARR_STACK_DIR:-}"
+
+  if [[ -n "$project_dir" ]]; then
+    if [[ ! -d "$project_dir" ]]; then
+      die "Stack directory not found: ${project_dir}"
+    fi
+
+    (
+      cd "$project_dir" || die "Failed to change to ${project_dir}"
+      "${DOCKER_COMPOSE_CMD[@]}" "$@"
+    )
+  else
+    "${DOCKER_COMPOSE_CMD[@]}" "$@"
+  fi
 }
 
 msg_color_supported() {

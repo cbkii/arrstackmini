@@ -3,23 +3,33 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+STACK_DIR="${ARR_STACK_DIR:-${REPO_ROOT}}"
 
-compose_path="${REPO_ROOT}/docker-compose.yml"
+if [[ ! -d "$STACK_DIR" ]]; then
+  echo "[check-caddy-optional] Stack directory not found: ${STACK_DIR}" >&2
+  exit 1
+fi
+
+compose_path="${STACK_DIR}/docker-compose.yml"
 if [[ ! -f "$compose_path" ]]; then
   echo "[check-caddy-optional] docker-compose.yml not found at ${compose_path}. Run ./arrstack.sh first." >&2
   exit 1
 fi
 
-env_source="${REPO_ROOT}/.env"
+env_source="${ARR_ENV_FILE:-${STACK_DIR}/.env}"
 if [[ ! -f "$env_source" ]]; then
-  env_source="${REPO_ROOT}/.env.example"
+  if [[ -f "${STACK_DIR}/.env.example" ]]; then
+    env_source="${STACK_DIR}/.env.example"
+  else
+    env_source="${REPO_ROOT}/.env.example"
+  fi
   if [[ ! -f "$env_source" ]]; then
-    echo "[check-caddy-optional] No .env or .env.example found in ${REPO_ROOT}." >&2
+    echo "[check-caddy-optional] No .env or .env.example found in ${STACK_DIR}." >&2
     exit 1
   fi
 fi
 
-tmp_env="$(mktemp "${REPO_ROOT}/.env.caddy-check.XXXXXX")"
+tmp_env="$(mktemp "${STACK_DIR}/.env.caddy-check.XXXXXX")"
 trap 'rm -f "$tmp_env"' EXIT
 cp "$env_source" "$tmp_env"
 
@@ -50,15 +60,19 @@ if grep -q '":443:443"' "$compose_path"; then
   exit 1
 fi
 
-ARR_STACK_DIR="${ARR_STACK_DIR:-${REPO_ROOT}}"
+ARR_STACK_DIR="$STACK_DIR"
 ARR_ENV_FILE="${tmp_env}"
 ARR_DOCKER_DIR="${ARR_STACK_DIR}/docker-data"
 ARRCONF_DIR="${ARR_STACK_DIR}/arrconf"
 export ARR_STACK_DIR ARR_ENV_FILE ARR_DOCKER_DIR ARRCONF_DIR
 
-# shellcheck source=/dev/null
 set +e
-. "${REPO_ROOT}/.arraliases"
+alias_source="${ARR_STACK_DIR}/.arraliases"
+if [[ ! -f "$alias_source" ]]; then
+  alias_source="${REPO_ROOT}/.arraliases"
+fi
+# shellcheck source=/dev/null
+. "$alias_source"
 set -e
 
 alias_output="$(arr.open 2>&1)"
