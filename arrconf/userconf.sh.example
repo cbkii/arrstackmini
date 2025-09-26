@@ -72,6 +72,7 @@ FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on th
 # FLARESOLVERR_IMAGE="ghcr.io/flaresolverr/flaresolverr:v3.3.21"      # Override the FlareSolverr container tag
 
 # --- Behaviour toggles ---
+# ARR_COLOR_OUTPUT="1"                   # Set to 0 to disable coloured CLI output (default: 1)
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs
 # FORCE_ROTATE_API_KEY="0"               # Force regeneration of the Gluetun API key on next run
 # FORCE_REGEN_CADDY_AUTH="0"             # Rotate the Caddy username/password on next run

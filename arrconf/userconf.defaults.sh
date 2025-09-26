@@ -33,6 +33,7 @@ ARR_LOG_DIR="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
 ARR_INSTALL_LOG="${ARR_INSTALL_LOG:-${ARR_LOG_DIR}/arrstack-install.log}"
 ARR_DOCKER_DIR="${ARR_DOCKER_DIR:-${ARR_BASE}/docker-data}"
 ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT:-${PWD}}/arrconf}"
+ARR_COLOR_OUTPUT="${ARR_COLOR_OUTPUT:-1}"
 
 # File/dir permissions (strict keeps secrets 600/700, collaborative loosens group access)
 if ! arrstack_var_is_readonly ARR_PERMISSION_PROFILE; then

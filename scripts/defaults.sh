@@ -47,6 +47,7 @@ arrstack_setup_defaults() {
   : "${DNS_DISTRIBUTION_MODE:=router}"
   : "${SETUP_HOST_DNS:=0}"
   : "${REFRESH_ALIASES:=0}"
+  : "${ARR_COLOR_OUTPUT:=1}"
 
   LOCAL_DNS_SERVICE_ENABLED=0
   : "$LOCAL_DNS_SERVICE_ENABLED" # referenced by other modules after defaults load

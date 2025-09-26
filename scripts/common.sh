@@ -3,10 +3,38 @@
 : "${CYAN:=}"
 : "${YELLOW:=}"
 : "${RESET:=}"
+: "${ARR_COLOR_OUTPUT:=1}"
 : "${SECRET_FILE_MODE:=600}"
 : "${NONSECRET_FILE_MODE:=600}"
 : "${DATA_DIR_MODE:=700}"
 : "${LOCK_FILE_MODE:=600}"
+
+arrstack_resolve_color_output() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    ARR_COLOR_OUTPUT=0
+    return
+  fi
+
+  case "${FORCE_COLOR:-}" in
+    '' | 0 | false | FALSE | no | NO)
+      ;;
+    *)
+      ARR_COLOR_OUTPUT=1
+      return
+      ;;
+  esac
+
+  case "${ARR_COLOR_OUTPUT:-1}" in
+    0 | false | FALSE | no | NO | off | OFF)
+      ARR_COLOR_OUTPUT=0
+      ;;
+    *)
+      ARR_COLOR_OUTPUT=1
+      ;;
+  esac
+}
+
+arrstack_resolve_color_output
 
 have_command() {
   command -v "$1" >/dev/null 2>&1
@@ -432,16 +460,13 @@ compose() {
 }
 
 msg_color_supported() {
-  if [ -n "${NO_COLOR:-}" ]; then
+  arrstack_resolve_color_output
+
+  if [[ "${ARR_COLOR_OUTPUT}" == 0 ]]; then
     return 1
   fi
-  if [ -n "${FORCE_COLOR:-}" ]; then
-    return 0
-  fi
-  if [ -t 1 ]; then
-    return 0
-  fi
-  return 1
+
+  return 0
 }
 
 arrstack_timestamp() {
