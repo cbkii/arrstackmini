@@ -46,7 +46,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 ### Media apps and images
 - **`QBT_DOCKER_MODS`** – Vuetorrent skin for qBittorrent. Keep default unless you know you need a different mod.
 - **Image tags (`*_IMAGE`)** – pinned to known-good releases. Update only after reading [Version management](VERSION_MANAGEMENT.md).
-- **Service ports (`*_PORT`)** – these become LAN ports if you enable direct exposure. Otherwise Caddy serves everything on 80/443.
+- **Service ports (`*_PORT`)** – exposed on the LAN as `http://LAN_IP:PORT` by default. Enabling Caddy adds HTTPS frontends on 80/443.
 
 ### Advanced flags (rarely change)
 - **`ASSUME_YES`** – set to `1` only for unattended installs.

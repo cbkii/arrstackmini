@@ -56,6 +56,18 @@ Proxy profile enabled (Caddy reverse proxy):
   Health endpoint: http://${ip_hint}/healthz
 Remote clients must authenticate with '${CADDY_BASIC_AUTH_USER}' using the password stored in ${ARR_DOCKER_DIR}/caddy/credentials.
 CADDY_INFO
+  else
+    cat <<'NO_CADDY'
+
+Reverse proxy disabled (ENABLE_CADDY=0).
+Access the services via the direct LAN URLs above.
+Set ENABLE_CADDY=1 in arrconf/userconf.sh and rerun ./arrstack.sh to publish HTTPS hostnames signed by the internal CA.
+NO_CADDY
+    if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+      cat <<'DNS_HTTP'
+Local DNS is enabled. Hostnames will resolve but continue serving plain HTTP until Caddy is enabled.
+DNS_HTTP
+    fi
   fi
 
   if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then

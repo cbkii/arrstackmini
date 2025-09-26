@@ -387,30 +387,75 @@ arr.data.usage() {
 }
 
 arr.open() {
-  local suffix="$(_arr_domain_suffix)"
-  local entries='qBittorrent qbittorrent
-Sonarr sonarr
-Radarr radarr
-Prowlarr prowlarr
-Bazarr bazarr
-FlareSolverr flaresolverr'
+  local enable_caddy enable_local_dns
+  enable_caddy="$(_arr_env_get ENABLE_CADDY)"
+  enable_local_dns="$(_arr_env_get ENABLE_LOCAL_DNS)"
   local opener=""
   if command -v xdg-open >/dev/null 2>&1; then
     opener=xdg-open
   elif command -v open >/dev/null 2>&1; then
     opener=open
   fi
-  printf 'Service URLs (proxied via Caddy):\n'
-  while read -r name host; do
-    [ -n "$name" ] || continue
-    local url="http://${host}.${suffix}"
+
+  if [ "$enable_caddy" = "1" ]; then
+    local suffix entries
+    suffix="$(_arr_domain_suffix)"
+    entries='qBittorrent qbittorrent
+Sonarr sonarr
+Radarr radarr
+Prowlarr prowlarr
+Bazarr bazarr
+FlareSolverr flaresolverr'
+    printf 'Service URLs (via Caddy reverse proxy):\n'
+    while read -r name host; do
+      [ -n "$name" ] || continue
+      local url
+      url="http://${host}.${suffix}"
+      printf '  %s -> %s\n' "$name" "$url"
+      if [ -n "$opener" ]; then
+        "$opener" "$url" >/dev/null 2>&1 &
+      fi
+    done <<EOF
+$entries
+EOF
+    return
+  fi
+
+  local host qbt_port sonarr_port radarr_port prowlarr_port bazarr_port flaresolverr_port
+  host="$(_arr_host)"
+  qbt_port="${QBT_HTTP_PORT_HOST:-$(_arr_env_get QBT_HTTP_PORT_HOST)}"
+  sonarr_port="${SONARR_PORT:-$(_arr_env_get SONARR_PORT)}"
+  radarr_port="${RADARR_PORT:-$(_arr_env_get RADARR_PORT)}"
+  prowlarr_port="${PROWLARR_PORT:-$(_arr_env_get PROWLARR_PORT)}"
+  bazarr_port="${BAZARR_PORT:-$(_arr_env_get BAZARR_PORT)}"
+  flaresolverr_port="${FLARESOLVERR_PORT:-$(_arr_env_get FLARESOLVERR_PORT)}"
+
+  printf 'Caddy disabled (ENABLE_CADDY=0). Showing direct IP:PORT endpoints instead.\n'
+  local -a urls=(
+    "qBittorrent" "http://${host}:${qbt_port}"
+    "Sonarr" "http://${host}:${sonarr_port}"
+    "Radarr" "http://${host}:${radarr_port}"
+    "Prowlarr" "http://${host}:${prowlarr_port}"
+    "Bazarr" "http://${host}:${bazarr_port}"
+    "FlareSolverr" "http://${host}:${flaresolverr_port}"
+  )
+
+  local i=0
+  while [ $i -lt ${#urls[@]} ]; do
+    local name="${urls[$i]}"
+    local url="${urls[$((i + 1))]}"
     printf '  %s -> %s\n' "$name" "$url"
     if [ -n "$opener" ]; then
       "$opener" "$url" >/dev/null 2>&1 &
     fi
-  done <<EOF
-$entries
-EOF
+    i=$((i + 2))
+  done
+
+  if [ "${enable_local_dns:-0}" = "1" ]; then
+    printf '\nLocal DNS is enabled. Hostnames resolve, but they serve plain HTTP on the ports above until you enable Caddy.\n'
+  else
+    printf '\nTip: Enable Caddy (set ENABLE_CADDY=1) for HTTPS hostnames once you need them.\n'
+  fi
 }
 
 arr.help() {
@@ -431,7 +476,7 @@ Core stack management:
   arr.health                   Summarise container health checks
   arr.backup [dest]            Create tarball backups of service configs under ARR_DOCKER_DIR
   arr.compose.config [args]    Inspect the rendered docker compose configuration
-  arr.open                     Print (and optionally open) proxied service URLs
+  arr.open                     Print (and optionally open) service URLs (direct or via Caddy)
   arr.data.usage               Report disk usage for each service directory in ${ARR_DOCKER_DIR}
 
 Environment helpers:
