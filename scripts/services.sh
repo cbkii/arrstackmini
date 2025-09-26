@@ -406,7 +406,13 @@ wait_for_vpn_connection() {
           if ip_summary="$(gluetun_public_ip_summary "$ip_payload" 2>/dev/null || true)" && [[ -n "$ip_summary" ]]; then
             msg "  🌐 Public IP: ${ip_summary}"
           else
-            msg "  🌐 Public IP response: ${ip_payload}"
+            local compact_payload
+            compact_payload="${ip_payload//[[:space:]]/}"
+            if [[ "$compact_payload" =~ "public_ip":"" ]]; then
+              msg "  🌐 Public IP: (pending assignment)"
+            else
+              msg "  🌐 Public IP response: ${ip_payload}"
+            fi
           fi
         else
           msg "  🌐 Public IP: (pending)"
@@ -508,6 +514,9 @@ start_stack() {
 
   cd "${ARR_STACK_DIR}" || die "Failed to change to ${ARR_STACK_DIR}"
 
+  PF_PENDING_DURING_INSTALL=0
+  export PF_PENDING_DURING_INSTALL
+
   safe_cleanup
 
   ensure_docker_userland_proxy_disabled
@@ -572,17 +581,32 @@ start_stack() {
   pf_port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
 
   if [[ -z "$pf_port" || "$pf_port" == "0" ]]; then
-    ensure_proton_port_forwarding_ready || true
-    pf_port="${PF_ENSURED_PORT:-$pf_port}"
+    if ensure_proton_port_forwarding_ready; then
+      pf_port="${PF_ENSURED_PORT:-$pf_port}"
+    else
+      pf_port="${PF_ENSURED_PORT:-0}"
+    fi
   fi
 
   if [[ -n "$pf_port" && "$pf_port" != "0" ]]; then
     msg "✅ Port forwarding active: Port $pf_port"
   else
-    warn "================================================"
-    warn "Port forwarding is not active yet."
-    warn "This is normal - it can take a few minutes."
-    warn "================================================"
+    PF_PENDING_DURING_INSTALL=1
+    export PF_PENDING_DURING_INSTALL
+    warn "[pf] Port forwarding pending (will retry in background; run arr.vpn.port.sync later)"
+
+    (
+      exec >/dev/null 2>&1
+      if PF_MAX_TOTAL_WAIT=${PF_BACKGROUND_MAX_TOTAL_WAIT:-45} \
+        PF_POLL_INTERVAL=${PF_BACKGROUND_POLL_INTERVAL:-5} \
+        PF_CYCLE_AFTER=${PF_BACKGROUND_CYCLE_AFTER:-20} \
+        ensure_proton_port_forwarding_ready; then
+        if [[ -n "${PF_ENSURED_PORT:-}" && "${PF_ENSURED_PORT}" != "0" ]]; then
+          ensure_dir "${ARR_DOCKER_DIR}/gluetun"
+          printf '%s\n' "${PF_ENSURED_PORT}" >"${ARR_DOCKER_DIR}/gluetun/forwarded_port"
+        fi
+      fi
+    ) &
   fi
 
   local services=()

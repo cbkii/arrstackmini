@@ -61,6 +61,11 @@ SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands}"
 # SERVER_NAMES=""  # Optionally pin Proton server hostnames if PF keeps returning 0 (comma-separated list)
 PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
 
+# ProtonVPN port forwarding behaviour (seconds)
+PF_MAX_TOTAL_WAIT="${PF_MAX_TOTAL_WAIT:-60}"
+PF_POLL_INTERVAL="${PF_POLL_INTERVAL:-5}"
+PF_CYCLE_AFTER="${PF_CYCLE_AFTER:-30}"
+
 # Domain suffix used by optional DNS/Caddy hostnames (default to RFC 8375 recommendation)
 LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX:-home.arpa}"
 

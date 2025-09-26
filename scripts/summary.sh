@@ -84,6 +84,23 @@ WARNING
 WARNING
   fi
 
+  local pf_current=""
+  if declare -f fetch_forwarded_port >/dev/null 2>&1; then
+    pf_current="$(fetch_forwarded_port 2>/dev/null || printf '0')"
+  elif [[ -f "${ARR_DOCKER_DIR}/gluetun/forwarded_port" ]]; then
+    pf_current="$(tr -d '[:space:]' <"${ARR_DOCKER_DIR}/gluetun/forwarded_port" 2>/dev/null || printf '0')"
+  fi
+
+  if [[ "${PF_PENDING_DURING_INSTALL:-0}" -eq 1 && ( -z "$pf_current" || "$pf_current" == "0" ) ]]; then
+    cat <<'PF_WARNING'
+⚠️  PORT FORWARDING PENDING
+   Proton VPN did not return a forwarded port during setup.
+   Run `arr.vpn.port.sync` (or `arr.vpn.port`) after a minute to retry.
+   If the issue persists, consider pinning SERVER_COUNTRIES or SERVER_NAMES.
+
+PF_WARNING
+  fi
+
   cat <<SUMMARY
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 

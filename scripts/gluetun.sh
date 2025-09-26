@@ -284,9 +284,34 @@ fetch_public_ip() {
   printf ''
 }
 
+gluetun_cycle_openvpn() {
+  local api_base
+  api_base="$(_gluetun_control_base)"
+
+  local -a curl_common=(-fsS)
+  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+    curl_common+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
+  fi
+
+  if ! curl "${curl_common[@]}" -X PUT -H 'Content-Type: application/json' \
+    --data '{"status":"stopped"}' "${api_base}/v1/openvpn/status" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  sleep 2
+
+  if ! curl "${curl_common[@]}" -X PUT -H 'Content-Type: application/json' \
+    --data '{"status":"running"}' "${api_base}/v1/openvpn/status" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  sleep 8
+  return 0
+}
+
 ensure_proton_port_forwarding_ready() {
   # shellcheck disable=SC2034  # exported for callers to read the ensured port
-  PF_ENSURED_PORT=""
+  PF_ENSURED_PORT="0"
 
   if [[ "${VPN_SERVICE_PROVIDER:-}" != "protonvpn" ]]; then
     return 0
@@ -301,56 +326,61 @@ ensure_proton_port_forwarding_ready() {
     return 1
   fi
 
-  local api_base
-  api_base="$(_gluetun_control_base)"
+  local max_total="${PF_MAX_TOTAL_WAIT:-60}"
+  local poll_interval="${PF_POLL_INTERVAL:-5}"
+  local cycle_after="${PF_CYCLE_AFTER:-30}"
 
-  local -a curl_common=(-fsS)
-  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
-    curl_common+=(-H "X-Api-Key: ${GLUETUN_API_KEY}")
+  if [[ ! "$max_total" =~ ^[0-9]+$ ]]; then
+    max_total=60
   fi
 
-  local max_attempts wait_secs attempt port
-  max_attempts="${PF_MAX_ATTEMPTS:-8}"
-  wait_secs="${PF_WAIT_SECS:-90}"
-  attempt=1
-  port="0"
+  if [[ ! "$poll_interval" =~ ^[0-9]+$ ]] || ((poll_interval < 1)); then
+    poll_interval=5
+  fi
 
-  while ((attempt <= max_attempts)); do
-    msg "[pf] Attempt ${attempt}/${max_attempts}: waiting up to ${wait_secs}s..."
+  if [[ ! "$cycle_after" =~ ^[0-9]+$ ]]; then
+    cycle_after=30
+  fi
 
-    local waited=0
-    while ((waited < wait_secs)); do
-      port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
-      if [[ -n "$port" && "$port" != "0" ]]; then
-        msg "[pf] Forwarded port: $port"
-        PF_ENSURED_PORT="$port"
-        return 0
+  if ((max_total <= 0)); then
+    msg "[pf] Skipping port forwarding wait (PF_MAX_TOTAL_WAIT=${max_total})"
+    return 1
+  fi
+
+  msg "[pf] Waiting up to ${max_total}s for Proton port forwarding..."
+
+  local start_time
+  start_time=$(date +%s)
+  local cycled=0
+  local port="0"
+
+  while :; do
+    port="$(fetch_forwarded_port 2>/dev/null || printf '0')"
+    if [[ -n "$port" && "$port" != "0" ]]; then
+      PF_ENSURED_PORT="$port"
+      msg "[pf] Port forwarding acquired: $port"
+      return 0
+    fi
+
+    local now
+    now=$(date +%s)
+    local elapsed=$((now - start_time))
+
+    if ((elapsed >= max_total)); then
+      warn "[pf] Port forwarding not ready after ${elapsed}s. Retry later with 'arr.vpn.port' or 'arr.vpn.status'."
+      # shellcheck disable=SC2034  # exported for callers to read the ensured port
+      PF_ENSURED_PORT="0"
+      return 1
+    fi
+
+    if ((cycled == 0 && cycle_after > 0 && elapsed >= cycle_after)); then
+      msg "[pf] Cycling OpenVPN once to retry port allocation..."
+      if ! gluetun_cycle_openvpn; then
+        warn "[pf] Failed to cycle OpenVPN via Gluetun control API"
       fi
-      sleep 1
-      waited=$((waited + 1))
-    done
-
-    msg "[pf] Still 0; cycling OpenVPN to pick another PF server..."
-    if ! curl "${curl_common[@]}" -X PUT -H 'Content-Type: application/json' \
-      --data '{"status":"stopped"}' "${api_base}/v1/openvpn/status" >/dev/null 2>&1; then
-      warn "[pf] Failed to stop OpenVPN via Gluetun control API"
-      break
+      cycled=1
     fi
 
-    sleep 2
-
-    if ! curl "${curl_common[@]}" -X PUT -H 'Content-Type: application/json' \
-      --data '{"status":"running"}' "${api_base}/v1/openvpn/status" >/dev/null 2>&1; then
-      warn "[pf] Failed to start OpenVPN via Gluetun control API"
-      break
-    fi
-
-    sleep 10
-    attempt=$((attempt + 1))
+    sleep "$poll_interval"
   done
-
-  # shellcheck disable=SC2034  # exported for callers to read the ensured port
-  PF_ENSURED_PORT="${port:-0}"
-  warn "[pf] Port forwarding still unavailable after ${max_attempts} attempts. Consider pinning SERVER_HOSTNAMES."
-  return 1
 }
