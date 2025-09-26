@@ -6,6 +6,11 @@ if [[ -n "${SCRIPT_LIB_DIR:-}" && -f "${SCRIPT_LIB_DIR}/network.sh" ]]; then
   . "${SCRIPT_LIB_DIR}/network.sh"
 fi
 configure_local_dns_entries() {
+  if [[ "${ENABLE_CADDY:-0}" -ne 1 ]]; then
+    msg "🧭 Skipping local DNS host entry helper (ENABLE_CADDY=0)"
+    return 0
+  fi
+
   msg "🧭 Ensuring local DNS entries exist for Caddy hostnames"
 
   local helper_script="${REPO_ROOT}/scripts/setup-lan-dns.sh"
@@ -54,6 +59,11 @@ configure_local_dns_entries() {
 }
 
 run_host_dns_setup() {
+  if [[ "${ENABLE_CADDY:-0}" -ne 1 ]]; then
+    msg "Skipping host DNS setup (--setup-host-dns) because ENABLE_CADDY=0"
+    return 0
+  fi
+
   if [[ "${ENABLE_LOCAL_DNS:-0}" -ne 1 ]]; then
     msg "Skipping host DNS setup (--setup-host-dns) because ENABLE_LOCAL_DNS=0"
     return 0
