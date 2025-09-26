@@ -241,8 +241,11 @@ validate_images() {
     PROWLARR_IMAGE
     BAZARR_IMAGE
     FLARESOLVERR_IMAGE
-    CADDY_IMAGE
   )
+
+  if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
+    image_vars+=(CADDY_IMAGE)
+  fi
 
   local failed_images=()
 

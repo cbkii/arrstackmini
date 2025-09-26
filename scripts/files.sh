@@ -387,7 +387,13 @@ write_compose() {
     tmp="$(arrstack_mktemp_file "${compose_path}.XXXXXX.tmp" "$NONSECRET_FILE_MODE")" || die "Failed to create temp file for ${compose_path}"
     ensure_nonsecret_file_mode "$tmp"
 
-    cat <<'YAML' >"$tmp"
+    {
+      if ((include_caddy == 0)); then
+        printf '# Caddy reverse proxy disabled (ENABLE_CADDY=0).\n'
+        printf '# Set ENABLE_CADDY=1 in arrconf/userconf.sh and rerun ./arrstack.sh to add HTTPS hostnames via Caddy.\n'
+      fi
+
+      cat <<'YAML'
 services:
   gluetun:
     image: ${GLUETUN_IMAGE}
@@ -432,6 +438,7 @@ services:
     ports:
       - "${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}:${GLUETUN_CONTROL_PORT}"
 YAML
+    } >"$tmp"
 
     if ((include_caddy)); then
       cat <<'YAML' >>"$tmp"
