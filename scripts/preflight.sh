@@ -406,17 +406,55 @@ gather_port_snapshot() {
     fi
   fi
   
-  # Source 4: Docker containers
+  # Source 4: Docker containers (enhanced with compose info)
   json_log "debug" "Gathering from Docker containers"
-  while IFS= read -r docker_entry; do
-    [[ -z "$docker_entry" ]] && continue
-    local entry="$docker_entry"
-    if [[ -z "${seen[$entry]:-}" ]]; then
-      listeners+=("$entry")
-      seen["$entry"]=1
-      json_log "debug" "Found listener via Docker" --entry "$entry"
-    fi
-  done < <(docker_port_conflict_listeners "$proto" "$expected_ip" "$port")
+  
+  # Load Docker port bindings to get compose information
+  load_docker_port_bindings || true
+  
+  local key="${proto,,}|${port}"
+  local data="${DOCKER_PORT_BINDINGS[$key]:-}"
+  
+  if [[ -n "$data" ]]; then
+    while IFS= read -r docker_entry; do
+      [[ -z "$docker_entry" ]] && continue
+      IFS='|' read -r bind_host docker_desc <<<"$docker_entry"
+      bind_host="$(normalize_bind_address "$bind_host")"
+      
+      if address_conflicts "$expected_ip" "$bind_host"; then
+        # Extract compose project and service from description for enhanced classification
+        local compose_project=""
+        local compose_service=""
+        local container_name=""
+        
+        if [[ "$docker_desc" =~ Docker\ container\ ([^\ ]+) ]]; then
+          container_name="${BASH_REMATCH[1]}"
+        fi
+        
+        if [[ "$docker_desc" =~ compose\ project\ ([^,\)]+) ]]; then
+          compose_project="${BASH_REMATCH[1]}"
+        fi
+        
+        if [[ "$docker_desc" =~ service\ ([^,\)]+) ]]; then
+          compose_service="${BASH_REMATCH[1]}"
+        fi
+        
+        # Try to get PID from docker inspect
+        local docker_pid=""
+        if [[ -n "$container_name" ]] && have_command docker; then
+          docker_pid="$(docker inspect "$container_name" --format '{{.State.Pid}}' 2>/dev/null || true)"
+        fi
+        
+        local entry="${bind_host}|${docker_desc}|${docker_pid:-}|docker|${compose_project}|${compose_service}|${container_name}"
+        
+        if [[ -z "${seen[$entry]:-}" ]]; then
+          listeners+=("$entry")
+          seen["$entry"]=1
+          json_log "debug" "Found Docker listener" --host "$bind_host" --desc "$docker_desc" --compose_project "$compose_project" --compose_service "$compose_service" --container_name "$container_name"
+        fi
+      fi
+    done <<<"$data"
+  fi
   
   # Source 5: systemd-resolved detection for port 53
   if [[ "$port" == "53" ]] && have_command systemctl; then
@@ -486,31 +524,32 @@ debounce_conflicts() {
   
   # Check second snapshot for persistence
   for entry in "${snapshot2[@]}"; do
-    IFS='|' read -r host desc pid _source <<<"$entry"
+    # Handle both legacy format (host|desc|pid|source) and enhanced format (host|desc|pid|source|compose_project|compose_service|container_name)
+    IFS='|' read -r host desc pid _source compose_project compose_service container_name <<<"$entry"
     
     # Special case: always include arrstack containers even if they appear in only one snapshot
     # (they might be starting up or shutting down)
     local classification
-    classification="$(classify_listener_strict "$desc" "$pid" "$host")"
+    classification="$(classify_listener_strict "$desc" "$pid" "$host" "$container_name" "$compose_project" "$compose_service")"
     
     if [[ "$classification" == "arrstack" ]]; then
       persistent["$entry"]=1
-      json_log "debug" "Including arrstack container despite single snapshot" --entry "$entry"
+      json_log "debug" "Including arrstack container despite single snapshot" --entry "$entry" --classification "$classification"
       continue
     fi
     
     # Regular persistence check
     if [[ -n "${first_snapshot[$entry]:-}" ]]; then
       persistent["$entry"]=1
-      json_log "debug" "Confirmed persistent listener" --entry "$entry"
+      json_log "debug" "Confirmed persistent listener" --entry "$entry" --classification "$classification"
     else
-      json_log "debug" "Transient listener filtered out" --entry "$entry"
+      json_log "debug" "Transient listener filtered out" --entry "$entry" --classification "$classification"
     fi
   done
   
   # Output persistent listeners in legacy format (host|desc)
   for entry in "${!persistent[@]}"; do
-    IFS='|' read -r host desc _pid _source <<<"$entry"
+    IFS='|' read -r host desc _pid _source _compose_project _compose_service _container_name <<<"$entry"
     printf '%s|%s\n' "$host" "$desc"
   done
   
@@ -523,29 +562,44 @@ classify_listener_strict() {
   local pid="${2:-}"
   local host="${3:-}"
   local container_name="${4:-}"
+  local compose_project="${5:-}"
+  local compose_service="${6:-}"
   
-  json_log "debug" "Classifying listener" --desc "$desc" --pid "$pid" --host "$host" --container_name "$container_name"
+  json_log "debug" "Classifying listener" --desc "$desc" --pid "$pid" --host "$host" --container_name "$container_name" --compose_project "$compose_project" --compose_service "$compose_service"
   
-  # Check if it's an arrstack container based on compose project or service name
-  if [[ -n "$container_name" ]]; then
-    # Check against current COMPOSE_PROJECT_NAME if set
-    if [[ -n "${COMPOSE_PROJECT_NAME:-}" && "$container_name" == *"${COMPOSE_PROJECT_NAME}"* ]]; then
+  # Check if it's an arrstack container based on compose project name
+  if [[ -n "$compose_project" && -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    if [[ "$compose_project" == "${COMPOSE_PROJECT_NAME}" ]]; then
       printf "arrstack\n"
-      json_log "debug" "Classified as arrstack via compose project" --project "$COMPOSE_PROJECT_NAME"
+      json_log "debug" "Classified as arrstack via compose project match" --project "$COMPOSE_PROJECT_NAME"
       return
     fi
-    
-    # Check against known arrstack services
-    if [[ -n "${ARR_DOCKER_SERVICES:-}" ]]; then
-      local service
-      while IFS= read -r service; do
-        if [[ -n "$service" && "$container_name" == *"$service"* ]]; then
-          printf "arrstack\n" 
-          json_log "debug" "Classified as arrstack via service match" --service "$service"
-          return
-        fi
-      done <<<"${ARR_DOCKER_SERVICES}"
-    fi
+  fi
+  
+  # Check against known arrstack services from ARR_DOCKER_SERVICES
+  if [[ -n "$compose_service" && -n "${ARR_DOCKER_SERVICES:-}" ]]; then
+    local service
+    while IFS= read -r service; do
+      service="$(trim_whitespace "$service")"
+      if [[ -n "$service" && "$compose_service" == "$service" ]]; then
+        printf "arrstack\n" 
+        json_log "debug" "Classified as arrstack via service match" --service "$service"
+        return
+      fi
+    done <<<"${ARR_DOCKER_SERVICES}"
+  fi
+  
+  # Check container name against arrstack services
+  if [[ -n "$container_name" && -n "${ARR_DOCKER_SERVICES:-}" ]]; then
+    local service
+    while IFS= read -r service; do
+      service="$(trim_whitespace "$service")"
+      if [[ -n "$service" && "$container_name" == *"$service"* ]]; then
+        printf "arrstack\n" 
+        json_log "debug" "Classified as arrstack via container name match" --service "$service" --container_name "$container_name"
+        return
+      fi
+    done <<<"${ARR_DOCKER_SERVICES}"
   fi
   
   # Check if it's a known arr process by exact executable name
@@ -826,7 +880,7 @@ prompt_port_conflict_resolution() {
   local -n _conflicts_ref="$_conflicts_name"
   local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
 
-msg ""
+  msg ""
   msg "Port Conflict Detected!"
   msg ""
   msg "The following ports are already in use:"
@@ -852,30 +906,92 @@ msg ""
 
   msg ""
   if [[ "${ASSUME_YES}" == 1 ]]; then
-    if ((${#_arrstack_conflicts_ref[@]} > 0)); then
-      msg ""
-      msg "--yes supplied: automatically selecting option 2 to stop the existing arrstack installation."
-      stop_arrstack_services_and_continue "$_arrstack_conflicts_name"
-      return $?
-    fi
-
-    die "--yes supplied but conflicting ports are not held by arrstack services. Resolve the conflicts manually or rerun without --yes."
+    # Enhanced --yes mode logic
+    enhanced_yes_mode_logic "$_conflicts_name" "$_arrstack_conflicts_name"
+    return $?
   fi
   
-  msg "How would you like to resolve this?"
-  msg ""
-  msg "1. Edit ports (Keeps existing arrstack running, you'll need to update userconf.sh)"
-  msg "2. Stop existing arrstack and continue installation"
-  msg "3. Use existing services (Stops this installation)"
-  msg ""
+  # Use enhanced interactive menu
+  enhanced_port_conflict_menu "$_conflicts_name" "$_arrstack_conflicts_name"
+}
 
-  local choice=""
+# Enhanced --yes mode with JSON output for non-arrstack conflicts
+enhanced_yes_mode_logic() {
+  local _conflicts_name="$1"
+  local _arrstack_conflicts_name="$2"
+  local -n _conflicts_ref="$_conflicts_name"
+  local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
+  
+  if ((${#_arrstack_conflicts_ref[@]} == ${#_conflicts_ref[@]})) && ((${#_conflicts_ref[@]} > 0)); then
+    # All conflicts are arrstack - auto-stop them
+    msg ""
+    msg "--yes supplied: automatically stopping existing arrstack installation (all conflicts are arrstack services)."
+    stop_arrstack_services_and_continue "$_arrstack_conflicts_name"
+    return $?
+  elif ((${#_arrstack_conflicts_ref[@]} > 0)); then
+    # Mixed conflicts - provide JSON output and fail
+    msg ""
+    msg "--yes supplied but some conflicting ports are not held by arrstack services."
+    msg "Conflicts requiring manual resolution:"
+    
+    local entry
+    for entry in "${_conflicts_ref[@]}"; do
+      IFS='|' read -r port proto label host desc is_arrstack <<<"$entry"
+      if [[ "$is_arrstack" != "1" ]]; then
+        # Output JSON format conflict details to stderr
+        local json="{\"port\":$port,\"protocol\":\"$proto\",\"label\":\"$label\",\"host\":\"$host\",\"description\":\"$desc\",\"classification\":\"other\"}"
+        printf '%s\n' "$json" >&2
+      fi
+    done
+    
+    die "Resolve the non-arrstack conflicts manually or rerun without --yes."
+  else
+    # No arrstack conflicts at all
+    msg ""
+    msg "--yes supplied but no conflicting ports are held by arrstack services."
+    msg "All conflicts require manual resolution:"
+    
+    local entry
+    for entry in "${_conflicts_ref[@]}"; do
+      IFS='|' read -r port proto label host desc _is_arrstack <<<"$entry"
+      # Output JSON format conflict details to stderr
+      local json="{\"port\":$port,\"protocol\":\"$proto\",\"label\":\"$label\",\"host\":\"$host\",\"description\":\"$desc\",\"classification\":\"other\"}"
+      printf '%s\n' "$json" >&2
+    done
+    
+    die "Resolve the conflicts manually or rerun without --yes."
+  fi
+}
+
+# Enhanced interactive menu with new options
+enhanced_port_conflict_menu() {
+  local _conflicts_name="$1"
+  local _arrstack_conflicts_name="$2"
+  local -n _conflicts_ref="$_conflicts_name"
+  local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
+  
+  local show_diagnostics=0
+  
   while true; do
-    printf 'Enter 1, 2, or 3: '
+    msg "How would you like to resolve this?"
+    msg ""
+    msg "1. Edit ports (Keeps existing services running, you'll need to update userconf.sh)"
+    msg "2. Stop existing arrstack and continue installation"
+    msg "3. Use existing services (Stops this installation)"
+    msg "4. Force stop/kill non-arrstack processes (USE WITH CAUTION)"
+    msg "5. Contextual auto-remediation (disable DNS, change ports as appropriate)"
+    msg ""
+    msg "D. Toggle diagnostics display"
+    msg "R. Rescan port conflicts"
+    msg ""
+
+    printf 'Enter choice (1-5, D, R): '
+    local choice=""
     if ! IFS= read -r choice; then
       choice=""
     fi
-    case "$choice" in
+    
+    case "${choice^^}" in
       1)
         msg ""
         msg "Installation paused."
@@ -909,24 +1025,447 @@ msg ""
           fi
         fi
         msg ""
-        msg "Installation cancelled."
-        msg "Your existing arrstack installation will continue running."
-        msg "No changes were made."
-        exit 0
+        msg "Cancelled. Returning to menu."
+        continue
         ;;
       3)
         msg ""
         msg "Installation cancelled."
-        msg "Your existing arrstack installation will continue running."
+        msg "Existing services will continue running."
         msg "No changes were made."
         exit 0
         ;;
+      4)
+        force_kill_conflicts "$_conflicts_name" "$_arrstack_conflicts_name"
+        # If successful, return to continue installation
+        return 0
+        ;;
+      5)
+        apply_contextual_resolution "$_conflicts_name" "$_arrstack_conflicts_name"
+        # If successful, return to continue installation
+        return 0
+        ;;
+      D)
+        if ((show_diagnostics)); then
+          show_diagnostics=0
+          msg "Diagnostics display disabled."
+        else
+          show_diagnostics=1
+          msg "Diagnostics display enabled."
+          display_port_diagnostics "$_conflicts_name"
+        fi
+        continue
+        ;;
+      R)
+        msg ""
+        msg "Rescanning port conflicts..."
+        # Return false to trigger a rescan in the main loop
+        return 1
+        ;;
       *)
         msg ""
-        msg "Please enter 1, 2, or 3 only."
+        msg "Please enter 1, 2, 3, 4, 5, D, or R."
+        continue
         ;;
     esac
   done
+}
+
+# Force kill conflicts with safety confirmations
+force_kill_conflicts() {
+  local _conflicts_name="$1"
+  local _arrstack_conflicts_name="$2"
+  local -n _conflicts_ref="$_conflicts_name"
+  local -n _arrstack_conflicts_ref="$_arrstack_conflicts_name"
+  
+  msg ""
+  msg "⚠️  FORCE KILL MODE - USE WITH EXTREME CAUTION ⚠️"
+  msg ""
+  msg "This will attempt to forcibly terminate processes holding the conflicting ports."
+  msg "This can cause data loss or system instability."
+  msg ""
+  
+  # Show what will be killed
+  local has_non_arrstack=0
+  local has_systemd_resolved=0
+  local entry
+  
+  for entry in "${_conflicts_ref[@]}"; do
+    IFS='|' read -r port proto label host desc is_arrstack <<<"$entry"
+    if [[ "$is_arrstack" != "1" ]]; then
+      has_non_arrstack=1
+      msg "Will attempt to kill: Port $port ($label) - $desc"
+      
+      if [[ "$desc" == *"systemd-resolved"* ]]; then
+        has_systemd_resolved=1
+      fi
+    fi
+  done
+  
+  if ((has_non_arrstack == 0)); then
+    msg "No non-arrstack processes found to kill. Use option 2 instead."
+    return 1
+  fi
+  
+  msg ""
+  printf 'Type "FORCE" to confirm force-kill operation: '
+  local confirm1=""
+  if ! IFS= read -r confirm1; then
+    confirm1=""
+  fi
+  
+  if [[ "$confirm1" != "FORCE" ]]; then
+    msg "Operation cancelled."
+    return 1
+  fi
+  
+  # Extra confirmation for systemd-resolved
+  if ((has_systemd_resolved)); then
+    msg ""
+    msg "⚠️  WARNING: systemd-resolved will be killed! ⚠️"
+    msg "This will break DNS resolution until the service is restarted."
+    msg ""
+    printf 'Type "KILL_DNS" to confirm killing systemd-resolved: '
+    local confirm2=""
+    if ! IFS= read -r confirm2; then
+      confirm2=""
+    fi
+    
+    if [[ "$confirm2" != "KILL_DNS" ]]; then
+      msg "Operation cancelled."
+      return 1
+    fi
+  fi
+  
+  msg ""
+  msg "Proceeding with force-kill operations..."
+  
+  local killed_any=0
+  for entry in "${_conflicts_ref[@]}"; do
+    IFS='|' read -r port proto label host desc is_arrstack <<<"$entry"
+    if [[ "$is_arrstack" != "1" ]]; then
+      # Extract PID from description if possible
+      local pid=""
+      if [[ "$desc" =~ \(pid\ ([0-9]+)\) ]]; then
+        pid="${BASH_REMATCH[1]}"
+      fi
+      
+      if [[ -n "$pid" ]]; then
+        msg "Killing PID $pid ($desc)..."
+        json_log "warn" "Force killing process" --pid "$pid" --desc "$desc" --port "$port" --protocol "$proto"
+        
+        if kill -TERM "$pid" 2>/dev/null; then
+          sleep 2
+          if kill -0 "$pid" 2>/dev/null; then
+            # Process still running, use KILL
+            if kill -KILL "$pid" 2>/dev/null; then
+              msg "  ✓ Process $pid terminated (SIGKILL)"
+              json_log "warn" "Process force-killed" --pid "$pid" --signal "SIGKILL"
+              killed_any=1
+            else
+              msg "  ✗ Failed to kill process $pid"
+              json_log "error" "Failed to kill process" --pid "$pid"
+            fi
+          else
+            msg "  ✓ Process $pid terminated (SIGTERM)"
+            json_log "info" "Process terminated gracefully" --pid "$pid" --signal "SIGTERM"
+            killed_any=1
+          fi
+        else
+          msg "  ✗ Failed to send SIGTERM to process $pid"
+          json_log "error" "Failed to send SIGTERM" --pid "$pid"
+        fi
+      else
+        msg "  ✗ Could not extract PID from: $desc"
+        json_log "warn" "No PID found for process" --desc "$desc"
+      fi
+    fi
+  done
+  
+  if ((killed_any)); then
+    msg ""
+    msg "Waiting for ports to be released..."
+    sleep 3
+    
+    # Check if ports are now free
+    local still_conflicted=0
+    for entry in "${_conflicts_ref[@]}"; do
+      IFS='|' read -r port proto _rest <<<"$entry"
+      local -a listeners=()
+      mapfile -t listeners < <(port_conflict_listeners "$proto" "*" "$port")
+      if ((${#listeners[@]} > 0)); then
+        still_conflicted=1
+        break
+      fi
+    done
+    
+    if ((still_conflicted == 0)); then
+      msg "✓ All conflicting ports have been freed."
+      return 0
+    else
+      msg "⚠️  Some ports may still be in use. Check manually."
+      return 1
+    fi
+  else
+    msg "No processes were successfully killed."
+    return 1
+  fi
+}
+
+# Apply contextual resolution strategies
+apply_contextual_resolution() {
+  local _conflicts_name="$1"
+  local _arrstack_conflicts_name="$2"
+  local -n _conflicts_ref="$_conflicts_name"
+  
+  msg ""
+  msg "🔧 Contextual Auto-Remediation"
+  msg ""
+  msg "Analyzing conflicts for automatic resolution strategies..."
+  
+  local has_dns_conflict=0
+  local has_gluetun_conflict=0
+  local gluetun_port=""
+  
+  # Analyze conflicts
+  local entry
+  for entry in "${_conflicts_ref[@]}"; do
+    IFS='|' read -r port proto label host desc is_arrstack <<<"$entry"
+    
+    if [[ "$port" == "53" && "$is_arrstack" != "1" ]]; then
+      has_dns_conflict=1
+      
+      if [[ "$desc" == *"systemd-resolved"* ]]; then
+        msg "  Found: DNS conflict with systemd-resolved on port 53"
+      else
+        msg "  Found: DNS conflict with $desc on port 53"
+      fi
+    fi
+    
+    if [[ "$port" == "${GLUETUN_CONTROL_PORT:-8000}" && "$is_arrstack" != "1" ]]; then
+      has_gluetun_conflict=1
+      gluetun_port="$port"
+      msg "  Found: Gluetun control port conflict on port $port"
+    fi
+  done
+  
+  if ((has_dns_conflict == 0 && has_gluetun_conflict == 0)); then
+    msg "No conflicts suitable for automatic remediation found."
+    msg "Use other options or resolve manually."
+    return 1
+  fi
+  
+  msg ""
+  msg "Available auto-remediation actions:"
+  msg ""
+  
+  local actions=()
+  if ((has_dns_conflict)); then
+    msg "A. Disable local DNS (set ENABLE_LOCAL_DNS=0)"
+    actions+=("dns")
+    
+    if have_command systemctl && [[ -f "${ARR_STACK_DIR:-}/scripts/host-dns-setup.sh" ]]; then
+      msg "B. Run host DNS takeover (takes over systemd-resolved)"
+      actions+=("dns-takeover")
+    fi
+  fi
+  
+  if ((has_gluetun_conflict)); then
+    msg "C. Auto-change Gluetun control port (find alternative port)"
+    actions+=("gluetun-port")
+  fi
+  
+  msg "Q. Return to main menu"
+  msg ""
+  
+  while true; do
+    printf 'Choose auto-remediation action: '
+    local action_choice=""
+    if ! IFS= read -r action_choice; then
+      action_choice=""
+    fi
+    
+    case "${action_choice^^}" in
+      A)
+        if ((has_dns_conflict)); then
+          apply_dns_disable_resolution
+          return $?
+        fi
+        ;;
+      B)
+        if ((has_dns_conflict)) && have_command systemctl && [[ -f "${ARR_STACK_DIR:-}/scripts/host-dns-setup.sh" ]]; then
+          apply_dns_takeover_resolution
+          return $?
+        fi
+        ;;
+      C)
+        if ((has_gluetun_conflict)); then
+          apply_gluetun_port_resolution "$gluetun_port"
+          return $?
+        fi
+        ;;
+      Q)
+        return 1
+        ;;
+      *)
+        msg "Invalid choice. Please try again."
+        continue
+        ;;
+    esac
+    
+    msg "Invalid choice for current conflicts."
+  done
+}
+
+# Disable local DNS resolution
+apply_dns_disable_resolution() {
+  msg ""
+  msg "Disabling local DNS (ENABLE_LOCAL_DNS=0)..."
+  
+  # Set in-memory override
+  ENABLE_LOCAL_DNS=0
+  export ENABLE_LOCAL_DNS
+  
+  msg "✓ Local DNS disabled for this installation."
+  msg "  This change is temporary for this session only."
+  msg "  To make it permanent, set ENABLE_LOCAL_DNS=0 in userconf.sh"
+  
+  json_log "info" "Applied DNS disable resolution" --action "disable_local_dns"
+  
+  return 0
+}
+
+# Apply DNS takeover resolution
+apply_dns_takeover_resolution() {
+  msg ""
+  msg "Running host DNS takeover..."
+  
+  printf 'This will replace systemd-resolved with arrstack DNS. Continue? (yes/no): '
+  local confirm=""
+  if ! IFS= read -r confirm; then
+    confirm=""
+  fi
+  
+  if [[ ${confirm,,} != "yes" ]]; then
+    msg "DNS takeover cancelled."
+    return 1
+  fi
+  
+  local host_dns_script="${ARR_STACK_DIR:-}/scripts/host-dns-setup.sh"
+  if [[ -x "$host_dns_script" ]]; then
+    msg "Executing host DNS setup script..."
+    json_log "info" "Executing host DNS takeover" --script "$host_dns_script"
+    
+    if "$host_dns_script"; then
+      msg "✓ Host DNS takeover completed successfully."
+      return 0
+    else
+      msg "✗ Host DNS takeover failed."
+      return 1
+    fi
+  else
+    msg "✗ Host DNS setup script not found or not executable: $host_dns_script"
+    return 1
+  fi
+}
+
+# Find alternative Gluetun control port and apply in-memory override
+apply_gluetun_port_resolution() {
+  local current_port="$1"
+  
+  msg ""
+  msg "Finding alternative Gluetun control port..."
+  
+  # Scan for free port in range 8000-8020
+  local new_port=""
+  local port
+  for port in {8001..8020}; do
+    if [[ "$port" == "$current_port" ]]; then
+      continue
+    fi
+    
+    local -a listeners=()
+    mapfile -t listeners < <(port_conflict_listeners "tcp" "*" "$port")
+    if ((${#listeners[@]} == 0)); then
+      new_port="$port"
+      break
+    fi
+  done
+  
+  if [[ -z "$new_port" ]]; then
+    msg "✗ Could not find alternative port in range 8001-8020"
+    return 1
+  fi
+  
+  msg "Found free port: $new_port"
+  printf 'Use port %s for Gluetun control API? (yes/no): ' "$new_port"
+  local confirm=""
+  if ! IFS= read -r confirm; then
+    confirm=""
+  fi
+  
+  if [[ ${confirm,,} != "yes" ]]; then
+    msg "Port change cancelled."
+    return 1
+  fi
+  
+  # Apply in-memory override
+  GLUETUN_CONTROL_PORT="$new_port"
+  export GLUETUN_CONTROL_PORT
+  
+  msg "✓ Gluetun control port changed to $new_port for this installation."
+  msg "  This change is temporary for this session only."
+  msg "  To make it permanent, set GLUETUN_CONTROL_PORT=$new_port in userconf.sh"
+  
+  json_log "info" "Applied Gluetun port resolution" --old_port "$current_port" --new_port "$new_port"
+  
+  return 0
+}
+
+# Display detailed port diagnostics
+display_port_diagnostics() {
+  local _conflicts_name="$1"
+  local -n _conflicts_ref="$_conflicts_name"
+  
+  msg ""
+  msg "=== PORT DIAGNOSTICS ==="
+  
+  local entry
+  for entry in "${_conflicts_ref[@]}"; do
+    IFS='|' read -r port proto label host desc is_arrstack <<<"$entry"
+    
+    msg ""
+    msg "Port: $port/$proto ($label)"
+    msg "  Host: $host"
+    msg "  Description: $desc"
+    msg "  Classification: $([ "$is_arrstack" == "1" ] && echo "arrstack" || echo "other")"
+    
+    # Try to get more details
+    local -a detailed_listeners=()
+    mapfile -t detailed_listeners < <(gather_port_snapshot "$proto" "$port" "$host")
+    
+    if ((${#detailed_listeners[@]} > 0)); then
+      msg "  Detailed info:"
+      local detailed_entry
+      for detailed_entry in "${detailed_listeners[@]}"; do
+        IFS='|' read -r _d_host _d_desc d_pid d_source d_compose_project d_compose_service d_container_name <<<"$detailed_entry"
+        msg "    PID: ${d_pid:-unknown}"
+        msg "    Source: $d_source"
+        if [[ -n "$d_compose_project" ]]; then
+          msg "    Compose Project: $d_compose_project"
+        fi
+        if [[ -n "$d_compose_service" ]]; then
+          msg "    Compose Service: $d_compose_service"  
+        fi
+        if [[ -n "$d_container_name" ]]; then
+          msg "    Container: $d_container_name"
+        fi
+      done
+    fi
+  done
+  
+  msg ""
+  msg "========================"
 }
 
 check_port_conflicts() {
@@ -1043,13 +1582,30 @@ check_port_conflicts() {
         fi
       done
 
-      if prompt_port_conflict_resolution conflicts arrstack_conflicts; then
-        reset_docker_port_bindings_cache
-        DOCKER_PORT_BINDINGS=()
-        DOCKER_PORT_BINDINGS_LOADED=0
-        cleanup_performed=1
-        continue
+      local resolution_result
+      if ! resolution_result=$(prompt_port_conflict_resolution conflicts arrstack_conflicts; echo $?); then
+        # Function call failed - should not happen, but handle gracefully
+        break
       fi
+      
+      case "$resolution_result" in
+        0)
+          # Success - continue installation
+          break
+          ;;
+        1)
+          # Rescan requested
+          reset_docker_port_bindings_cache
+          DOCKER_PORT_BINDINGS=()
+          DOCKER_PORT_BINDINGS_LOADED=0
+          cleanup_performed=1
+          continue
+          ;;
+        *)
+          # Other error - break
+          break
+          ;;
+      esac
     fi
 
     break
