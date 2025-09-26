@@ -26,6 +26,7 @@ verify_permissions() {
 
   local -a secret_files=(
     "${ARR_ENV_FILE}"
+    "${ARR_USERCONF_PATH}"
     "${ARRCONF_DIR}/proton.auth"
     "${ARR_DOCKER_DIR}/qbittorrent/qBittorrent.conf"
     "${ARR_STACK_DIR}/.aliasarr"

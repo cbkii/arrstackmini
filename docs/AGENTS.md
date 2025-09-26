@@ -15,7 +15,7 @@ You are an AI coding agent for the `cbkii/arrstackmini` project. Your responsibi
 ## Repository Overview
 
 - Entry script: `arrstack.sh` — orchestrates setup on Debian hosts, handles flags like `--yes`, `--rotate-caddy-auth`, `--setup-host-dns`, etc.
-- Config directory: `arrconf/` — contains `proton.auth.example`, `userconf.sh.example`, and the defaults used to render it.
+- Config directory: `arrconf/` — contains `proton.auth.example`, `userr.conf.example`, and the defaults used to render it.
 - Scripts directory: `scripts/` — contains helper scripts like DNS-setup/rollback, version-fixing, others.
 - Example env file: `.env.example`
 - Docs: `README.md`, `docs/TROUBLESHOOTING.md`, etc.
@@ -96,7 +96,7 @@ If these checks exist in scripts, run them; if not, propose creating them.
 ## Additional Notes
 
 - Always look at existing example files and scripts before adding duplicates.
-- For new features, ensure clear default behaviour and documentation of overrides (env vars, userconf).
+- For new features, ensure clear default behaviour and documentation of overrides (env vars, userr.conf).
 - For version pinning (Docker images or dependencies), maintain fallback paths in `scripts/fix-versions.sh` or similar.
 - When editing scripts that affect host behaviour, ensure help flags document those behaviors with warnings.
 - `address_conflicts()` now lives solely in `scripts/common.sh`; reuse it instead of redefining per-script variants.

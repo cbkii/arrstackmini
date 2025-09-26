@@ -22,11 +22,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
-2. **Copy the user config template.**
-   ```bash
-   cp arrconf/userconf.sh.example arrconf/userconf.sh
-   ```
-3. **Set your LAN details.** Edit `arrconf/userconf.sh` and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
+2. **Copy the user config template.** This stores your overrides at `${ARR_BASE}/userr.conf` (defaults to `~/srv/userr.conf`).
+  ```bash
+  cp arrconf/userr.conf.example ../userr.conf
+  ```
+3. **Set your LAN details.** Edit `~/srv/userr.conf` (or `${ARR_BASE}/userr.conf` if you exported a different base) and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
 4. **Add Proton credentials.**
    ```bash
    cp arrconf/proton.auth.example arrconf/proton.auth

@@ -2,7 +2,7 @@
 
 # Config reference
 
-Use this checklist to decide which `arrconf/userconf.sh` values to edit before running the installer.
+Use this checklist to decide which `${ARR_BASE}/userr.conf` values to edit before running the installer (defaults to `~/srv/userr.conf`).
 
 ## Configuration precedence
 
@@ -10,12 +10,12 @@ Values load in three layers so the last writer wins:
 
 1. **Environment variables** – anything exported in the shell before running `./arrstack.sh` takes top priority (useful for CI or
    temporary overrides).
-2. **`arrconf/userconf.sh`** – the copy you maintain locally. Edit this file for long-term changes.
-3. **`arrconf/userconf.defaults.sh`** – shipped defaults. `scripts/dev/sync-userconf-example.sh` renders
-   `arrconf/userconf.sh.example` from these values to avoid drift.
+2. **`${ARR_BASE}/userr.conf`** – the copy you maintain locally (default path `~/srv/userr.conf`). Edit this file for long-term changes.
+3. **`arrconf/userr.conf.defaults.sh`** – shipped defaults. `scripts/dev/sync-userconf-example.sh` renders
+   `arrconf/userr.conf.example` from these values to avoid drift.
 
 The installer prints the resolved value for each setting during preflight. If something looks wrong, check for stray environment
-exports before editing `userconf.sh`.
+exports before editing `userr.conf`.
 
 ## Why
 Clear defaults keep the stack reproducible. Changing only what you need reduces mistakes and makes reruns predictable.
@@ -53,7 +53,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 - **`ASSUME_YES`** – set to `1` only for unattended installs.
 - **`FORCE_ROTATE_API_KEY`**, **`FORCE_REGEN_CADDY_AUTH`**, **`SETUP_HOST_DNS`**, **`REFRESH_ALIASES`** – automation knobs used by `arrstack.sh`. Trigger them with command-line flags instead of editing the file directly.
 
-After editing, save the file and keep `arrconf/userconf.sh` out of version control (it is already ignored).
+After editing, save the file and keep `${ARR_BASE}/userr.conf` outside version control (it lives in your data directory, not the repo).
 
 ## Verify
 Run the installer in summary mode to confirm your values:

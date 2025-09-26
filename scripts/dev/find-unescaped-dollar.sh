@@ -58,12 +58,12 @@ done < <(collect_keys "${REPO_ROOT}/.env.example" 2>/dev/null || true)
 while IFS= read -r key; do
   [[ -z "$key" ]] && continue
   allow_map["$key"]=1
-done < <(collect_keys "${REPO_ROOT}/arrconf/userconf.defaults.sh" 2>/dev/null || true)
+done < <(collect_keys "${REPO_ROOT}/arrconf/userr.conf.defaults.sh" 2>/dev/null || true)
 
 while IFS= read -r key; do
   [[ -z "$key" ]] && continue
   allow_map["$key"]=1
-done < <(collect_keys "${REPO_ROOT}/arrconf/userconf.sh.example" 2>/dev/null || true)
+done < <(collect_keys "${REPO_ROOT}/arrconf/userr.conf.example" 2>/dev/null || true)
 
 # Common compose internals we intentionally reference
 for key in COMPOSE_PROJECT_NAME DOCKER_CLIENT_TIMEOUT DOCKER_HOST; do

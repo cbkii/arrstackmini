@@ -26,7 +26,7 @@ The stack pins each image to a tested tag. Occasionally a registry removes an ol
    cd "${ARR_STACK_DIR:-$PWD}/.."
    tar -czf "arrstack-backup-$(date +%Y%m%d).tar.gz" arrstack docker-data
    ```
-2. **Adjust tags.** Edit `.env` or `arrconf/userconf.sh` to change any `*_IMAGE` values.
+2. **Adjust tags.** Edit `.env` or `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`) to change any `*_IMAGE` values.
 3. **Apply changes.**
    ```bash
    ./arrstack.sh --yes

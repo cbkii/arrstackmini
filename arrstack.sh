@@ -13,8 +13,18 @@ arrstack_err_trap() {
 }
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-[ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ] && . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
-[ -f "${REPO_ROOT}/arrconf/userconf.sh" ] && . "${REPO_ROOT}/arrconf/userconf.sh"
+[ -f "${REPO_ROOT}/arrconf/userr.conf.defaults.sh" ] && . "${REPO_ROOT}/arrconf/userr.conf.defaults.sh"
+
+ARR_USERCONF_PATH="${ARR_USERCONF_PATH:-${ARR_BASE:-${HOME}/srv}/userr.conf}"
+ARR_USERCONF_SOURCE="${ARR_USERCONF_PATH}"
+if [[ -f "${ARR_USERCONF_PATH}" ]]; then
+  # shellcheck source=/dev/null
+  . "${ARR_USERCONF_PATH}"
+fi
+if [[ "${ARR_USERCONF_PATH}" == "${ARR_USERCONF_SOURCE}" ]]; then
+  ARR_USERCONF_PATH="${ARR_BASE:-${HOME}/srv}/userr.conf"
+fi
+unset ARR_USERCONF_SOURCE
 
 trap 'arrstack_err_trap' ERR
 

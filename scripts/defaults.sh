@@ -104,8 +104,14 @@ arrstack_setup_defaults() {
   DATA_DIR_MODE=700
 
   case "${permission_profile}" in
-    collaborative)
+    collab|collaborative)
+      if [[ "${requested_permission_profile}" == "collaborative" ]]; then
+        warn "ARR_PERMISSION_PROFILE='collaborative' is deprecated; use 'collab' instead"
+        requested_permission_profile="collab"
+      fi
+      permission_profile="collab"
       umask 0027
+      SECRET_FILE_MODE=640
       NONSECRET_FILE_MODE=640
       DATA_DIR_MODE=750
       ;;

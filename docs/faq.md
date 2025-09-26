@@ -24,7 +24,7 @@ Copy `arrconf/proton.auth.example` to `arrconf/proton.auth` and fill in `PROTON_
 Read [Version management](VERSION_MANAGEMENT.md). Back up `.env`, adjust tags, rerun `./arrstack.sh --yes`, and confirm services start.
 
 ### What if I want to rerun the installer safely?
-It is idempotent. Run `./arrstack.sh --yes` anytime after editing `arrconf/userconf.sh` or `.env`. The script shows a summary before it restarts containers.
+It is idempotent. Run `./arrstack.sh --yes` anytime after editing `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`) or `.env`. The script shows a summary before it restarts containers.
 
 ### Can I expose services to the Internet?
 Only through Gluetun and Caddy with strong basic auth. Forwarding ports directly from the Pi bypasses VPN protection and is not recommended.

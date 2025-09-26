@@ -57,11 +57,11 @@ Proxy profile enabled (Caddy reverse proxy):
 Remote clients must authenticate with '${CADDY_BASIC_AUTH_USER}' using the password stored in ${ARR_DOCKER_DIR}/caddy/credentials.
 CADDY_INFO
   else
-    cat <<'NO_CADDY'
+    cat <<NO_CADDY
 
 Reverse proxy disabled (ENABLE_CADDY=0).
 Access the services via the direct LAN URLs above.
-Set ENABLE_CADDY=1 in arrconf/userconf.sh and rerun ./arrstack.sh to publish HTTPS hostnames signed by the internal CA.
+Set ENABLE_CADDY=1 in ${ARR_USERCONF_PATH} and rerun ./arrstack.sh to publish HTTPS hostnames signed by the internal CA.
 NO_CADDY
     if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
       cat <<'DNS_HTTP'
@@ -79,10 +79,10 @@ DNS_HTTP
   fi
 
   if [[ "${LAN_IP}" == "0.0.0.0" || -z "${LAN_IP:-}" ]]; then
-    cat <<'WARNING'
+    cat <<WARNING
 ⚠️  SECURITY WARNING
    LAN_IP is unset or 0.0.0.0 so services listen on all interfaces.
-   Update arrconf/userconf.sh with a specific LAN_IP to limit exposure.
+   Update ${ARR_USERCONF_PATH} with a specific LAN_IP to limit exposure.
 
 WARNING
   fi
@@ -102,7 +102,7 @@ WARNING
       local pf_status="${PF_ENSURE_STATUS_MESSAGE:-pending}"
       warn "⚠️  ProtonVPN port forwarding is still pending (${pf_status})."
       warn "   Run 'arr.vpn.port' or 'arr.vpn.port.sync' once Gluetun assigns a port."
-      warn "   Persistent zeros? Pin SERVER_COUNTRIES or SERVER_NAMES in arrconf/userconf.sh."
+      warn "   Persistent zeros? Pin SERVER_COUNTRIES or SERVER_NAMES in ${ARR_USERCONF_PATH}."
       if [[ -n "${PF_ASYNC_RETRY_LOG:-}" ]]; then
         msg "  Background retry log: ${PF_ASYNC_RETRY_LOG}"
       fi
