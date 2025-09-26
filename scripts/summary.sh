@@ -84,6 +84,19 @@ WARNING
 WARNING
   fi
 
+  if [[ "${VPN_SERVICE_PROVIDER:-}" == "protonvpn" && "${VPN_PORT_FORWARDING:-on}" == "on" ]]; then
+    local pf_summary_port="${PF_ENSURED_PORT:-0}"
+    if [[ ! "$pf_summary_port" =~ ^[0-9]+$ || "$pf_summary_port" == "0" ]]; then
+      local pf_status="${PF_ENSURE_STATUS_MESSAGE:-pending}"
+      warn "⚠️  ProtonVPN port forwarding is still pending (${pf_status})."
+      warn "   Run 'arr.vpn.port' or 'arr.vpn.port.sync' once Gluetun assigns a port."
+      warn "   Persistent zeros? Pin SERVER_COUNTRIES or SERVER_NAMES in arrconf/userconf.sh."
+      if [[ -n "${PF_ASYNC_RETRY_LOG:-}" ]]; then
+        msg "  Background retry log: ${PF_ASYNC_RETRY_LOG}"
+      fi
+    fi
+  fi
+
   cat <<SUMMARY
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 
