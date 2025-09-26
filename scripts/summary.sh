@@ -113,7 +113,7 @@ WARNING
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 
 Helper commands:
-  source ${ARR_STACK_DIR}/.arraliases
+  source ${ARR_STACK_DIR}/.aliasarr
   arr.help       # Show all available aliases
   arr.vpn.status # Check VPN status and forwarded port
   arr.logs       # Follow container logs via docker compose

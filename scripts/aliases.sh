@@ -2,9 +2,9 @@
 write_aliases_file() {
   msg "📄 Generating helper aliases file"
 
-  local template_file="${REPO_ROOT}/.arraliases"
-  local aliases_file="${ARR_STACK_DIR}/.arraliases"
-  local configured_template="${REPO_ROOT}/.arraliases.configured"
+  local template_file="${REPO_ROOT}/.aliasarr"
+  local aliases_file="${ARR_STACK_DIR}/.aliasarr"
+  local configured_template="${REPO_ROOT}/.aliasarr.configured"
 
   if [[ ! -f "$template_file" ]]; then
     warn "Alias template ${template_file} not found"
@@ -48,6 +48,11 @@ write_aliases_file() {
   ensure_secret_file_mode "$aliases_file"
   cp "$aliases_file" "$configured_template"
   ensure_nonsecret_file_mode "$configured_template"
+
+  local legacy_alias_file="${ARR_STACK_DIR}/.arraliases"
+  local legacy_configured="${REPO_ROOT}/.arraliases.configured"
+  rm -f "$legacy_alias_file" "$legacy_configured"
+
   msg "✅ Helper aliases written to: $aliases_file"
   msg "   Source them with: source $aliases_file"
   msg "   Repo copy updated: $configured_template"
@@ -56,7 +61,7 @@ write_aliases_file() {
 install_aliases() {
   local bashrc="${HOME}/.bashrc"
   local alias_line="alias arrstack='cd ${REPO_ROOT} && ./arrstack.sh'"
-  local source_line="# source ${ARR_STACK_DIR}/.arraliases  # Optional helper functions"
+  local source_line="# source ${ARR_STACK_DIR}/.aliasarr  # Optional helper functions"
 
   if [[ -w "$bashrc" ]]; then
     if ! grep -Fq "$alias_line" "$bashrc" 2>/dev/null; then
@@ -202,7 +207,7 @@ refresh_aliases() {
   if reload_shell_rc; then
     msg "♻️ Shell configuration reloaded"
   else
-    local alias_path="${ARR_STACK_DIR}/.arraliases"
+    local alias_path="${ARR_STACK_DIR}/.aliasarr"
     warn "Could not automatically reload your shell configuration"
     warn "Run 'source ${alias_path}' manually to pick up the latest aliases"
   fi

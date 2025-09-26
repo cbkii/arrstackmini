@@ -1,6 +1,6 @@
 # Environment and secrets
 .env
-.arraliases.configured
+.aliasarr.configured
 arrconf/proton.auth
 arrconf/userconf.sh
 arrconf/*txt

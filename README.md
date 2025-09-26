@@ -58,7 +58,7 @@ You should see an HTTP 200/302 response. If not, re-run the installer and confir
 - `./arrstack.sh --rotate-api-key --yes` regenerates the Gluetun API key and writes it back to `.env`.
 - `./arrstack.sh --rotate-caddy-auth --yes` creates a new Caddy basic-auth password and saves the plaintext copy in `docker-data/caddy/credentials`.
 - `./arrstack.sh --setup-host-dns --yes` runs the host helper so Debian Bookworm frees port 53 before the installer exits.
-- `./arrstack.sh --refresh-aliases` rebuilds `.arraliases` and reloads your shell so helper commands (such as `arr.vpn status`) stay up to date.
+- `./arrstack.sh --refresh-aliases` rebuilds `.aliasarr` and reloads your shell so helper commands (such as `arr.vpn status`) stay up to date.
 - `./scripts/qbt-helper.sh {show|reset|whitelist}` shows connection info, clears the qBittorrent password, or enables LAN whitelisting.
 - `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
 - `ARRSTACK_DEBUG_PORTS=1 ./arrstack.sh` writes `logs/port-scan-*.jsonl` snapshots for each port check so you can diagnose who bound a port.

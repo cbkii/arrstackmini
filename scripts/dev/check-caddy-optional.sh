@@ -67,9 +67,9 @@ ARRCONF_DIR="${ARR_STACK_DIR}/arrconf"
 export ARR_STACK_DIR ARR_ENV_FILE ARR_DOCKER_DIR ARRCONF_DIR
 
 set +e
-alias_source="${ARR_STACK_DIR}/.arraliases"
+alias_source="${ARR_STACK_DIR}/.aliasarr"
 if [[ ! -f "$alias_source" ]]; then
-  alias_source="${REPO_ROOT}/.arraliases"
+  alias_source="${REPO_ROOT}/.aliasarr"
 fi
 # shellcheck source=/dev/null
 . "$alias_source"
