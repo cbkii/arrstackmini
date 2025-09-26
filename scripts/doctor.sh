@@ -442,7 +442,11 @@ else
   echo "[doctor][info] Skipping port 53 availability check (local DNS disabled)."
 fi
 
-printf '[doctor] LAN domain suffix: %s\n' "${SUFFIX:-<unset>}"
+if [[ "${ENABLE_CADDY}" -eq 1 ]]; then
+  printf '[doctor] LAN domain suffix: %s\n' "${SUFFIX:-<unset>}"
+else
+  echo "[doctor][info] Skipping LAN domain suffix reporting (ENABLE_CADDY=0)."
+fi
 printf '[doctor] LAN IP: %s\n' "${LAN_IP:-<unset>}"
 printf '[doctor] Using DNS server at: %s\n' "${DNS_IP}"
 doctor_dns_health
@@ -509,22 +513,26 @@ if [[ -n "${LOCALHOST_IP}" ]]; then
 fi
 
 if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${LOCAL_DNS_SERVICE_ENABLED}" -eq 1 ]]; then
-  echo "[doctor] Testing DNS resolution of qbittorrent.${SUFFIX} via local resolver"
-  if ! have_command dig; then
-    echo "[doctor][warn] 'dig' command not found; skipping DNS lookup."
+  if [[ "${ENABLE_CADDY}" -ne 1 ]]; then
+    echo "[doctor][info] Skipping LAN hostname resolution checks (ENABLE_CADDY=0)."
   else
-    res_udp="$(dig +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
-    if [[ -z "$res_udp" ]]; then
-      echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP} (UDP)"
+    echo "[doctor] Testing DNS resolution of qbittorrent.${SUFFIX} via local resolver"
+    if ! have_command dig; then
+      echo "[doctor][warn] 'dig' command not found; skipping DNS lookup."
     else
-      echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res_udp} (UDP)"
-    fi
+      res_udp="$(dig +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
+      if [[ -z "$res_udp" ]]; then
+        echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP} (UDP)"
+      else
+        echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res_udp} (UDP)"
+      fi
 
-    res_tcp="$(dig +tcp +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
-    if [[ -z "$res_tcp" ]]; then
-      echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP} (TCP)"
-    else
-      echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res_tcp} (TCP)"
+      res_tcp="$(dig +tcp +short @"${DNS_IP}" qbittorrent."${SUFFIX}" 2>/dev/null || true)"
+      if [[ -z "$res_tcp" ]]; then
+        echo "[doctor][error] qbittorrent.${SUFFIX} did NOT resolve via ${DNS_IP} (TCP)"
+      else
+        echo "[doctor][ok] qbittorrent.${SUFFIX} resolves to ${res_tcp} (TCP)"
+      fi
     fi
   fi
 else
@@ -588,12 +596,14 @@ else
   echo "  (Direct ports disabled; set EXPOSE_DIRECT_PORTS=1 to enable IP:PORT access.)"
 fi
 
-if [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
+if [[ "${ENABLE_LOCAL_DNS}" -eq 1 && "${ENABLE_CADDY}" -eq 1 ]]; then
   echo "  nslookup qbittorrent.${SUFFIX} ${lan_target}"
   echo "[doctor][note] If DNS queries fail:"
   echo "  - Ensure the client and ${lan_target} are on the same VLAN/subnet;"
   echo "  - Some routers block DNS to LAN hosts; allow UDP/TCP 53 to ${lan_target};"
   echo "  - Temporarily set the client DNS to ${lan_target} and retry."
+elif [[ "${ENABLE_LOCAL_DNS}" -eq 1 ]]; then
+  echo "  (DNS hostname troubleshooting tips skipped; ENABLE_CADDY=0.)"
 fi
 
 if [[ "${ENABLE_CADDY}" -eq 1 ]]; then

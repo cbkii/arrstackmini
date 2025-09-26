@@ -145,7 +145,7 @@ main() {
   install_aliases
   start_stack
 
-  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+  if [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 && "${ENABLE_CADDY:-0}" -eq 1 ]]; then
     local doctor_script="${REPO_ROOT}/scripts/doctor.sh"
     if [[ -x "${doctor_script}" ]]; then
       msg "🩺 Running LAN diagnostics"
@@ -163,6 +163,8 @@ main() {
     else
       warn "Doctor script missing or not executable at ${doctor_script}"
     fi
+  elif [[ "${ENABLE_LOCAL_DNS:-0}" -eq 1 ]]; then
+    msg "🩺 Skipping LAN diagnostics (ENABLE_CADDY=0)"
   fi
 
   msg "Installation completed at $(date)"
