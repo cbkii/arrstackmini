@@ -109,6 +109,14 @@ WARNING
     fi
   fi
 
+  if [[ "${ARR_PERMISSION_PROFILE}" == "collab" && -n "${COLLAB_PERMISSION_WARNINGS:-}" ]]; then
+    warn "Collaborative profile notes:"
+    while IFS= read -r collab_warning; do
+      [[ -z "$collab_warning" ]] && continue
+      warn "  - ${collab_warning}"
+    done < <(printf '%s\n' "${COLLAB_PERMISSION_WARNINGS}")
+  fi
+
   cat <<SUMMARY
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 

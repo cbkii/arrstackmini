@@ -23,6 +23,30 @@ caddy_bcrypt() {
   docker run --rm "${CADDY_IMAGE}" caddy hash-password --algorithm bcrypt --plaintext "$plaintext" 2>/dev/null
 }
 
+arrstack_track_created_media_dir() {
+  local dir="$1"
+
+  if [[ -z "$dir" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${COLLAB_CREATED_MEDIA_DIRS:-}" ]]; then
+    COLLAB_CREATED_MEDIA_DIRS="$dir"
+  else
+    local padded=$'\n'"${COLLAB_CREATED_MEDIA_DIRS}"$'\n'
+    local needle=$'\n'"${dir}"$'\n'
+    if [[ "$padded" != *"${needle}"* ]]; then
+      COLLAB_CREATED_MEDIA_DIRS+=$'\n'"${dir}"
+    fi
+  fi
+}
+
+arrstack_report_collab_skip() {
+  if [[ -n "${COLLAB_GROUP_WRITE_DISABLED_REASON:-}" ]]; then
+    arrstack_append_collab_warning "${COLLAB_GROUP_WRITE_DISABLED_REASON}"
+  fi
+}
+
 mkdirs() {
   msg "📁 Creating directories"
   ensure_dir_mode "$ARR_STACK_DIR" 755
@@ -40,8 +64,34 @@ mkdirs() {
     ensure_dir_mode "${ARR_DOCKER_DIR}/${service}" "$DATA_DIR_MODE"
   done
 
+  local collab_enabled=0
+  if [[ "${ARR_PERMISSION_PROFILE}" == "collab" && "${COLLAB_GROUP_WRITE_ENABLED:-0}" -eq 1 ]]; then
+    collab_enabled=1
+  elif [[ "${ARR_PERMISSION_PROFILE}" == "collab" ]]; then
+    arrstack_report_collab_skip
+  fi
+
   ensure_dir "$DOWNLOADS_DIR"
+  if ((collab_enabled)); then
+    if ! chmod "$DATA_DIR_MODE" "$DOWNLOADS_DIR" 2>/dev/null; then
+      warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${DOWNLOADS_DIR}"
+      arrstack_append_collab_warning "${DOWNLOADS_DIR} is not group-writable; adjust manually so secondary users can write downloads"
+    fi
+    if ! arrstack_is_group_writable "$DOWNLOADS_DIR"; then
+      arrstack_append_collab_warning "${DOWNLOADS_DIR} is not group-writable; adjust manually so secondary users can write downloads"
+    fi
+  fi
+
   ensure_dir "$COMPLETED_DIR"
+  if ((collab_enabled)); then
+    if ! chmod "$DATA_DIR_MODE" "$COMPLETED_DIR" 2>/dev/null; then
+      warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${COMPLETED_DIR}"
+      arrstack_append_collab_warning "${COMPLETED_DIR} is not group-writable; adjust manually so post-processing can move files"
+    fi
+    if ! arrstack_is_group_writable "$COMPLETED_DIR"; then
+      arrstack_append_collab_warning "${COMPLETED_DIR} is not group-writable; adjust manually so post-processing can move files"
+    fi
+  fi
 
   ensure_dir_mode "$ARR_STACK_DIR/scripts" 755
 
@@ -52,22 +102,49 @@ mkdirs() {
     fi
   fi
 
-  if [[ ! -d "$TV_DIR" ]]; then
-    warn "TV directory does not exist: $TV_DIR"
-    warn "Creating it now (may fail if parent directory is missing)"
-    mkdir -p "$TV_DIR" 2>/dev/null || warn "Could not create TV directory"
-  fi
+  manage_media_dir() {
+    local dir="$1"
+    local label="$2"
+    local created=0
 
-  if [[ ! -d "$MOVIES_DIR" ]]; then
-    warn "Movies directory does not exist: $MOVIES_DIR"
-    warn "Creating it now (may fail if parent directory is missing)"
-    mkdir -p "$MOVIES_DIR" 2>/dev/null || warn "Could not create Movies directory"
-  fi
+    if [[ -z "$dir" ]]; then
+      return 0
+    fi
 
-  if [[ -n "${SUBS_DIR:-}" && ! -d "$SUBS_DIR" ]]; then
-    warn "Subtitles directory does not exist: ${SUBS_DIR}"
-    warn "Creating it now (may fail if parent directory is missing)"
-    mkdir -p "$SUBS_DIR" 2>/dev/null || warn "Could not create subtitles directory"
+    if [[ ! -d "$dir" ]]; then
+      warn "${label} directory does not exist: ${dir}"
+      warn "Creating it now (may fail if parent directory is missing)"
+      if mkdir -p "$dir" 2>/dev/null; then
+        created=1
+        arrstack_track_created_media_dir "$dir"
+      else
+        warn "Could not create ${label} directory"
+        return 0
+      fi
+    fi
+
+    if ((collab_enabled)); then
+      if ((created)); then
+        if ! chmod "$DATA_DIR_MODE" "$dir" 2>/dev/null; then
+          warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${dir}"
+          arrstack_append_collab_warning "${dir} is not group-writable; adjust manually so secondary users can write ${label}"
+        elif ! arrstack_is_group_writable "$dir"; then
+          arrstack_append_collab_warning "${dir} is not group-writable; adjust manually so secondary users can write ${label}"
+        fi
+      else
+        if ! arrstack_is_group_writable "$dir"; then
+          warn "${label} directory exists with non-group-writable permissions: ${dir}"
+          arrstack_append_collab_warning "${dir} stays non-group-writable (existing ${label} library); update manually if the media group should write here"
+        fi
+      fi
+    fi
+  }
+
+  manage_media_dir "$TV_DIR" "TV"
+  manage_media_dir "$MOVIES_DIR" "Movies"
+
+  if [[ -n "${SUBS_DIR:-}" ]]; then
+    manage_media_dir "$SUBS_DIR" "subtitles"
   fi
 
   if [[ -n "${PUID:-}" && -n "${PGID:-}" ]]; then

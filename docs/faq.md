@@ -20,6 +20,9 @@ Yes, but you must add host entries manually or set DNS per device. Using [LAN DN
 ### Where do I put my Proton credentials?
 Copy `arrconf/proton.auth.example` to `arrconf/proton.auth` and fill in `PROTON_USER` and `PROTON_PASS`. The installer locks down the permissions automatically.
 
+### Which group should `PGID` use when enabling the collaborative profile?
+Use the group that owns your shared downloads or media storage (for example `getent group media`). The installer grants group read/write access only when `PGID` matches that group. Leaving `PGID=0` (root group) keeps the safer `750/640` defaults and prints a warning so you can avoid exposing write access to every root user on the host.
+
 ### How do I update to new container versions?
 Read [Version management](VERSION_MANAGEMENT.md). Back up `.env`, adjust tags, rerun `./arrstack.sh --yes`, and confirm services start.
 

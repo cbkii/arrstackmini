@@ -102,6 +102,7 @@ arrstack_setup_defaults() {
   LOCK_FILE_MODE=644
   NONSECRET_FILE_MODE=600
   DATA_DIR_MODE=700
+  local collab_initial_umask="0007"
 
   case "${permission_profile}" in
     collab|collaborative)
@@ -110,10 +111,10 @@ arrstack_setup_defaults() {
         requested_permission_profile="collab"
       fi
       permission_profile="collab"
-      umask 0027
-      SECRET_FILE_MODE=640
-      NONSECRET_FILE_MODE=640
-      DATA_DIR_MODE=750
+      umask "$collab_initial_umask"
+      SECRET_FILE_MODE=600
+      NONSECRET_FILE_MODE=660
+      DATA_DIR_MODE=770
       ;;
     strict)
       umask 0077
@@ -133,8 +134,61 @@ arrstack_setup_defaults() {
     ARR_PERMISSION_PROFILE="${permission_profile}"
   fi
 
-  : "$SECRET_FILE_MODE" "$LOCK_FILE_MODE" "$NONSECRET_FILE_MODE" "$DATA_DIR_MODE"
+  COLLAB_GROUP_WRITE_ENABLED=0
+  COLLAB_GROUP_WRITE_DISABLED_REASON=""
+
+  if [[ "${permission_profile}" == "collab" ]]; then
+    if [[ "${PGID:-}" == "0" ]]; then
+      COLLAB_GROUP_WRITE_DISABLED_REASON="PGID=0 uses the root group; refusing to enable group write."
+      COLLAB_GROUP_WRITE_ENABLED=0
+      warn "Collaborative profile detected with PGID=0; keeping historical 0027 umask and 750/640 modes to avoid root-group write access."
+      umask 0027
+      NONSECRET_FILE_MODE=640
+      DATA_DIR_MODE=750
+    else
+      COLLAB_GROUP_WRITE_ENABLED=1
+    fi
+  fi
+
+  if [[ -n "${ARR_SECRET_FILE_MODE_OVERRIDE:-}" ]]; then
+    if [[ "${ARR_SECRET_FILE_MODE_OVERRIDE}" =~ ^[0-7]{3,4}$ ]]; then
+      SECRET_FILE_MODE="${ARR_SECRET_FILE_MODE_OVERRIDE}"
+    else
+      warn "Ignoring ARR_SECRET_FILE_MODE_OVERRIDE='${ARR_SECRET_FILE_MODE_OVERRIDE}' (must be octal like 600)"
+    fi
+  fi
+
+  if [[ -n "${ARR_NONSECRET_FILE_MODE_OVERRIDE:-}" ]]; then
+    if [[ "${ARR_NONSECRET_FILE_MODE_OVERRIDE}" =~ ^[0-7]{3,4}$ ]]; then
+      NONSECRET_FILE_MODE="${ARR_NONSECRET_FILE_MODE_OVERRIDE}"
+    else
+      warn "Ignoring ARR_NONSECRET_FILE_MODE_OVERRIDE='${ARR_NONSECRET_FILE_MODE_OVERRIDE}' (must be octal like 660)"
+    fi
+  fi
+
+  if [[ -n "${ARR_DATA_DIR_MODE_OVERRIDE:-}" ]]; then
+    if [[ "${ARR_DATA_DIR_MODE_OVERRIDE}" =~ ^[0-7]{3,4}$ ]]; then
+      DATA_DIR_MODE="${ARR_DATA_DIR_MODE_OVERRIDE}"
+    else
+      warn "Ignoring ARR_DATA_DIR_MODE_OVERRIDE='${ARR_DATA_DIR_MODE_OVERRIDE}' (must be octal like 770)"
+    fi
+  fi
+
+  if [[ -n "${ARR_UMASK_OVERRIDE:-}" ]]; then
+    if [[ "${ARR_UMASK_OVERRIDE}" =~ ^0?[0-7]{3,4}$ ]]; then
+      umask "${ARR_UMASK_OVERRIDE}"
+    else
+      warn "Ignoring ARR_UMASK_OVERRIDE='${ARR_UMASK_OVERRIDE}' (must be octal like 0007)"
+    fi
+  fi
+
+  : "$SECRET_FILE_MODE" "$LOCK_FILE_MODE" "$NONSECRET_FILE_MODE" "$DATA_DIR_MODE" \
+    "$COLLAB_GROUP_WRITE_ENABLED" "$COLLAB_GROUP_WRITE_DISABLED_REASON"
   readonly ARR_PERMISSION_PROFILE SECRET_FILE_MODE LOCK_FILE_MODE NONSECRET_FILE_MODE DATA_DIR_MODE
+
+  COLLAB_PERMISSION_WARNINGS=""
+  COLLAB_CREATED_MEDIA_DIRS=""
+  : "$COLLAB_PERMISSION_WARNINGS" "$COLLAB_CREATED_MEDIA_DIRS"
 
   ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy local_dns)
   : "${ARR_DOCKER_SERVICES[*]}"

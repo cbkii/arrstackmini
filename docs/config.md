@@ -53,6 +53,11 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 - **`ASSUME_YES`** – set to `1` only for unattended installs.
 - **`FORCE_ROTATE_API_KEY`**, **`FORCE_REGEN_CADDY_AUTH`**, **`SETUP_HOST_DNS`**, **`REFRESH_ALIASES`** – automation knobs used by `arrstack.sh`. Trigger them with command-line flags instead of editing the file directly.
 
+### Permission profiles
+- **`ARR_PERMISSION_PROFILE`** – defaults to `strict`, which keeps secrets at `600`, data directories at `700`, and sets `umask 0077`. Switch to `collab` when multiple users or external automation should write downloads and media. Collab enables group read/write (`umask 0007`, directories `770`, files `660`) while keeping secrets `600`.
+- **`PGID`** – when using `collab`, set this to the group that owns your shared storage (for example `getent group media`). If you leave `PGID=0` (root group) the installer warns and keeps the safer `750/640` defaults instead of widening access to every root user.
+- **Overrides** – export any of these before running the installer to fine-tune behaviour: `ARR_UMASK_OVERRIDE`, `ARR_DATA_DIR_MODE_OVERRIDE`, `ARR_NONSECRET_FILE_MODE_OVERRIDE`, `ARR_SECRET_FILE_MODE_OVERRIDE`. Each value must be an octal mode such as `0007`, `770`, or `660`.
+
 After editing, save the file and keep `${ARR_BASE}/userr.conf` outside version control (it lives in your data directory, not the repo).
 
 ## Verify

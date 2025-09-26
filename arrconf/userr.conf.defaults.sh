@@ -36,7 +36,7 @@ ARR_USERCONF_PATH="${ARR_USERCONF_PATH:-${ARR_BASE}/userr.conf}"
 ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT:-${PWD}}/arrconf}"
 ARR_COLOR_OUTPUT="${ARR_COLOR_OUTPUT:-1}"
 
-# File/dir permissions (strict keeps secrets 600/700, collab loosens group access to 640/750)
+# File/dir permissions (strict keeps secrets 600/700, collab enables group read/write 660/770)
 if ! arrstack_var_is_readonly ARR_PERMISSION_PROFILE; then
   ARR_PERMISSION_PROFILE="${ARR_PERMISSION_PROFILE:-strict}"
 fi
@@ -292,7 +292,7 @@ ARR_DOCKER_DIR="${ARR_BASE}/docker-data"  # Docker volumes and persistent data s
 # ARRCONF_DIR="${HOME}/.config/arrstack"  # Optional: relocate Proton creds outside the repo
 
 # --- Permissions ---
-ARR_PERMISSION_PROFILE="strict"        # strict keeps secrets 600/700, collab loosens group access to 640/750
+ARR_PERMISSION_PROFILE="strict"        # strict keeps secrets 600/700, collab enables group read/write (660/770)
 
 # --- Downloads and media ---
 DOWNLOADS_DIR="${HOME}/Downloads"      # Active qBittorrent download folder
@@ -304,7 +304,7 @@ MOVIES_DIR="${MEDIA_DIR}/Movies"       # Radarr movie library path
 
 # --- User identity ---
 PUID="$(id -u)"                        # Numeric user ID containers should run as
-PGID="$(id -g)"                        # Numeric group ID with write access to media folders
+PGID="$(id -g)"                        # Numeric group ID with write access (match your media group when using collab)
 TIMEZONE="${TIMEZONE}"            # Timezone for container logs and schedules (default: ${TIMEZONE})
 
 # --- Networking ---
