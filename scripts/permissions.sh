@@ -112,6 +112,7 @@ verify_permissions() {
     "${ARRCONF_DIR}/proton.auth"
     "${ARR_DOCKER_DIR}/qbittorrent/qBittorrent.conf"
     "${ARR_STACK_DIR}/.aliasarr"
+    "${ARR_DOCKER_DIR}/configarr/secrets.yml"
   )
 
   local file
@@ -126,6 +127,7 @@ verify_permissions() {
   local -a nonsecret_files=(
     "${ARR_STACK_DIR}/docker-compose.yml"
     "${REPO_ROOT}/.aliasarr.configured"
+    "${ARR_DOCKER_DIR}/configarr/config.yml"
   )
 
   for file in "${nonsecret_files[@]}"; do

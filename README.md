@@ -70,6 +70,16 @@ You should see an HTTP 200/302 response. If not, re-run the installer and confir
 - `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
 - `ARRSTACK_DEBUG_PORTS=1 ./arrstack.sh` writes `logs/port-scan-*.jsonl` snapshots for each port check so you can diagnose who bound a port.
 
+## Configarr (TRaSH-Guides Sync)
+
+Configarr runs as a one-shot helper to import TRaSH-Guides quality definitions, profiles, and custom formats into Sonarr v4 and Radarr v5. It is enabled by default; set `ENABLE_CONFIGARR=0` in `userr.conf` (or your environment) to omit the container on the next install run. Run Configarr only after Sonarr and Radarr have completed their first boot and database migrations.
+
+- The installer seeds `docker-data/configarr/config.yml` with the default TRaSH-Guides templates and creates `docker-data/configarr/secrets.yml` with placeholder API keys. Populate that secrets file (or swap to `!env` in `config.yml`) before syncing.
+- Trigger a manual sync with `arr.config.sync` (added to `.aliasarr` when Configarr is enabled) or directly via `docker compose run --rm configarr` from the stack directory. The container exits after a single run.
+- To schedule recurring updates on the host, add a cron entry such as:<br>`10 3 * * SUN cd /path/to/arrstack && docker compose run --rm configarr >> logs/configarr-sync.log 2>&1`
+- Local custom formats can be stored in `docker-data/configarr/cfs` and referenced from `config.yml` as needed.
+- Update `CONFIGARR_IMAGE` in `.env`/`userr.conf` if you want to pin a specific Configarr image tag.
+
 ## Permission profiles
 `arrstack.sh` defaults to the **strict** permission profile so secrets stay private (files `600`, data directories `700`, umask `0077`). Switch to the **collab** profile when you run multiple media managers, SMB/NFS shares, or post-processing scripts that need to write into the stack:
 

@@ -151,6 +151,7 @@ main() {
   if [[ "${SETUP_HOST_DNS:-0}" -eq 1 ]]; then
     run_host_dns_setup
   fi
+  write_configarr_assets
   verify_permissions
   install_aliases
   start_stack

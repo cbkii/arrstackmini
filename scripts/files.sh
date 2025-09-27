@@ -359,6 +359,10 @@ write_env() {
     write_env_kv "ENABLE_CADDY" "$ENABLE_CADDY"
     printf '\n'
 
+    printf '# Optional tooling\\n'
+    write_env_kv "ENABLE_CONFIGARR" "$ENABLE_CONFIGARR"
+    printf '\n'
+
     printf '# Local DNS (disabled by default)\n'
     printf '# Preferred comma-separated chain (legacy UPSTREAM_DNS_1/UPSTREAM_DNS_2 remain supported).\n'
     write_env_kv "LAN_DOMAIN_SUFFIX" "$LAN_DOMAIN_SUFFIX"
@@ -432,6 +436,7 @@ write_env() {
     write_env_kv "PROWLARR_IMAGE" "$PROWLARR_IMAGE"
     write_env_kv "BAZARR_IMAGE" "$BAZARR_IMAGE"
     write_env_kv "FLARESOLVERR_IMAGE" "$FLARESOLVERR_IMAGE"
+    write_env_kv "CONFIGARR_IMAGE" "$CONFIGARR_IMAGE"
     write_env_kv "CADDY_IMAGE" "$CADDY_IMAGE"
   } >"$tmp"
 
@@ -808,6 +813,39 @@ YAML
         max-size: "1m"
         max-file: "2"
 YAML
+
+    if [[ "${ENABLE_CONFIGARR:-0}" -eq 1 ]]; then
+      cat <<'YAML' >>"$tmp"
+  configarr:
+    image: ${CONFIGARR_IMAGE}
+    container_name: configarr
+    profiles:
+      - ipdirect
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+    volumes:
+      - ${ARR_DOCKER_DIR}/configarr/config.yml:/app/config.yml:ro
+      - ${ARR_DOCKER_DIR}/configarr/secrets.yml:/app/secrets.yml:ro
+      - ${ARR_DOCKER_DIR}/configarr/cfs:/app/cfs:ro
+    working_dir: /app
+    entrypoint: ["/bin/sh","-lc","node dist/index.js || exit 1"]
+    environment:
+      TZ: ${TIMEZONE}
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: "512k"
+        max-file: "2"
+YAML
+    fi
 
     if ((include_caddy)); then
       cat <<'YAML' >>"$tmp"
@@ -1375,4 +1413,66 @@ EOF
   )"
 
   atomic_write "$conf_file" "$updated_content" "$SECRET_FILE_MODE"
+}
+
+write_configarr_assets() {
+  if [[ "${ENABLE_CONFIGARR:-0}" -ne 1 ]]; then
+    msg "🧾 Skipping Configarr assets (ENABLE_CONFIGARR=0)"
+    return 0
+  fi
+
+  msg "🧾 Preparing Configarr assets"
+
+  local configarr_root="${ARR_DOCKER_DIR}/configarr"
+  local runtime_config="${configarr_root}/config.yml"
+  local runtime_secrets="${configarr_root}/secrets.yml"
+  local runtime_cfs="${configarr_root}/cfs"
+  local default_config
+  default_config="$(cat <<'EOF'
+version: 1
+
+sonarr:
+  main:
+    define: true
+    host: http://127.0.0.1:8989
+    apiKey: !secret SONARR_API_KEY
+    include:
+      - template: sonarr-quality-definition-series
+      - template: sonarr-v4-quality-profile-web-1080p
+      - template: sonarr-v4-custom-formats-web-1080p
+      # - template: sonarr-v4-quality-profile-web-2160p
+      # - template: sonarr-v4-custom-formats-web-2160p
+    custom_formats: []
+
+radarr:
+  main:
+    define: true
+    host: http://127.0.0.1:7878
+    apiKey: !secret RADARR_API_KEY
+    include:
+      - template: radarr-quality-definition
+      - template: radarr-v5-quality-profile-hd-bluray-web
+      - template: radarr-v5-custom-formats-hd-bluray-web
+    custom_formats: []
+EOF
+)"
+
+  ensure_dir_mode "$configarr_root" "$DATA_DIR_MODE"
+  ensure_dir_mode "$runtime_cfs" "$DATA_DIR_MODE"
+
+  if [[ ! -f "$runtime_config" ]]; then
+    atomic_write "$runtime_config" "$default_config" "$NONSECRET_FILE_MODE"
+    msg "  Installed default config: ${runtime_config}"
+  else
+    ensure_nonsecret_file_mode "$runtime_config"
+  fi
+
+  if [[ ! -f "$runtime_secrets" ]]; then
+    local secrets_stub
+    secrets_stub=$'SONARR_API_KEY: "REPLACE_WITH_SONARR_API_KEY"\nRADARR_API_KEY: "REPLACE_WITH_RADARR_API_KEY"\n'
+    atomic_write "$runtime_secrets" "$secrets_stub" "$SECRET_FILE_MODE"
+    msg "  Stubbed secrets file: ${runtime_secrets}"
+  else
+    ensure_secret_file_mode "$runtime_secrets"
+  fi
 }

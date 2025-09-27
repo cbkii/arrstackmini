@@ -38,6 +38,7 @@ PVPN_ROTATE_COUNTRIES="Netherlands"  # Optional rotation order for arr.vpn switc
 GLUETUN_CONTROL_PORT="8000"            # Host port that exposes the Gluetun control API (default: 8000)
 ENABLE_LOCAL_DNS="0"                   # Advanced: enable the optional dnsmasq container (0/1, default: 0)
 ENABLE_CADDY="0"                       # Optional Caddy reverse proxy (run ./arrstack.sh --enable-caddy or set 1 to add HTTPS hostnames)
+ENABLE_CONFIGARR="1"             # Configarr one-shot sync for TRaSH-Guides profiles (set 0 to omit the container)
 DNS_DISTRIBUTION_MODE="router"         # router (DHCP Option 6) or per-device DNS settings (default: router)
 UPSTREAM_DNS_SERVERS="1.1.1.1,1.0.0.1"          # Comma-separated resolver list used by dnsmasq (default chain shown)
 UPSTREAM_DNS_1="1.1.1.1"               # Legacy primary resolver override (default derived: 1.1.1.1)
@@ -70,6 +71,7 @@ FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on th
 # PROWLARR_IMAGE="lscr.io/linuxserver/prowlarr:latest"                # Override the Prowlarr container tag
 # BAZARR_IMAGE="lscr.io/linuxserver/bazarr:latest"                    # Override the Bazarr container tag
 # FLARESOLVERR_IMAGE="ghcr.io/flaresolverr/flaresolverr:v3.3.21"      # Override the FlareSolverr container tag
+# CONFIGARR_IMAGE="ghcr.io/raydak-labs/configarr:latest"            # Override the Configarr container tag
 
 # --- Behaviour toggles ---
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs

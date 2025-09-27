@@ -44,6 +44,7 @@ arrstack_setup_defaults() {
 
   : "${ENABLE_LOCAL_DNS:=0}"
   : "${ENABLE_CADDY:=0}"
+  : "${ENABLE_CONFIGARR:=1}"
   : "${DNS_DISTRIBUTION_MODE:=router}"
   : "${SETUP_HOST_DNS:=0}"
   : "${REFRESH_ALIASES:=0}"
@@ -94,6 +95,7 @@ arrstack_setup_defaults() {
   : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
   : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
   : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
+  : "${CONFIGARR_IMAGE:=ghcr.io/raydak-labs/configarr:latest}"
 
   if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"
@@ -214,7 +216,7 @@ arrstack_setup_defaults() {
   COLLAB_CREATED_MEDIA_DIRS=""
   : "$COLLAB_PERMISSION_WARNINGS" "$COLLAB_CREATED_MEDIA_DIRS"
 
-  ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr caddy local_dns)
+  ARR_DOCKER_SERVICES=(gluetun qbittorrent sonarr radarr prowlarr bazarr flaresolverr configarr caddy local_dns)
   : "${ARR_DOCKER_SERVICES[*]}"
   readonly -a ARR_DOCKER_SERVICES
 

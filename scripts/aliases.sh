@@ -45,6 +45,15 @@ write_aliases_file() {
 
   mv "$tmp_file" "$aliases_file"
 
+  if [[ "${ENABLE_CONFIGARR:-0}" -eq 1 ]]; then
+    if ! grep -Fq "alias arr.config.sync" "$aliases_file" 2>/dev/null; then
+      {
+        printf '\n# Configarr helper\n'
+        printf "alias arr.config.sync='docker compose run --rm configarr'\n"
+      } >>"$aliases_file"
+    fi
+  fi
+
   ensure_secret_file_mode "$aliases_file"
   cp "$aliases_file" "$configured_template"
   ensure_nonsecret_file_mode "$configured_template"
