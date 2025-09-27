@@ -504,6 +504,11 @@ ProtonVPN & Gluetun (arr.vpn ...):
   arr.vpn diag [TEST]          Run port forwarding diagnostics
   arr.vpn troubleshoot         Run comprehensive VPN troubleshooting
 
+Network troubleshooting:
+  arr.network [TEST]           Run network diagnostics (internet, DNS, Docker, firewall)
+  arr.network.diag             Run full network diagnostics
+  arr.network port <port>      Test if specific port is accessible
+
 qBittorrent helpers:
   arr.qbt.url                  Print the qBittorrent base URL
   arr.qbt.list                 List torrent names
@@ -962,3 +967,16 @@ arr.vpn.port.sync() { arr.qbt.port.sync; }
 
 # Enhanced VPN troubleshooting
 arr.vpn.troubleshoot() { arr.vpn.diag full; }
+
+# Network troubleshooting
+arr.network() {
+  local net_script="${ARR_STACK_DIR}/scripts/network-troubleshoot.sh"
+  if [[ ! -f "$net_script" ]]; then
+    echo "Network troubleshooting script not found: $net_script" >&2
+    return 1
+  fi
+  "$net_script" "$@"
+}
+
+arr.network.diag() { arr.network full; }
+arr.network.test() { arr.network "$@"; }

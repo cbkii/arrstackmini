@@ -104,14 +104,26 @@ PF_CYCLE_AFTER="45"               # Seconds before trying OpenVPN restart
 # Run all port forwarding tests
 arr.vpn.troubleshoot
 
+# Run network-level diagnostics
+arr.network.diag
+
 # Individual test categories
 arr.vpn.diag connectivity  # Test Gluetun API access
 arr.vpn.diag vpn          # Check VPN connection
 arr.vpn.diag pf           # Test port forwarding status
 arr.vpn.diag natpmp       # Test NAT-PMP connectivity
 arr.vpn.diag p2p          # Check if current server supports P2P
-arr.vpn.diag network      # Test Docker networking
+arr.vpn.diag network      # Test network health
 arr.vpn.diag firewall     # Check firewall rules
+
+# Network-specific diagnostics
+arr.network internet      # Test internet connectivity
+arr.network dns           # Test DNS resolution
+arr.network proton        # Test ProtonVPN API access
+arr.network docker        # Test Docker networking
+arr.network udp           # Test UDP connectivity (crucial for NAT-PMP)
+arr.network ports         # Check for port conflicts
+arr.network firewall      # Check firewall status
 ```
 
 ### Understanding Diagnostic Output
@@ -129,6 +141,14 @@ arr.vpn.diag firewall     # Check firewall rules
 - **Current server may not support P2P**: Need to switch to P2P servers
 
 ### Common Issues and Fixes
+
+#### Issue: Network connectivity problems
+**Cause**: Host-level network issues affecting VPN connectivity
+**Fix**: Run comprehensive network diagnostics
+```bash
+arr.network.diag
+# Follow the specific recommendations for internet, DNS, firewall, or Docker issues
+```
 
 #### Issue: "connection timeout to 10.16.0.1:5351"
 **Cause**: Connected to non-P2P server
@@ -251,13 +271,14 @@ When port forwarding fails:
 
 1. **Check VPN connection**: `arr.vpn.status`
 2. **Run comprehensive diagnostics**: `arr.vpn.troubleshoot`
-3. **Verify P2P server usage**: `arr.vpn.diag p2p`
-4. **Test NAT-PMP connectivity**: `arr.vpn.diag natpmp`
-5. **Check Gluetun logs**: `docker logs gluetun --tail 100`
-6. **Switch to explicit P2P servers**: `arr.vpn.p2p config`
-7. **Restart Gluetun**: `docker restart gluetun`
-8. **Verify port assignment**: `arr.vpn.port`
-9. **Sync with qBittorrent**: `arr.qbt.port.sync`
+3. **Check network health**: `arr.network.diag`
+4. **Verify P2P server usage**: `arr.vpn.diag p2p`
+5. **Test NAT-PMP connectivity**: `arr.vpn.diag natpmp`
+6. **Check Gluetun logs**: `docker logs gluetun --tail 100`
+7. **Switch to explicit P2P servers**: `arr.vpn.p2p config`
+8. **Restart Gluetun**: `docker restart gluetun`
+9. **Verify port assignment**: `arr.vpn.port`
+10. **Sync with qBittorrent**: `arr.qbt.port.sync`
 
 ## API Reference
 
@@ -270,6 +291,8 @@ When port forwarding fails:
 - `arr.vpn.diag [test]` - Run specific or all diagnostics
 - `arr.vpn.troubleshoot` - Comprehensive troubleshooting
 - `arr.vpn.port.diag` - Quick port forwarding test
+- `arr.network [test]` - Run network diagnostics
+- `arr.network.diag` - Full network health check
 
 ### Configuration Variables
 - `SERVER_HOSTNAMES` - Explicit P2P server list (recommended)

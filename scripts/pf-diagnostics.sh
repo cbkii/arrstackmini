@@ -4,7 +4,7 @@
 
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=scripts/common.sh
 . "$SCRIPT_DIR/common.sh"
@@ -194,23 +194,51 @@ suggest_p2p_servers() {
   fi
 }
 
-# Check Docker network connectivity
-test_docker_network() {
-  msg "Testing Docker network connectivity..."
+# Test comprehensive network health
+test_network_health() {
+  msg "Testing network health..."
   
-  if ! docker network ls | grep -q "$(basename "$PWD")_default"; then
-    warn "Docker network not found, is the stack running?"
+  local net_script="$SCRIPT_DIR/network-troubleshoot.sh"
+  if [[ ! -f "$net_script" ]]; then
+    warn "Network troubleshooting script not found"
     return 1
   fi
   
-  if docker exec gluetun ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
-    msg "✅ Internet connectivity through VPN working"
+  # Run basic network tests relevant to VPN
+  local network_issues=0
+  
+  # Test internet connectivity
+  if ! "$net_script" internet >/dev/null 2>&1; then
+    warn "❌ Internet connectivity issues detected"
+    network_issues=$((network_issues + 1))
+  fi
+  
+  # Test DNS resolution
+  if ! "$net_script" dns >/dev/null 2>&1; then
+    warn "❌ DNS resolution issues detected"
+    network_issues=$((network_issues + 1))
+  fi
+  
+  # Test ProtonVPN API connectivity
+  if ! "$net_script" proton >/dev/null 2>&1; then
+    warn "❌ ProtonVPN API connectivity issues detected"
+    network_issues=$((network_issues + 1))
+  fi
+  
+  # Test UDP connectivity (crucial for NAT-PMP)
+  if ! "$net_script" udp >/dev/null 2>&1; then
+    warn "❌ UDP connectivity issues detected"
+    network_issues=$((network_issues + 1))
+  fi
+  
+  if ((network_issues == 0)); then
+    msg "✅ Network health checks passed"
+    return 0
   else
-    warn "❌ No internet connectivity through VPN"
+    warn "❌ Network health issues detected ($network_issues issues)"
+    warn "   Run 'arr.network.diag' for detailed network diagnostics"
     return 1
   fi
-  
-  return 0
 }
 
 # Check firewall rules
@@ -267,8 +295,8 @@ run_full_diagnostics() {
     failed_tests+=("p2p_server")
   fi
   
-  if ! test_docker_network; then
-    failed_tests+=("docker_network")
+  if ! test_network_health; then
+    failed_tests+=("network_health")
   fi
   
   check_firewall_rules
@@ -318,7 +346,7 @@ main() {
       check_p2p_server
       ;;
     network)
-      test_docker_network
+      test_network_health
       ;;
     firewall)
       check_firewall_rules
@@ -337,7 +365,7 @@ Commands:
   pf, port          Test port forwarding status
   natpmp            Test NAT-PMP connectivity to ProtonVPN gateway
   p2p               Check if current server supports P2P
-  network           Test Docker network connectivity
+  network           Test network health (internet, DNS, ProtonVPN API, UDP)
   firewall          Check firewall configuration
   suggest           Suggest P2P servers for better port forwarding
   help              Show this help
