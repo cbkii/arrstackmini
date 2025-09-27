@@ -86,6 +86,28 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
   ```
   The command should return your Proton exit IP.
 
+### Symptom: ProtonVPN port forwarding fails or reports 0
+- **Fix:** Use the enhanced P2P diagnostics to identify the issue.
+  ```bash
+  arr.vpn.troubleshoot
+  ```
+  This runs comprehensive tests for NAT-PMP connectivity, P2P server compatibility, and firewall issues.
+- **Fix:** If your current server doesn't support P2P, get recommended P2P servers:
+  ```bash
+  arr.vpn.p2p list Netherlands 5    # List top 5 P2P servers for Netherlands
+  arr.vpn.p2p config Netherlands    # Generate SERVER_HOSTNAMES configuration
+  ```
+  Add the generated `SERVER_HOSTNAMES` line to your `userr.conf` and restart Gluetun.
+- **Fix:** For persistent NAT-PMP timeout errors, ensure you're using P2P-enabled servers:
+  ```bash
+  # Check if current server supports P2P
+  arr.vpn.diag p2p
+  
+  # If not, switch to explicit P2P servers
+  echo 'SERVER_HOSTNAMES="nl-01.protonvpn.net,nl-02.protonvpn.net"' >> ~/srv/userr.conf
+  docker restart gluetun
+  ```
+
 ### Symptom: Unsure which component failed
 - **Fix:** Run the bundled doctor script for a full set of port, DNS, HTTPS, and LAN reachability checks.
   ```bash

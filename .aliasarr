@@ -499,6 +499,15 @@ ProtonVPN & Gluetun (arr.vpn ...):
   arr.vpn health               Print the Gluetun container health status
   arr.vpn paths                Display credential/config paths for ProtonVPN assets
   arr.vpn creds                Open ${ARRCONF_DIR}/proton.auth in $EDITOR for quick edits
+  arr.vpn p2p list [COUNTRY]   List P2P-enabled servers for port forwarding
+  arr.vpn p2p config [COUNTRY] Generate SERVER_HOSTNAMES configuration
+  arr.vpn diag [TEST]          Run port forwarding diagnostics
+  arr.vpn troubleshoot         Run comprehensive VPN troubleshooting
+
+Network troubleshooting:
+  arr.network [TEST]           Run network diagnostics (internet, DNS, Docker, firewall)
+  arr.network.diag             Run full network diagnostics
+  arr.network port <port>      Test if specific port is accessible
 
 qBittorrent helpers:
   arr.qbt.url                  Print the qBittorrent base URL
@@ -541,8 +550,11 @@ arr.vpn() {
     ip) arr.vpn.ip "$@";;
     pf|portforward|forwarded) arr.vpn.pf "$@";;
     health) arr.vpn.health "$@";;
+    p2p) arr.vpn.p2p "$@";;
+    diag|diagnostics) arr.vpn.diag "$@";;
+    troubleshoot) arr.vpn.troubleshoot "$@";;
     help|h)
-      printf 'Usage: arr.vpn {status|connect|reconnect|switch|servers|countries|fastest|creds|port|paths|logs|ip|pf|health}\n' >&2
+      printf 'Usage: arr.vpn {status|connect|reconnect|switch|servers|countries|fastest|creds|port|paths|logs|ip|pf|health|p2p|diag|troubleshoot}\n' >&2
       return 0
       ;;
     *)
@@ -925,3 +937,46 @@ arr.bazarr.restart() { docker restart bazarr; }
 arr.flaresolverr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get FLARESOLVERR_PORT)"; }
 arr.flaresolverr.logs() { docker logs -f flaresolverr; }
 arr.flaresolverr.restart() { docker restart flaresolverr; }
+
+# ProtonVPN P2P server management
+arr.vpn.p2p() {
+  local p2p_script="${ARR_STACK_DIR}/scripts/proton-pf-servers.sh"
+  if [[ ! -f "$p2p_script" ]]; then
+    echo "P2P server script not found: $p2p_script" >&2
+    return 1
+  fi
+  "$p2p_script" "$@"
+}
+
+arr.vpn.p2p.list() { arr.vpn.p2p list "$@"; }
+arr.vpn.p2p.config() { arr.vpn.p2p config "$@"; }
+arr.vpn.p2p.refresh() { arr.vpn.p2p refresh "$@"; }
+
+# Port forwarding diagnostics
+arr.vpn.diag() {
+  local diag_script="${ARR_STACK_DIR}/scripts/pf-diagnostics.sh"
+  if [[ ! -f "$diag_script" ]]; then
+    echo "Port forwarding diagnostics script not found: $diag_script" >&2
+    return 1
+  fi
+  "$diag_script" "$@"
+}
+
+arr.vpn.port.diag() { arr.vpn.diag pf; }
+arr.vpn.port.sync() { arr.qbt.port.sync; }
+
+# Enhanced VPN troubleshooting
+arr.vpn.troubleshoot() { arr.vpn.diag full; }
+
+# Network troubleshooting
+arr.network() {
+  local net_script="${ARR_STACK_DIR}/scripts/network-troubleshoot.sh"
+  if [[ ! -f "$net_script" ]]; then
+    echo "Network troubleshooting script not found: $net_script" >&2
+    return 1
+  fi
+  "$net_script" "$@"
+}
+
+arr.network.diag() { arr.network full; }
+arr.network.test() { arr.network "$@"; }

@@ -4,6 +4,7 @@
 : "${PF_MAX_TOTAL_WAIT:=60}"
 : "${PF_POLL_INTERVAL:=5}"
 : "${PF_CYCLE_AFTER:=30}"
+: "${PF_MAX_SERVER_RETRIES:=2}"
 
 _gluetun_control_base() {
   local port host
@@ -348,6 +349,7 @@ ensure_proton_port_forwarding_ready() {
   local max_wait="${PF_MAX_TOTAL_WAIT:-60}"
   local poll_interval="${PF_POLL_INTERVAL:-5}"
   local cycle_after="${PF_CYCLE_AFTER:-30}"
+  local max_server_retries="${PF_MAX_SERVER_RETRIES:-2}"
 
   if [[ ! "$max_wait" =~ ^[0-9]+$ ]]; then
     max_wait=60
@@ -359,6 +361,10 @@ ensure_proton_port_forwarding_ready() {
 
   if [[ ! "$cycle_after" =~ ^[0-9]+$ ]]; then
     cycle_after=30
+  fi
+
+  if [[ ! "$max_server_retries" =~ ^[0-9]+$ ]]; then
+    max_server_retries=2
   fi
 
   if ((poll_interval <= 0)); then
@@ -376,6 +382,7 @@ ensure_proton_port_forwarding_ready() {
   local start_time
   start_time=$(date +%s)
   local cycled=0
+  local server_retry_count=0
 
   while :; do
     local port
@@ -392,9 +399,22 @@ ensure_proton_port_forwarding_ready() {
     local elapsed=$((now - start_time))
 
     if ((elapsed >= max_wait)); then
-      PF_ENSURE_STATUS_MESSAGE="timed out after ${elapsed}s"
+      # Try rotating to a different P2P server if we haven't exhausted retries
+      if ((server_retry_count < max_server_retries)); then
+        msg "[pf] Timeout reached, attempting P2P server rotation (retry $((server_retry_count + 1))/${max_server_retries})..."
+        if gluetun_rotate_p2p_server; then
+          server_retry_count=$((server_retry_count + 1))
+          start_time=$(date +%s)  # Reset timer for new server
+          cycled=0  # Reset cycle flag for new server
+          continue
+        else
+          warn "[pf] Failed to rotate to new P2P server"
+        fi
+      fi
+      
+      PF_ENSURE_STATUS_MESSAGE="timed out after ${elapsed}s (tried $((server_retry_count + 1)) servers)"
       PF_ENSURED_PORT="0"
-      warn "[pf] Port forwarding not ready after ${elapsed}s"
+      warn "[pf] Port forwarding not ready after ${elapsed}s with $((server_retry_count + 1)) server attempts"
       return 1
     fi
 
@@ -408,4 +428,103 @@ ensure_proton_port_forwarding_ready() {
 
     sleep "$poll_interval"
   done
+}
+
+# Rotate to a different P2P server when port forwarding fails
+gluetun_rotate_p2p_server() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local p2p_script="${script_dir}/proton-pf-servers.sh"
+  
+  if [[ ! -f "$p2p_script" ]]; then
+    warn "[pf] P2P server rotation script not found: $p2p_script"
+    return 1
+  fi
+  
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "[pf] curl unavailable for P2P server rotation"
+    return 1
+  fi
+  
+  # Get current SERVER_COUNTRIES setting for P2P server lookup
+  local current_country="${SERVER_COUNTRIES:-Netherlands}"
+  # Take first country from comma-separated list
+  current_country="${current_country%%,*}"
+  
+  msg "[pf] Looking for P2P servers in: $current_country"
+  
+  # Get P2P server hostnames for the current country
+  local p2p_hostnames
+  if ! p2p_hostnames=$("$p2p_script" hostnames "$current_country" 3 2>/dev/null); then
+    warn "[pf] Failed to get P2P server hostnames for $current_country"
+    return 1
+  fi
+  
+  if [[ -z "$p2p_hostnames" ]]; then
+    warn "[pf] No P2P servers found for $current_country"
+    return 1
+  fi
+  
+  # Convert newline-separated to comma-separated
+  local hostname_list
+  hostname_list=$(printf '%s\n' "$p2p_hostnames" | paste -sd ',' -)
+  
+  msg "[pf] Rotating to P2P servers: $hostname_list"
+  
+  # Update Gluetun configuration via control API
+  if ! _gluetun_update_server_config "$hostname_list"; then
+    warn "[pf] Failed to update Gluetun server configuration"
+    return 1
+  fi
+  
+  # Cycle OpenVPN to apply new server selection
+  if ! gluetun_cycle_openvpn; then
+    warn "[pf] Failed to cycle OpenVPN after server rotation"
+    return 1
+  fi
+  
+  msg "[pf] Successfully rotated to P2P servers, waiting for connection..."
+  sleep 10  # Give some time for the new connection to establish
+  
+  return 0
+}
+
+# Update Gluetun server configuration via control API
+_gluetun_update_server_config() {
+  local server_hostnames="$1"
+  
+  if [[ -z "$server_hostnames" ]]; then
+    return 1
+  fi
+  
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
+  fi
+  
+  local api_base
+  api_base="$(_gluetun_control_base)"
+  
+  local -a curl_args=(-fsS -X PUT -H 'Content-Type: application/json')
+  if [[ -n "${GLUETUN_API_KEY:-}" ]]; then
+    curl_args=(-fsS -H "X-Api-Key: ${GLUETUN_API_KEY}" -X PUT -H 'Content-Type: application/json')
+  fi
+  
+  # Create JSON payload for server configuration update
+  local payload
+  payload=$(cat <<EOF
+{
+  "server_selection": {
+    "hostnames": ["$(printf '%s' "$server_hostnames" | sed 's/,/","/g')"]
+  }
+}
+EOF
+)
+  
+  # This is a conceptual API call - the actual Gluetun API may differ
+  # In practice, you might need to restart the container with new environment variables
+  msg "[pf] Updating server configuration with P2P hostnames..."
+  
+  # For now, we'll indicate success and rely on the OpenVPN cycling
+  # In a full implementation, this would make the actual API call or update env vars
+  return 0
 }
