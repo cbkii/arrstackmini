@@ -209,7 +209,8 @@ arrstack_is_group_writable() {
 
   local numeric=$((8#$mode))
 
-  if (((numeric & 0o020) != 0)); then
+  # 020 = group write bit
+  if (((numeric & 020) != 0)); then
     return 0
   fi
 

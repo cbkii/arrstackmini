@@ -71,26 +71,56 @@ mkdirs() {
     arrstack_report_collab_skip
   fi
 
+  collab_warn_permission_failure() {
+    local message="$1"
+
+    if [[ -z "$message" ]]; then
+      return 0
+    fi
+
+    local already_listed=0
+    if [[ -n "${COLLAB_PERMISSION_WARNINGS:-}" ]]; then
+      local padded=$'\n'"${COLLAB_PERMISSION_WARNINGS}"$'\n'
+      local needle=$'\n'"${message}"$'\n'
+      if [[ "$padded" == *"${needle}"* ]]; then
+        already_listed=1
+      fi
+    fi
+
+    if ((already_listed == 0)); then
+      warn "$message"
+    fi
+
+    arrstack_append_collab_warning "$message"
+  }
+
+  collab_remediate_dir() {
+    local dir="$1"
+    local label="$2"
+
+    if [[ -z "$dir" || -z "$label" || ! -d "$dir" ]]; then
+      return 0
+    fi
+
+    chmod "$DATA_DIR_MODE" "$dir" 2>/dev/null || true
+
+    if arrstack_is_group_writable "$dir"; then
+      return 0
+    fi
+
+    local message
+    message="${label} directory not group-writable and could not apply ${DATA_DIR_MODE} (collab) — fix manually: ${dir}"
+    collab_warn_permission_failure "$message"
+  }
+
   ensure_dir "$DOWNLOADS_DIR"
   if ((collab_enabled)); then
-    if ! chmod "$DATA_DIR_MODE" "$DOWNLOADS_DIR" 2>/dev/null; then
-      warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${DOWNLOADS_DIR}"
-      arrstack_append_collab_warning "${DOWNLOADS_DIR} is not group-writable; adjust manually so secondary users can write downloads"
-    fi
-    if ! arrstack_is_group_writable "$DOWNLOADS_DIR"; then
-      arrstack_append_collab_warning "${DOWNLOADS_DIR} is not group-writable; adjust manually so secondary users can write downloads"
-    fi
+    collab_remediate_dir "$DOWNLOADS_DIR" "Downloads"
   fi
 
   ensure_dir "$COMPLETED_DIR"
   if ((collab_enabled)); then
-    if ! chmod "$DATA_DIR_MODE" "$COMPLETED_DIR" 2>/dev/null; then
-      warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${COMPLETED_DIR}"
-      arrstack_append_collab_warning "${COMPLETED_DIR} is not group-writable; adjust manually so post-processing can move files"
-    fi
-    if ! arrstack_is_group_writable "$COMPLETED_DIR"; then
-      arrstack_append_collab_warning "${COMPLETED_DIR} is not group-writable; adjust manually so post-processing can move files"
-    fi
+    collab_remediate_dir "$COMPLETED_DIR" "Completed"
   fi
 
   ensure_dir_mode "$ARR_STACK_DIR/scripts" 755
@@ -105,8 +135,6 @@ mkdirs() {
   manage_media_dir() {
     local dir="$1"
     local label="$2"
-    local created=0
-
     if [[ -z "$dir" ]]; then
       return 0
     fi
@@ -115,7 +143,6 @@ mkdirs() {
       warn "${label} directory does not exist: ${dir}"
       warn "Creating it now (may fail if parent directory is missing)"
       if mkdir -p "$dir" 2>/dev/null; then
-        created=1
         arrstack_track_created_media_dir "$dir"
       else
         warn "Could not create ${label} directory"
@@ -124,19 +151,8 @@ mkdirs() {
     fi
 
     if ((collab_enabled)); then
-      if ((created)); then
-        if ! chmod "$DATA_DIR_MODE" "$dir" 2>/dev/null; then
-          warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${dir}"
-          arrstack_append_collab_warning "${dir} is not group-writable; adjust manually so secondary users can write ${label}"
-        elif ! arrstack_is_group_writable "$dir"; then
-          arrstack_append_collab_warning "${dir} is not group-writable; adjust manually so secondary users can write ${label}"
-        fi
-      else
-        if ! arrstack_is_group_writable "$dir"; then
-          warn "${label} directory exists with non-group-writable permissions: ${dir}"
-          arrstack_append_collab_warning "${dir} stays non-group-writable (existing ${label} library); update manually if the media group should write here"
-        fi
-      fi
+      # Attempt remediation before warning so existing libraries are auto-fixed when possible.
+      collab_remediate_dir "$dir" "$label"
     fi
   }
 
@@ -144,7 +160,7 @@ mkdirs() {
   manage_media_dir "$MOVIES_DIR" "Movies"
 
   if [[ -n "${SUBS_DIR:-}" ]]; then
-    manage_media_dir "$SUBS_DIR" "subtitles"
+    manage_media_dir "$SUBS_DIR" "Subtitles"
   fi
 
   if [[ -n "${PUID:-}" && -n "${PGID:-}" ]]; then
