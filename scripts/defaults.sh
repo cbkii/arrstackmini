@@ -20,69 +20,30 @@ if ! declare -f arrstack_var_is_readonly >/dev/null 2>&1; then
 fi
 
 arrstack_setup_defaults() {
-  ARRCONF_DIR="${ARRCONF_DIR:-${REPO_ROOT}/arrconf}"
-
+  local previous_stack_dir="${ARR_STACK_DIR:-}"
   if [[ -z "${ARR_DOCKER_DIR}" && -d "${HOME}/srv/docker-data" ]]; then
     ARR_DOCKER_DIR="${HOME}/srv/docker-data"
     ARR_STACK_DIR="${ARR_STACK_DIR:-${PWD}/arrstack}"
   fi
 
+  if [[ -n "${previous_stack_dir}" && "${previous_stack_dir}" != "${ARR_STACK_DIR}" ]]; then
+    local previous_env_file="${previous_stack_dir}/.env"
+    if [[ "${ARR_ENV_FILE:-}" == "${previous_env_file}" ]]; then
+      ARR_ENV_FILE="${ARR_STACK_DIR}/.env"
+    fi
+  fi
   ARR_ENV_FILE="${ARR_ENV_FILE:-${ARR_STACK_DIR}/.env}"
-  ASSUME_YES="${ASSUME_YES:-0}"
-  FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
-  LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
-  SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands}"
-
-  : "${PUID:=$(id -u)}"
-  : "${PGID:=$(id -g)}"
-  : "${TIMEZONE:=Australia/Sydney}"
-  : "${SUBS_DIR:=}"
 
   if [[ -n "${LAN_DOMAIN_SUFFIX:-}" ]]; then
     LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX#.}"
   fi
 
-  : "${ENABLE_LOCAL_DNS:=0}"
-  : "${ENABLE_CADDY:=0}"
-  : "${ENABLE_CONFIGARR:=1}"
-  : "${ARR_VIDEO_MIN_RES:=720p}"
-  : "${ARR_VIDEO_MAX_RES:=1080p}"
-  : "${ARR_EP_MIN_MB:=250}"
-  : "${ARR_EP_MAX_GB:=5}"
-  : "${ARR_TV_RUNTIME_MIN:=45}"
-  : "${ARR_SEASON_MAX_GB:=30}"
-  : "${ARR_LANG_PRIMARY:=en}"
-  : "${ARR_ENGLISH_ONLY:=1}"
-  : "${ARR_DISCOURAGE_MULTI:=1}"
-  : "${ARR_PENALIZE_HD_X265:=1}"
-  : "${ARR_STRICT_JUNK_BLOCK:=1}"
-  : "${ARR_JUNK_NEGATIVE_SCORE:=-1000}"
-  : "${ARR_X265_HD_NEGATIVE_SCORE:=-200}"
-  : "${ARR_MULTI_NEGATIVE_SCORE:=-50}"
-  : "${ARR_ENGLISH_POSITIVE_SCORE:=50}"
-  : "${SONARR_TRASH_TEMPLATE:=sonarr-v4-quality-profile-web-1080p}"
-  : "${RADARR_TRASH_TEMPLATE:=radarr-v5-quality-profile-hd-bluray-web}"
-  : "${ARR_MBMIN_DECIMALS:=1}"
-  : "${DNS_DISTRIBUTION_MODE:=router}"
-  : "${SETUP_HOST_DNS:=0}"
-  : "${REFRESH_ALIASES:=0}"
-  : "${ARR_COLOR_OUTPUT:=1}"
-
   LOCAL_DNS_SERVICE_ENABLED=0
   : "$LOCAL_DNS_SERVICE_ENABLED" # referenced by other modules after defaults load
 
-  : "${FORCE_REGEN_CADDY_AUTH:=0}"
-  : "${CADDY_IMAGE:=caddy:2.8.4}"
-  : "${CADDY_LAN_CIDRS:=127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
-  : "${CADDY_BASIC_AUTH_USER:=user}"
-  : "${CADDY_BASIC_AUTH_HASH:=}"
-
-  : "${QBT_USER:=admin}"
-  : "${QBT_PASS:=adminadmin}"
   if [[ -z "${QBT_DOCKER_MODS+x}" ]]; then
     QBT_DOCKER_MODS="ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest"
   fi
-  : "${QBT_AUTH_WHITELIST:=127.0.0.1/32,::1/128}"
 
   VUETORRENT_MANUAL_ROOT="/config/vuetorrent"
   VUETORRENT_LSIO_ROOT="/vuetorrent"
@@ -105,15 +66,6 @@ arrstack_setup_defaults() {
   VUETORRENT_STATUS_LEVEL="msg"
   # shellcheck disable=SC2034
   VUETORRENT_VERSION=""
-
-  : "${GLUETUN_IMAGE:=qmcgaw/gluetun:v3.39.1}"
-  : "${QBITTORRENT_IMAGE:=lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415}"
-  : "${SONARR_IMAGE:=lscr.io/linuxserver/sonarr:4.0.15.2941-ls291}"
-  : "${RADARR_IMAGE:=lscr.io/linuxserver/radarr:5.27.5.10198-ls283}"
-  : "${PROWLARR_IMAGE:=lscr.io/linuxserver/prowlarr:latest}"
-  : "${BAZARR_IMAGE:=lscr.io/linuxserver/bazarr:latest}"
-  : "${FLARESOLVERR_IMAGE:=ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
-  : "${CONFIGARR_IMAGE:=ghcr.io/raydak-labs/configarr:latest}"
 
   if [[ -n "${CADDY_DOMAIN_SUFFIX:-}" ]]; then
     CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX#.}"

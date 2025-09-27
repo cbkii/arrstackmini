@@ -26,6 +26,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
   ```bash
   cp arrconf/userr.conf.example ../userr.conf
   ```
+   The installer regenerates `.env` from this file each run—do **not** edit `.env` directly.
 3. **Set your LAN details.** Edit `~/srv/userr.conf` (or `${ARR_BASE}/userr.conf` if you exported a different base) and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
 4. **Add Proton credentials.**
    ```bash
@@ -33,11 +34,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    nano arrconf/proton.auth
    ```
 5. **Run the installer.**
-   ```bash
-   ./arrstack.sh --yes
-   ```
-   The script installs dependencies if needed, renders `${ARR_STACK_DIR}/.env` (default `~/srv/arrstack/.env`), and launches the stack with Docker Compose from that directory.
-   Compose reads that `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
+  ```bash
+  ./arrstack.sh --yes
+  ```
+   The script installs dependencies if needed, renders `${ARR_STACK_DIR}/.env` from `arrconf/userr.conf.defaults.sh` + `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`), and launches the stack with Docker Compose from that directory.
+   Compose reads the generated `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
 6. **Open the WebUIs directly by IP.** As soon as the installer finishes, browse to each service using your Pi’s LAN IP (example `192.168.1.50`). The installer refuses to expose ports until `LAN_IP` is a private address, so set the value and re-run if you skipped it the first time:
    - `http://192.168.1.50:8080` (qBittorrent)
    - `http://192.168.1.50:8989` (Sonarr)
@@ -56,7 +57,7 @@ You should see an HTTP 200/302 response. If not, re-run the installer and confir
 
 ### VueTorrent WebUI modes
 
-- **Default (LSIO mod):** `QBT_DOCKER_MODS` defaults to the VueTorrent LSIO Docker mod so `/vuetorrent` is provisioned automatically inside the container. Leave the value in `.env`/`userr.conf` to stay on this mode.
+- **Default (LSIO mod):** `QBT_DOCKER_MODS` defaults to the VueTorrent LSIO Docker mod so `/vuetorrent` is provisioned automatically inside the container. Leave the value in `${ARR_BASE}/userr.conf` and rerun `./arrstack.sh` to stay on this mode.
 - **Manual install:** Clear `QBT_DOCKER_MODS`, rerun `./arrstack.sh`, and the installer downloads VueTorrent into `/config/vuetorrent`, verifies `public/index.html` and `version.txt`, and points qBittorrent at that folder.
 - **Switch safely:** Changing `QBT_DOCKER_MODS` and rerunning the installer flips modes idempotently. The script rewrites qBittorrent’s `WebUI\RootFolder`, removes stale manual files when the mod is active, and disables the Alternate WebUI if the manual folder is incomplete so the default qBittorrent UI still loads.
 - **Do not mix:** Avoid copying VueTorrent files by hand once the installer runs. Update `QBT_DOCKER_MODS` instead so the scripts keep qBittorrent aligned with the chosen mode.
@@ -72,13 +73,13 @@ You should see an HTTP 200/302 response. If not, re-run the installer and confir
 
 ## Configarr (TRaSH-Guides Sync)
 
-Configarr runs as a one-shot helper to import TRaSH-Guides quality definitions, profiles, and custom formats into Sonarr v4 and Radarr v5. It is enabled by default; set `ENABLE_CONFIGARR=0` in `userr.conf` (or your environment) to omit the container on the next install run. Run Configarr only after Sonarr and Radarr have completed their first boot and database migrations.
+Configarr runs as a one-shot helper to import TRaSH-Guides quality definitions, profiles, and custom formats into Sonarr v4 and Radarr v5. It is enabled by default; set `ENABLE_CONFIGARR=0` in `${ARR_BASE}/userr.conf` to omit the container on the next install run. Run Configarr only after Sonarr and Radarr have completed their first boot and database migrations.
 
 - The installer seeds `docker-data/configarr/config.yml` with the default TRaSH-Guides templates and creates `docker-data/configarr/secrets.yml` with placeholder API keys. Populate that secrets file (or swap to `!env` in `config.yml`) before syncing.
 - Trigger a manual sync with `arr.config.sync` (added to `.aliasarr` when Configarr is enabled) or directly via `docker compose run --rm configarr` from the stack directory. The container exits after a single run.
 - To schedule recurring updates on the host, add a cron entry such as:<br>`10 3 * * SUN cd /path/to/arrstack && docker compose run --rm configarr >> logs/configarr-sync.log 2>&1`
 - Local custom formats can be stored in `docker-data/configarr/cfs` and referenced from `config.yml` as needed.
-- Update `CONFIGARR_IMAGE` in `.env`/`userr.conf` if you want to pin a specific Configarr image tag.
+- Update `CONFIGARR_IMAGE` in `${ARR_BASE}/userr.conf` if you want to pin a specific Configarr image tag (the installer writes the generated `.env`).
 
 ### Configarr policy (1080p-focused baseline)
 
@@ -97,7 +98,7 @@ Arrstack seeds Configarr with a conservative WEB/Bluray 720p–1080p window, MB/
 
 **Tweaking the policy**
 
-1. Adjust the variables below in `userr.conf` or your `.env`.
+1. Adjust the variables below in `${ARR_BASE}/userr.conf` (the installer regenerates `.env`).
 2. Re-run the installer or `arr.config.sync` to apply regenerated templates.
 3. Review `/docker-data/configarr/cfs/` to ensure no manual edits were overwritten.
 

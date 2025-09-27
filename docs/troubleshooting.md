@@ -23,7 +23,7 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
   docker exec qbittorrent test -f /vuetorrent/public/index.html   # LSIO mod
   docker exec qbittorrent test -f /config/vuetorrent/public/index.html   # Manual install
   ```
-  Only one of the checks should pass based on the configured mode. Edit `.env`/`userr.conf` and rerun `./arrstack.sh` if the wrong path succeeds.
+  Only one of the checks should pass based on the configured mode. Edit `${ARR_BASE}/userr.conf` and rerun `./arrstack.sh` if the wrong path succeeds.
 
 ### Symptom: Port 53 already in use on the Pi
 - **Fix:** Run the host helper to disable `systemd-resolved` and start the `local_dns` container.

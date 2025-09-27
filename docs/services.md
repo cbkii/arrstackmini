@@ -10,14 +10,14 @@ Knowing the entry points makes first verification easy and helps you decide whic
 ## Do
 | Service | Default LAN URL | Credentials at first boot | Change ports in |
 | --- | --- | --- | --- |
-| [qBittorrent](https://www.qbittorrent.org/) | `http://<LAN_IP>:8080` | Uses the username/password stored in `.env` (`QBT_USER`/`QBT_PASS`). Rotate them on first login under **Tools → Options → Web UI**. | `.env` (`QBT_HTTP_PORT_HOST`) or `${ARR_BASE}/userr.conf` overrides |
-| [Sonarr](https://sonarr.tv/) | `http://<LAN_IP>:8989` | Default login disabled; set your own under **Settings → General → Security**. | `.env` (`SONARR_PORT`) |
-| [Radarr](https://radarr.video/) | `http://<LAN_IP>:7878` | No password by default; enable authentication in **Settings → General**. | `.env` (`RADARR_PORT`) |
-| [Prowlarr](https://prowlarr.com/) | `http://<LAN_IP>:9696` | Prompts for setup wizard; create an admin account during onboarding. | `.env` (`PROWLARR_PORT`) |
-| [Bazarr](https://www.bazarr.media/) | `http://<LAN_IP>:6767` | Set a password at **Settings → General → Authentication**. | `.env` (`BAZARR_PORT`) |
-| [FlareSolverr](https://flaresolverr.com/) | `http://<LAN_IP>:8191` | No UI; used by other services. Protect access when exposing remotely. | `.env` (`FLARESOLVERR_PORT`) |
-| [Gluetun control API](https://github.com/qdm12/gluetun) | `http://127.0.0.1:8000` (host loopback) | Requires the API key stored in `.env` (`GLUETUN_API_KEY`). | `.env` (`GLUETUN_CONTROL_PORT`) |
-| [Caddy status page](https://caddyserver.com/) *(optional)* | `https://caddy.<suffix>` (if `ENABLE_CADDY=1`) | LAN clients bypass basic auth. Regenerate remote credentials with `./arrstack.sh --rotate-caddy-auth`. | `.env` (`CADDY_DOMAIN_SUFFIX`) |
+| [qBittorrent](https://www.qbittorrent.org/) | `http://<LAN_IP>:8080` | Uses the username/password stored in the generated `.env` (`QBT_USER`/`QBT_PASS`). Set them via `${ARR_BASE}/userr.conf` and rerun the installer. | `${ARR_BASE}/userr.conf` (`QBT_HTTP_PORT_HOST`) |
+| [Sonarr](https://sonarr.tv/) | `http://<LAN_IP>:8989` | Default login disabled; set your own under **Settings → General → Security**. | `${ARR_BASE}/userr.conf` (`SONARR_PORT`) |
+| [Radarr](https://radarr.video/) | `http://<LAN_IP>:7878` | No password by default; enable authentication in **Settings → General**. | `${ARR_BASE}/userr.conf` (`RADARR_PORT`) |
+| [Prowlarr](https://prowlarr.com/) | `http://<LAN_IP>:9696` | Prompts for setup wizard; create an admin account during onboarding. | `${ARR_BASE}/userr.conf` (`PROWLARR_PORT`) |
+| [Bazarr](https://www.bazarr.media/) | `http://<LAN_IP>:6767` | Set a password at **Settings → General → Authentication**. | `${ARR_BASE}/userr.conf` (`BAZARR_PORT`) |
+| [FlareSolverr](https://flaresolverr.com/) | `http://<LAN_IP>:8191` | No UI; used by other services. Protect access when exposing remotely. | `${ARR_BASE}/userr.conf` (`FLARESOLVERR_PORT`) |
+| [Gluetun control API](https://github.com/qdm12/gluetun) | `http://127.0.0.1:8000` (host loopback) | Requires the API key stored in the generated `.env` (`GLUETUN_API_KEY`). Rotate it with `./arrstack.sh --rotate-api-key`. | `${ARR_BASE}/userr.conf` (`GLUETUN_CONTROL_PORT`) |
+| [Caddy status page](https://caddyserver.com/) *(optional)* | `https://caddy.<suffix>` (if `ENABLE_CADDY=1`) | LAN clients bypass basic auth. Regenerate remote credentials with `./arrstack.sh --rotate-caddy-auth`. | `${ARR_BASE}/userr.conf` (`CADDY_DOMAIN_SUFFIX`) |
 
 Notes:
 - Replace `<LAN_IP>` with the address detected by the installer (example `192.168.1.50`).
