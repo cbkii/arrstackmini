@@ -142,6 +142,20 @@ Configarr:
   Secrets:     ${configarr_secrets}
 
 CONFIGARR
+    if [[ -n "${CONFIGARR_POLICY_RESOLUTION:-}" ]]; then
+      cat <<POLICY
+  Policy:
+    Resolutions: ${CONFIGARR_POLICY_RESOLUTION}
+    Episode cap: ${CONFIGARR_POLICY_EP_GB} GB (~${CONFIGARR_POLICY_EP_MBMIN} MB/min)
+    Season target: ${CONFIGARR_POLICY_SEASON_GB} GB (informational)
+    Runtime basis: ${CONFIGARR_POLICY_RUNTIME} min
+    Language bias (${CONFIGARR_POLICY_LANG}): ${CONFIGARR_POLICY_ENGLISH}
+    Multi penalty: ${CONFIGARR_POLICY_MULTI}
+    x265 HD penalty: ${CONFIGARR_POLICY_X265}
+    Junk reinforcement: ${CONFIGARR_POLICY_JUNK}
+
+POLICY
+    fi
     if [[ -f "$configarr_secrets" ]] && grep -Fq 'REPLACE_WITH_' "$configarr_secrets"; then
       warn "Add Sonarr/Radarr API keys to ${configarr_secrets} then rerun arr.config.sync."
     fi
