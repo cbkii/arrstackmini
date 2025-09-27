@@ -80,6 +80,48 @@ Configarr runs as a one-shot helper to import TRaSH-Guides quality definitions, 
 - Local custom formats can be stored in `docker-data/configarr/cfs` and referenced from `config.yml` as needed.
 - Update `CONFIGARR_IMAGE` in `.env`/`userr.conf` if you want to pin a specific Configarr image tag.
 
+### Configarr policy (1080p-focused baseline)
+
+Arrstack seeds Configarr with a conservative WEB/Bluray 720p–1080p window, MB/minute caps, and optional language/junk reinforcements:
+
+- Size guardrails: Sonarr & Radarr quality definitions are clamped to the derived per-minute ceiling (default `ARR_EP_MAX_GB=5` over `ARR_TV_RUNTIME_MIN=45`).
+- Language bias: opt-in penalties for non-English or multi-audio releases, plus optional x265 discouragement for HD tiers.
+- Junk filters: stronger negative scores for LQ, Microsized/Upscaled, and other noisy releases when `ARR_STRICT_JUNK_BLOCK=1`.
+- Local overrides live under `docker-data/configarr/cfs/` so advanced users can edit YAML directly; deleting a file lets the installer regenerate it on the next run.
+
+**Limitations**
+
+- Sonarr does not expose a true season-level size cap; `ARR_SEASON_MAX_GB` is informational only.
+- Radarr guardrails reuse the same MB/minute heuristic—double-check before applying to large remux libraries.
+- Negative scores influence import priority but cannot completely block releases if nothing else matches.
+
+**Tweaking the policy**
+
+1. Adjust the variables below in `userr.conf` or your `.env`.
+2. Re-run the installer or `arr.config.sync` to apply regenerated templates.
+3. Review `/docker-data/configarr/cfs/` to ensure no manual edits were overwritten.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARR_VIDEO_MIN_RES` / `ARR_VIDEO_MAX_RES` | `720p` / `1080p` | Lowest/highest qualities referenced in local overrides. |
+| `ARR_EP_MAX_GB` | `5` | Single-episode size ceiling; drives the MB/minute maximum. |
+| `ARR_EP_MIN_MB` | `250` | Lower bound used to compute the MB/minute minimum. |
+| `ARR_TV_RUNTIME_MIN` | `45` | Expected runtime (minutes) when deriving MB/minute caps. |
+| `ARR_SEASON_MAX_GB` | `30` | Informational season target shown in the summary. |
+| `ARR_ENGLISH_ONLY` | `1` | Reinforce English-only scoring (penalises non-English releases). |
+| `ARR_DISCOURAGE_MULTI` | `1` | Apply a score penalty to multi-audio releases. |
+| `ARR_PENALIZE_HD_X265` | `1` | Apply a mild negative score to HD x265 encodes. |
+| `ARR_STRICT_JUNK_BLOCK` | `1` | Enable LQ/Upscaled negative reinforcements. |
+| `ARR_JUNK_NEGATIVE_SCORE` | `-1000` | Score applied to LQ/Upscaled CFs when strict junk blocking is enabled. |
+| `ARR_MULTI_NEGATIVE_SCORE` | `-50` | Score applied to MULTi releases when discouraged. |
+| `ARR_X265_HD_NEGATIVE_SCORE` | `-200` | Score applied to HD x265 releases when penalised. |
+| `ARR_ENGLISH_POSITIVE_SCORE` | `50` | Magnitude of the language penalty (converted to a negative score for “Not English”). |
+| `ARR_MBMIN_DECIMALS` | `1` | Decimal precision used when rounding the MB/minute limits. |
+| `ARR_LANG_PRIMARY` | `en` | Informational primary language shown in the summary. |
+| `SONARR_TRASH_TEMPLATE` | `sonarr-v4-quality-profile-web-1080p` | Base TRaSH Sonarr quality profile template. |
+| `RADARR_TRASH_TEMPLATE` | `radarr-v5-quality-profile-hd-bluray-web` | Base TRaSH Radarr quality profile template. |
+
+
 ## Permission profiles
 `arrstack.sh` defaults to the **strict** permission profile so secrets stay private (files `600`, data directories `700`, umask `0077`). Switch to the **collab** profile when you run multiple media managers, SMB/NFS shares, or post-processing scripts that need to write into the stack:
 
