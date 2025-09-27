@@ -9,7 +9,13 @@ ARR_BASE="${HOME}/srv"                 # Root directory for generated stack file
 ARR_STACK_DIR="${ARR_BASE}/arrstack"  # Location for docker-compose.yml, scripts, and aliases
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"  # Path to the generated .env secrets file
 ARR_DOCKER_DIR="${ARR_BASE}/docker-data"  # Docker volumes and persistent data storage
+# ARR_USERCONF_PATH="/root/srv/userr.conf"  # Optional: relocate this file outside ${ARR_BASE}
 # ARRCONF_DIR="${HOME}/.config/arrstack"  # Optional: relocate Proton creds outside the repo
+
+# --- Logging and output ---
+ARR_LOG_DIR="/root/srv/arrstack/logs"           # Directory for runtime/service logs (default: /root/srv/arrstack/logs)
+ARR_INSTALL_LOG="/root/srv/arrstack/logs/arrstack-install.log"   # Installer run log location (default: /root/srv/arrstack/logs/arrstack-install.log)
+ARR_COLOR_OUTPUT="1"       # 1 keeps colorful CLI output, set 0 to disable ANSI colors
 
 # --- Permissions ---
 ARR_PERMISSION_PROFILE="strict"        # strict keeps secrets 600/700, collab enables group read/write (660/770)
@@ -63,6 +69,14 @@ PROWLARR_PORT="9696"                   # Prowlarr WebUI port exposed on the LAN 
 BAZARR_PORT="6767"                     # Bazarr WebUI port exposed on the LAN (default: 6767)
 FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on the LAN (default: 8191)
 
+# --- ProtonVPN port-forward timing (advanced) ---
+PF_MAX_TOTAL_WAIT="60"          # Max seconds to wait for a forwarded port before failing (default: 60)
+PF_POLL_INTERVAL="5"            # Seconds between Proton API checks while waiting (default: 5)
+PF_CYCLE_AFTER="30"                # Seconds before retrying with a new Proton server (default: 30)
+PF_ASYNC_MAX_TOTAL_WAIT="45"    # Async helper max wait time when rotating (default: 45)
+PF_ASYNC_POLL_INTERVAL="5"      # Async helper polling interval in seconds (default: 5)
+PF_ASYNC_CYCLE_AFTER="30"          # Async helper retry interval for fresh ports (default: 30)
+
 # --- Container images (advanced) ---
 # GLUETUN_IMAGE="qmcgaw/gluetun:v3.39.1"                     # Override the Gluetun container tag
 # QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415"  # Override the qBittorrent container tag
@@ -72,6 +86,27 @@ FLARESOLVERR_PORT="8191"               # FlareSolverr service port exposed on th
 # BAZARR_IMAGE="lscr.io/linuxserver/bazarr:latest"                    # Override the Bazarr container tag
 # FLARESOLVERR_IMAGE="ghcr.io/flaresolverr/flaresolverr:v3.3.21"      # Override the FlareSolverr container tag
 # CONFIGARR_IMAGE="ghcr.io/raydak-labs/configarr:latest"            # Override the Configarr container tag
+# CADDY_IMAGE="caddy:2.8.4"                      # Override the Caddy reverse-proxy container tag
+
+# --- ConfigArr quality/profile defaults ---
+ARR_VIDEO_MIN_RES="720p"         # Minimum allowed resolution (default: 720p)
+ARR_VIDEO_MAX_RES="1080p"         # Maximum allowed resolution (default: 1080p)
+ARR_EP_MIN_MB="250"                 # Minimum episode size in MB (default: 250)
+ARR_EP_MAX_GB="5"                 # Maximum episode size in GB (default: 5)
+ARR_TV_RUNTIME_MIN="45"       # Minimum runtime to treat content as standard TV (default: 45)
+ARR_SEASON_MAX_GB="30"         # Cap on total season size in GB (default: 30)
+ARR_LANG_PRIMARY="en"           # Preferred audio/subtitle language (default: en)
+ARR_ENGLISH_ONLY="1"           # 1 prefers English-only releases (default: 1)
+ARR_DISCOURAGE_MULTI="1"   # 1 penalises multi-audio releases (default: 1)
+ARR_PENALIZE_HD_X265="1"   # 1 lowers HD x265 release scores (default: 1)
+ARR_STRICT_JUNK_BLOCK="1" # 1 fully blocks junk releases (default: 1)
+ARR_JUNK_NEGATIVE_SCORE="-1000"         # Score applied to junk terms (default: -1000)
+ARR_X265_HD_NEGATIVE_SCORE="-200"   # Score penalty for HD x265 (default: -200)
+ARR_MULTI_NEGATIVE_SCORE="-50"       # Score penalty for multi-audio releases (default: -50)
+ARR_ENGLISH_POSITIVE_SCORE="50"   # Score bonus for English releases (default: 50)
+SONARR_TRASH_TEMPLATE="sonarr-v4-quality-profile-web-1080p" # TRaSH template slug ConfigArr applies to Sonarr (default: sonarr-v4-quality-profile-web-1080p)
+RADARR_TRASH_TEMPLATE="radarr-v5-quality-profile-hd-bluray-web" # TRaSH template slug ConfigArr applies to Radarr (default: radarr-v5-quality-profile-hd-bluray-web)
+ARR_MBMIN_DECIMALS="1"       # Decimals precision for minimum size rules (default: 1)
 
 # --- Behaviour toggles ---
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs
