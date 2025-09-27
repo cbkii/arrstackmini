@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR_DEFAULT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STACK_DIR="${ARR_STACK_DIR:-${STACK_DIR_DEFAULT}}"
 if ! STACK_DIR="$(cd "${STACK_DIR}" 2>/dev/null && pwd)"; then
-  echo "Stack directory not found: ${ARR_STACK_DIR:-${STACK_DIR_DEFAULT}}" >&2
+  echo "Stack directory not found: ${STACK_DIR}" >&2
   exit 1
 fi
 

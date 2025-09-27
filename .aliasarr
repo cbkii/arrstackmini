@@ -936,9 +936,9 @@ arr.flaresolverr.logs() { docker logs -f flaresolverr; }
 arr.flaresolverr.restart() { docker restart flaresolverr; }
 
 # VPN Auto-Reconnect helpers
-arr.vpn.auto.status() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" --status; }
-arr.vpn.auto.enable() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" --enable; }
-arr.vpn.auto.disable() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" --disable; }
+arr.vpn.auto.status() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" status; }
+arr.vpn.auto.enable() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" enable; }
+arr.vpn.auto.disable() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" disable; }
 arr.vpn.auto.pause() { touch "${ARR_STACK_DIR}/.vpn-reconnect-pause"; echo "VPN auto-reconnect temporarily paused"; }
 arr.vpn.auto.kill() { touch "${ARR_STACK_DIR}/.vpn-reconnect-kill-24h"; echo "VPN auto-reconnect disabled for 24 hours"; }
 arr.vpn.auto.logs() { 
