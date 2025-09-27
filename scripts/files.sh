@@ -390,6 +390,7 @@ write_env() {
     write_env_kv "GLUETUN_API_KEY" "$GLUETUN_API_KEY"
     write_env_kv "GLUETUN_CONTROL_PORT" "$GLUETUN_CONTROL_PORT"
     write_env_kv "SERVER_COUNTRIES" "$SERVER_COUNTRIES"
+    write_env_kv "SERVER_HOSTNAMES" "$SERVER_HOSTNAMES"
     write_env_kv "GLUETUN_FIREWALL_INPUT_PORTS" "$firewall_ports_csv"
     write_env_kv "GLUETUN_FIREWALL_OUTBOUND_SUBNETS" "$gluetun_firewall_outbound"
     printf '\n'
@@ -512,6 +513,7 @@ services:
       OPENVPN_CUSTOM_CONFIG: ""
       FREE_ONLY: "off"
       SERVER_COUNTRIES: ${SERVER_COUNTRIES}
+      SERVER_HOSTNAMES: ${SERVER_HOSTNAMES}
       VPN_PORT_FORWARDING: "on"
       VPN_PORT_FORWARDING_PROVIDER: protonvpn
       HTTP_CONTROL_SERVER_ADDRESS: 0.0.0.0:${GLUETUN_CONTROL_PORT}

@@ -60,7 +60,7 @@ TIMEZONE="${TIMEZONE:-Australia/Sydney}"
 LAN_IP="${LAN_IP:-}"
 LOCALHOST_IP="${LOCALHOST_IP:-127.0.0.1}"
 SERVER_COUNTRIES="${SERVER_COUNTRIES:-Netherlands}"
-# SERVER_NAMES=""  # Optionally pin Proton server hostnames if PF keeps returning 0 (comma-separated list)
+SERVER_HOSTNAMES="${SERVER_HOSTNAMES:-}"
 PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES:-${SERVER_COUNTRIES}}"
 
 # Domain suffix used by optional DNS/Caddy hostnames (default to RFC 8375 recommendation)
@@ -171,6 +171,7 @@ GLUETUN_API_KEY="${GLUETUN_API_KEY:-}"
 PF_MAX_TOTAL_WAIT="${PF_MAX_TOTAL_WAIT:-60}"
 PF_POLL_INTERVAL="${PF_POLL_INTERVAL:-5}"
 PF_CYCLE_AFTER="${PF_CYCLE_AFTER:-30}"
+PF_MAX_SERVER_RETRIES="${PF_MAX_SERVER_RETRIES:-2}"
 PF_ASYNC_MAX_TOTAL_WAIT="${PF_ASYNC_MAX_TOTAL_WAIT:-45}"
 PF_ASYNC_POLL_INTERVAL="${PF_ASYNC_POLL_INTERVAL:-5}"
 PF_ASYNC_CYCLE_AFTER="${PF_ASYNC_CYCLE_AFTER:-30}"
@@ -458,7 +459,7 @@ LOCALHOST_IP="127.0.0.1"               # Loopback used by the Gluetun control AP
 LAN_DOMAIN_SUFFIX="${LAN_DOMAIN_SUFFIX}"          # Suffix appended to service hostnames (default: ${LAN_DOMAIN_SUFFIX})
 CADDY_DOMAIN_SUFFIX="${CADDY_DOMAIN_SUFFIX}"  # Override Caddy hostname suffix independently of LAN DNS (default: ${CADDY_DOMAIN_SUFFIX})
 SERVER_COUNTRIES="${SERVER_COUNTRIES}"              # ProtonVPN exit country list (default: ${SERVER_COUNTRIES})
-# SERVER_NAMES=""                          # Optionally pin Proton server hostnames (comma-separated) if PF stays at 0
+SERVER_HOSTNAMES="${SERVER_HOSTNAMES:-}"                      # Explicitly pin ProtonVPN P2P server hostnames (comma-separated), overrides SERVER_COUNTRIES
 PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES}"  # Optional rotation order for arr.vpn switch (default mirrors SERVER_COUNTRIES)
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT}"            # Host port that exposes the Gluetun control API (default: ${GLUETUN_CONTROL_PORT})
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS}"                   # Advanced: enable the optional dnsmasq container (0/1, default: ${ENABLE_LOCAL_DNS})
