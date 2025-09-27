@@ -50,6 +50,24 @@ install_vuetorrent() {
   local staging_dir=""
   local backup_dir=""
 
+  # Cleanup function for temporary resources
+  vuetorrent_cleanup() {
+    if [[ -n "$temp_zip" ]]; then
+      rm -f "$temp_zip" 2>/dev/null || true
+    fi
+    if [[ -n "$temp_extract" && -d "$temp_extract" ]]; then
+      rm -rf "$temp_extract" 2>/dev/null || true
+    fi
+    if [[ -n "$staging_dir" && -d "$staging_dir" ]]; then
+      rm -rf "$staging_dir" 2>/dev/null || true
+    fi
+    if [[ -n "$backup_dir" && -d "$backup_dir" && ! -d "$manual_dir" ]]; then
+      mv "$backup_dir" "$manual_dir" 2>/dev/null || rm -rf "$backup_dir" 2>/dev/null || true
+    fi
+  }
+
+  trap 'vuetorrent_cleanup' EXIT INT TERM
+
   while true; do
     if ! check_dependencies jq unzip; then
       warn "  Missing jq or unzip; skipping VueTorrent download"
@@ -142,22 +160,26 @@ install_vuetorrent() {
     break
   done
 
+  # Manual cleanup before trap fires to avoid redundant operations
   if [[ -n "$temp_zip" ]]; then
     rm -f "$temp_zip" 2>/dev/null || true
+    temp_zip=""
   fi
   if [[ -n "$temp_extract" ]]; then
     rm -rf "$temp_extract" 2>/dev/null || true
+    temp_extract=""
   fi
   if [[ -n "$staging_dir" && -d "$staging_dir" ]]; then
     rm -rf "$staging_dir" 2>/dev/null || true
-  fi
-  if [[ -n "$backup_dir" && -d "$backup_dir" && ! -d "$manual_dir" ]]; then
-    mv "$backup_dir" "$manual_dir" 2>/dev/null || rm -rf "$backup_dir" 2>/dev/null || true
+    staging_dir=""
   fi
 
   if ((install_success)); then
     chown -R "${PUID}:${PGID}" "$manual_dir" 2>/dev/null || true
   fi
+
+  # Clear the trap before normal function completion
+  trap - EXIT INT TERM
 
   local manual_complete=0
   if vuetorrent_manual_is_complete "$manual_dir"; then

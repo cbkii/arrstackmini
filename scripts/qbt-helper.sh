@@ -46,7 +46,7 @@ resolve_docker_data() {
 }
 
 temporary_password() {
-  docker logs "$CONTAINER_NAME" 2>&1 \
+  docker logs "${CONTAINER_NAME}" 2>&1 \
     | grep "temporary password" \
     | tail -1 \
     | sed 's/.*temporary password[^:]*: *//' \

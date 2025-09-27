@@ -643,7 +643,7 @@ YAML
       LANG: en_US.UTF-8
 YAML
     if [[ -n "${QBT_DOCKER_MODS}" ]]; then
-      printf '      DOCKER_MODS: ${QBT_DOCKER_MODS}\n' >>"$tmp"
+      printf "      DOCKER_MODS: \${QBT_DOCKER_MODS}\n" >>"$tmp"
     fi
     cat <<'YAML' >>"$tmp"
     volumes:
