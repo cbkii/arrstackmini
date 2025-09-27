@@ -15,7 +15,7 @@ The main installer orchestrates the whole build:
 - Runs preflight checks that ensure Docker, Docker Compose v2, `curl`, `jq`, `openssl`, and your Proton credentials are present before anything else happens.【F:scripts/preflight.sh†L1-L74】【F:scripts/preflight.sh†L90-L128】
 - Creates required directories with safe permissions, migrates legacy files, and cleans old Compose projects before writing new assets.【F:scripts/files.sh†L12-L87】【F:scripts/migrations.sh†L1-L46】【F:scripts/services.sh†L44-L69】
 - Generates secrets and configuration files: `.env`, `docker-compose.yml`, Gluetun hook scripts, Caddy credentials, helper aliases, and the qBittorrent config (now written in a single atomic pass to avoid drift).【F:arrstack.sh†L102-L114】【F:scripts/files.sh†L40-L345】【F:scripts/files.sh†L604-L672】【F:scripts/files.sh†L674-L921】【F:scripts/files.sh†L1132-L1273】【F:scripts/aliases.sh†L1-L62】
-- Starts containers with retries, installs the VueTorrent WebUI theme, waits for Gluetun to report healthy, and records the forwarded port before launching other services.【F:scripts/services.sh†L1-L199】【F:scripts/services.sh†L233-L403】
+- Starts containers with retries, enforces the chosen VueTorrent mode (LSIO mod or manual download), waits for Gluetun to report healthy, and records the forwarded port before launching other services.【F:scripts/services.sh†L1-L199】【F:scripts/services.sh†L233-L403】
 - Runs LAN diagnostics when local DNS is enabled and prints a summary of URLs, credentials, and next steps.【F:arrstack.sh†L123-L143】【F:scripts/summary.sh†L1-L78】
 
 ### Core library modules

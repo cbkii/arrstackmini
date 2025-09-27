@@ -34,6 +34,21 @@ ${qbt_pass_msg}
 
 QBT_INFO
 
+  local vt_summary_message="${VUETORRENT_STATUS_MESSAGE:-}"
+  if [[ -z "$vt_summary_message" ]]; then
+    if [[ "${VUETORRENT_MODE}" == "manual" ]]; then
+      vt_summary_message="VueTorrent manual mode active at ${VUETORRENT_ROOT}."
+    else
+      vt_summary_message="VueTorrent via LSIO Docker mod (WebUI root ${VUETORRENT_ROOT})."
+    fi
+  fi
+
+  if [[ "${VUETORRENT_STATUS_LEVEL:-msg}" == "warn" ]]; then
+    warn "$vt_summary_message"
+  else
+    msg "$vt_summary_message"
+  fi
+
   cat <<'DIRECT'
 Direct LAN URLs (ipdirect profile enabled):
 DIRECT

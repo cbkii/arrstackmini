@@ -45,7 +45,7 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
   automatically add your LAN `/24` from `LAN_IP`.
 
 ### Media apps and images
-- **`QBT_DOCKER_MODS`** – Vuetorrent skin for qBittorrent. Keep default unless you know you need a different mod.
+- **`QBT_DOCKER_MODS`** – Controls the VueTorrent WebUI mode. Keep the default LSIO mod value to mount `/vuetorrent` automatically inside the container; set it blank to download VueTorrent into `/config/vuetorrent` on each run.
 - **Image tags (`*_IMAGE`)** – pinned to known-good releases. Update only after reading [Version management](VERSION_MANAGEMENT.md).
 - **Service ports (`*_PORT`)** – exposed on the LAN as `http://LAN_IP:PORT` by default. Enabling Caddy adds HTTPS frontends on 80/443.
 
