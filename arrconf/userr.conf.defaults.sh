@@ -243,6 +243,10 @@ REFRESH_ALIASES="${REFRESH_ALIASES:-0}"
 # -----------------------------------------------------------------------------
 
 ARRSTACK_USERCONF_TEMPLATE_VARS=(
+  ARR_USERCONF_PATH
+  ARR_LOG_DIR
+  ARR_INSTALL_LOG
+  ARR_COLOR_OUTPUT
   TIMEZONE
   LAN_DOMAIN_SUFFIX
   CADDY_DOMAIN_SUFFIX
@@ -268,6 +272,12 @@ ARRSTACK_USERCONF_TEMPLATE_VARS=(
   PROWLARR_PORT
   BAZARR_PORT
   FLARESOLVERR_PORT
+  PF_MAX_TOTAL_WAIT
+  PF_POLL_INTERVAL
+  PF_CYCLE_AFTER
+  PF_ASYNC_MAX_TOTAL_WAIT
+  PF_ASYNC_POLL_INTERVAL
+  PF_ASYNC_CYCLE_AFTER
   GLUETUN_IMAGE
   QBITTORRENT_IMAGE
   SONARR_IMAGE
@@ -276,6 +286,25 @@ ARRSTACK_USERCONF_TEMPLATE_VARS=(
   BAZARR_IMAGE
   FLARESOLVERR_IMAGE
   CONFIGARR_IMAGE
+  CADDY_IMAGE
+  ARR_VIDEO_MIN_RES
+  ARR_VIDEO_MAX_RES
+  ARR_EP_MIN_MB
+  ARR_EP_MAX_GB
+  ARR_TV_RUNTIME_MIN
+  ARR_SEASON_MAX_GB
+  ARR_LANG_PRIMARY
+  ARR_ENGLISH_ONLY
+  ARR_DISCOURAGE_MULTI
+  ARR_PENALIZE_HD_X265
+  ARR_STRICT_JUNK_BLOCK
+  ARR_JUNK_NEGATIVE_SCORE
+  ARR_X265_HD_NEGATIVE_SCORE
+  ARR_MULTI_NEGATIVE_SCORE
+  ARR_ENGLISH_POSITIVE_SCORE
+  SONARR_TRASH_TEMPLATE
+  RADARR_TRASH_TEMPLATE
+  ARR_MBMIN_DECIMALS
 )
 
 ARRSTACK_USERCONF_IMPLICIT_VARS=(
@@ -383,7 +412,13 @@ ARR_BASE="${HOME}/srv"                 # Root directory for generated stack file
 ARR_STACK_DIR="${ARR_BASE}/arrstack"  # Location for docker-compose.yml, scripts, and aliases
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"  # Path to the generated .env secrets file
 ARR_DOCKER_DIR="${ARR_BASE}/docker-data"  # Docker volumes and persistent data storage
+# ARR_USERCONF_PATH="${ARR_USERCONF_PATH}"  # Optional: relocate this file outside ${ARR_BASE}
 # ARRCONF_DIR="${HOME}/.config/arrstack"  # Optional: relocate Proton creds outside the repo
+
+# --- Logging and output ---
+ARR_LOG_DIR="${ARR_LOG_DIR}"           # Directory for runtime/service logs (default: ${ARR_LOG_DIR})
+ARR_INSTALL_LOG="${ARR_INSTALL_LOG}"   # Installer run log location (default: ${ARR_INSTALL_LOG})
+ARR_COLOR_OUTPUT="${ARR_COLOR_OUTPUT}"       # 1 keeps colorful CLI output, set 0 to disable ANSI colors
 
 # --- Permissions ---
 ARR_PERMISSION_PROFILE="strict"        # strict keeps secrets 600/700, collab enables group read/write (660/770)
@@ -437,6 +472,14 @@ PROWLARR_PORT="${PROWLARR_PORT}"                   # Prowlarr WebUI port exposed
 BAZARR_PORT="${BAZARR_PORT}"                     # Bazarr WebUI port exposed on the LAN (default: ${BAZARR_PORT})
 FLARESOLVERR_PORT="${FLARESOLVERR_PORT}"               # FlareSolverr service port exposed on the LAN (default: ${FLARESOLVERR_PORT})
 
+# --- ProtonVPN port-forward timing (advanced) ---
+PF_MAX_TOTAL_WAIT="${PF_MAX_TOTAL_WAIT}"          # Max seconds to wait for a forwarded port before failing (default: ${PF_MAX_TOTAL_WAIT})
+PF_POLL_INTERVAL="${PF_POLL_INTERVAL}"            # Seconds between Proton API checks while waiting (default: ${PF_POLL_INTERVAL})
+PF_CYCLE_AFTER="${PF_CYCLE_AFTER}"                # Seconds before retrying with a new Proton server (default: ${PF_CYCLE_AFTER})
+PF_ASYNC_MAX_TOTAL_WAIT="${PF_ASYNC_MAX_TOTAL_WAIT}"    # Async helper max wait time when rotating (default: ${PF_ASYNC_MAX_TOTAL_WAIT})
+PF_ASYNC_POLL_INTERVAL="${PF_ASYNC_POLL_INTERVAL}"      # Async helper polling interval in seconds (default: ${PF_ASYNC_POLL_INTERVAL})
+PF_ASYNC_CYCLE_AFTER="${PF_ASYNC_CYCLE_AFTER}"          # Async helper retry interval for fresh ports (default: ${PF_ASYNC_CYCLE_AFTER})
+
 # --- Container images (advanced) ---
 # GLUETUN_IMAGE="${GLUETUN_IMAGE}"                     # Override the Gluetun container tag
 # QBITTORRENT_IMAGE="${QBITTORRENT_IMAGE}"  # Override the qBittorrent container tag
@@ -446,6 +489,27 @@ FLARESOLVERR_PORT="${FLARESOLVERR_PORT}"               # FlareSolverr service po
 # BAZARR_IMAGE="${BAZARR_IMAGE}"                    # Override the Bazarr container tag
 # FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE}"      # Override the FlareSolverr container tag
 # CONFIGARR_IMAGE="${CONFIGARR_IMAGE}"            # Override the Configarr container tag
+# CADDY_IMAGE="${CADDY_IMAGE}"                      # Override the Caddy reverse-proxy container tag
+
+# --- ConfigArr quality/profile defaults ---
+ARR_VIDEO_MIN_RES="${ARR_VIDEO_MIN_RES}"         # Minimum allowed resolution (default: ${ARR_VIDEO_MIN_RES})
+ARR_VIDEO_MAX_RES="${ARR_VIDEO_MAX_RES}"         # Maximum allowed resolution (default: ${ARR_VIDEO_MAX_RES})
+ARR_EP_MIN_MB="${ARR_EP_MIN_MB}"                 # Minimum episode size in MB (default: ${ARR_EP_MIN_MB})
+ARR_EP_MAX_GB="${ARR_EP_MAX_GB}"                 # Maximum episode size in GB (default: ${ARR_EP_MAX_GB})
+ARR_TV_RUNTIME_MIN="${ARR_TV_RUNTIME_MIN}"       # Minimum runtime to treat content as standard TV (default: ${ARR_TV_RUNTIME_MIN})
+ARR_SEASON_MAX_GB="${ARR_SEASON_MAX_GB}"         # Cap on total season size in GB (default: ${ARR_SEASON_MAX_GB})
+ARR_LANG_PRIMARY="${ARR_LANG_PRIMARY}"           # Preferred audio/subtitle language (default: ${ARR_LANG_PRIMARY})
+ARR_ENGLISH_ONLY="${ARR_ENGLISH_ONLY}"           # 1 prefers English-only releases (default: ${ARR_ENGLISH_ONLY})
+ARR_DISCOURAGE_MULTI="${ARR_DISCOURAGE_MULTI}"   # 1 penalises multi-audio releases (default: ${ARR_DISCOURAGE_MULTI})
+ARR_PENALIZE_HD_X265="${ARR_PENALIZE_HD_X265}"   # 1 lowers HD x265 release scores (default: ${ARR_PENALIZE_HD_X265})
+ARR_STRICT_JUNK_BLOCK="${ARR_STRICT_JUNK_BLOCK}" # 1 fully blocks junk releases (default: ${ARR_STRICT_JUNK_BLOCK})
+ARR_JUNK_NEGATIVE_SCORE="${ARR_JUNK_NEGATIVE_SCORE}"         # Score applied to junk terms (default: ${ARR_JUNK_NEGATIVE_SCORE})
+ARR_X265_HD_NEGATIVE_SCORE="${ARR_X265_HD_NEGATIVE_SCORE}"   # Score penalty for HD x265 (default: ${ARR_X265_HD_NEGATIVE_SCORE})
+ARR_MULTI_NEGATIVE_SCORE="${ARR_MULTI_NEGATIVE_SCORE}"       # Score penalty for multi-audio releases (default: ${ARR_MULTI_NEGATIVE_SCORE})
+ARR_ENGLISH_POSITIVE_SCORE="${ARR_ENGLISH_POSITIVE_SCORE}"   # Score bonus for English releases (default: ${ARR_ENGLISH_POSITIVE_SCORE})
+SONARR_TRASH_TEMPLATE="${SONARR_TRASH_TEMPLATE}" # TRaSH template slug ConfigArr applies to Sonarr (default: ${SONARR_TRASH_TEMPLATE})
+RADARR_TRASH_TEMPLATE="${RADARR_TRASH_TEMPLATE}" # TRaSH template slug ConfigArr applies to Radarr (default: ${RADARR_TRASH_TEMPLATE})
+ARR_MBMIN_DECIMALS="${ARR_MBMIN_DECIMALS}"       # Decimals precision for minimum size rules (default: ${ARR_MBMIN_DECIMALS})
 
 # --- Behaviour toggles ---
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs
