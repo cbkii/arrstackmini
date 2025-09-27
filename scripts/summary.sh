@@ -132,6 +132,21 @@ WARNING
     done < <(printf '%s\n' "${COLLAB_PERMISSION_WARNINGS}")
   fi
 
+  if [[ "${ENABLE_CONFIGARR:-0}" -eq 1 ]]; then
+    local configarr_config="${ARR_DOCKER_DIR}/configarr/config.yml"
+    local configarr_secrets="${ARR_DOCKER_DIR}/configarr/secrets.yml"
+    cat <<CONFIGARR
+Configarr:
+  Manual sync: arr.config.sync
+  Config:      ${configarr_config}
+  Secrets:     ${configarr_secrets}
+
+CONFIGARR
+    if [[ -f "$configarr_secrets" ]] && grep -Fq 'REPLACE_WITH_' "$configarr_secrets"; then
+      warn "Add Sonarr/Radarr API keys to ${configarr_secrets} then rerun arr.config.sync."
+    fi
+  fi
+
   cat <<SUMMARY
 Gluetun control server (local only): http://${LOCALHOST_IP}:${GLUETUN_CONTROL_PORT}
 

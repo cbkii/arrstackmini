@@ -9,6 +9,8 @@ arrconf/*2.sh
 
 # Runtime data
 docker-data/
+docker-data/configarr/secrets.yml
+docker-data/configarr/cfs/
 downloads/
 completed/
 media/

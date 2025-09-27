@@ -152,6 +152,7 @@ fi
 # Enable internal local DNS resolver service
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS:-0}"
 ENABLE_CADDY="${ENABLE_CADDY:-0}"
+ENABLE_CONFIGARR="${ENABLE_CONFIGARR:-1}"
 
 # How LAN clients learn the resolver address
 #   router     – configure DHCP Option 6 on your router to ${LAN_IP}
@@ -207,6 +208,7 @@ RADARR_IMAGE="${RADARR_IMAGE:-lscr.io/linuxserver/radarr:5.27.5.10198-ls283}"
 PROWLARR_IMAGE="${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}"
 BAZARR_IMAGE="${BAZARR_IMAGE:-lscr.io/linuxserver/bazarr:latest}"
 FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3.21}"
+CONFIGARR_IMAGE="${CONFIGARR_IMAGE:-ghcr.io/raydak-labs/configarr:latest}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 #
 # Behaviour flags
@@ -229,6 +231,7 @@ ARRSTACK_USERCONF_TEMPLATE_VARS=(
   GLUETUN_CONTROL_PORT
   ENABLE_LOCAL_DNS
   ENABLE_CADDY
+  ENABLE_CONFIGARR
   DNS_DISTRIBUTION_MODE
   UPSTREAM_DNS_SERVERS
   UPSTREAM_DNS_1
@@ -252,6 +255,7 @@ ARRSTACK_USERCONF_TEMPLATE_VARS=(
   PROWLARR_IMAGE
   BAZARR_IMAGE
   FLARESOLVERR_IMAGE
+  CONFIGARR_IMAGE
 )
 
 # shellcheck disable=SC2034  # exported for template rendering via envsubst
@@ -320,6 +324,7 @@ PVPN_ROTATE_COUNTRIES="${PVPN_ROTATE_COUNTRIES}"  # Optional rotation order for 
 GLUETUN_CONTROL_PORT="${GLUETUN_CONTROL_PORT}"            # Host port that exposes the Gluetun control API (default: ${GLUETUN_CONTROL_PORT})
 ENABLE_LOCAL_DNS="${ENABLE_LOCAL_DNS}"                   # Advanced: enable the optional dnsmasq container (0/1, default: ${ENABLE_LOCAL_DNS})
 ENABLE_CADDY="${ENABLE_CADDY}"                       # Optional Caddy reverse proxy (run ./arrstack.sh --enable-caddy or set 1 to add HTTPS hostnames)
+ENABLE_CONFIGARR="${ENABLE_CONFIGARR}"             # Configarr one-shot sync for TRaSH-Guides profiles (set 0 to omit the container)
 DNS_DISTRIBUTION_MODE="${DNS_DISTRIBUTION_MODE}"         # router (DHCP Option 6) or per-device DNS settings (default: ${DNS_DISTRIBUTION_MODE})
 UPSTREAM_DNS_SERVERS="${UPSTREAM_DNS_SERVERS}"          # Comma-separated resolver list used by dnsmasq (default chain shown)
 UPSTREAM_DNS_1="${UPSTREAM_DNS_1}"               # Legacy primary resolver override (default derived: ${UPSTREAM_DNS_1})
@@ -352,6 +357,7 @@ FLARESOLVERR_PORT="${FLARESOLVERR_PORT}"               # FlareSolverr service po
 # PROWLARR_IMAGE="${PROWLARR_IMAGE}"                # Override the Prowlarr container tag
 # BAZARR_IMAGE="${BAZARR_IMAGE}"                    # Override the Bazarr container tag
 # FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE}"      # Override the FlareSolverr container tag
+# CONFIGARR_IMAGE="${CONFIGARR_IMAGE}"            # Override the Configarr container tag
 
 # --- Behaviour toggles ---
 # ASSUME_YES="0"                         # Skip confirmation prompts when scripting installs

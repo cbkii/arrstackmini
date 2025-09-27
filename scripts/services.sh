@@ -371,6 +371,10 @@ validate_images() {
     FLARESOLVERR_IMAGE
   )
 
+  if [[ "${ENABLE_CONFIGARR:-0}" -eq 1 ]]; then
+    image_vars+=(CONFIGARR_IMAGE)
+  fi
+
   if [[ "${ENABLE_CADDY:-0}" -eq 1 ]]; then
     image_vars+=(CADDY_IMAGE)
   fi
