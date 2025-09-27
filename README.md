@@ -16,60 +16,91 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
 ```
 
 ## Quick start (about 5 minutes)
-1. **Clone the repo into your projects directory.**
+1. **Clone the repo.**
    ```bash
    mkdir -p ~/srv && cd ~/srv
    git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
-2. **Copy the user config template.** This stores your overrides at `${ARR_BASE}/userr.conf` (defaults to `~/srv/userr.conf`).
-  ```bash
-  cp arrconf/userr.conf.example ../userr.conf
-  ```
-   The installer regenerates `.env` from this file each run—do **not** edit `.env` directly.
-3. **Set your LAN details.** Edit `~/srv/userr.conf` (or `${ARR_BASE}/userr.conf` if you exported a different base) and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
-4. **Add Proton credentials.**
+2. **Copy Proton credentials.**
    ```bash
    cp arrconf/proton.auth.example arrconf/proton.auth
-   nano arrconf/proton.auth
+   nano arrconf/proton.auth  # set PROTON_USER / PROTON_PASS (+pmp is added automatically)
    ```
+3. **Copy and edit user overrides.**
+   ```bash
+   cp arrconf/userr.conf.example ../userr.conf
+   nano ../userr.conf  # set LAN_IP, media paths, and any overrides
+   ```
+   Keep this file at `${ARR_BASE:-$HOME/srv}/userr.conf`; the installer regenerates `.env` and other artifacts from it each run.
+4. **Optional toggles.** Edit `${ARR_BASE:-$HOME/srv}/userr.conf` to set `ENABLE_CADDY=1` (EXPERIMENTAL), `ENABLE_LOCAL_DNS=1` (EXPERIMENTAL), or `ENABLE_CONFIGARR=0/1` before running the stack (or pass `./arrstack.sh --enable-caddy` for a one-off enable).
 5. **Run the installer.**
-  ```bash
-  ./arrstack.sh --yes
-  ```
-   The script installs dependencies if needed, renders `${ARR_STACK_DIR}/.env` from `arrconf/userr.conf.defaults.sh` + `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`), and launches the stack with Docker Compose from that directory.
-   Compose reads the generated `.env` automatically per [Docker’s env-file guidance](https://docs.docker.com/compose/environment-variables/set-environment-variables/#use-the-env-file).
-6. **Open the WebUIs directly by IP.** As soon as the installer finishes, browse to each service using your Pi’s LAN IP (example `192.168.1.50`). The installer refuses to expose ports until `LAN_IP` is a private address, so set the value and re-run if you skipped it the first time:
-   - `http://192.168.1.50:8080` (qBittorrent)
-   - `http://192.168.1.50:8989` (Sonarr)
-   - `http://192.168.1.50:7878` (Radarr)
-   - `http://192.168.1.50:9696` (Prowlarr)
-   - `http://192.168.1.50:6767` (Bazarr)
-   - `http://192.168.1.50:8191` (FlareSolverr health page)
-   The default qBittorrent credentials are `admin` / `adminadmin` — change them immediately.
-7. **(Optional) Enable extras later.** Either set `ENABLE_CADDY=1` (or run `./arrstack.sh --enable-caddy`) for HTTPS reverse proxying, or set `ENABLE_LOCAL_DNS=1` for dnsmasq, then rerun `./arrstack.sh`. Using DNS alone keeps the apps on plain `http://LAN_IP:PORT`, so enable Caddy only when you want hostname-based HTTPS. The defaults keep both disabled so IP:PORT access works everywhere without touching your router.
+   ```bash
+   ./arrstack.sh        # add --yes for non-interactive mode
+   ```
+   This idempotently installs prerequisites, renders `.env`, `docker-compose.yml`, and `Caddyfile`, and launches the stack—rerun it anytime instead of editing generated files.
+6. **Load helper aliases.**
+   ```bash
+   source "${ARR_STACK_DIR:-$(pwd)}/.aliasarr"
+   ```
+   Reload after each installer run so commands like `arr.vpn.status` and `arr.logs` stay current.
+7. **Check health.** Use `arr.vpn.status` and `arr.logs` to confirm services booted, and browse to `http://LAN_IP:PORT` dashboards to verify connectivity.
+8. **Grab the qBittorrent temporary password.** If still on defaults, run `docker logs qbittorrent | grep 'temporary password'` and reset it via the WebUI immediately.
+9. **Optional HTTPS/DNS extras.** Install the internal CA with `scripts/install-caddy-ca.sh` or take over host DNS via `./arrstack.sh --setup-host-dns` (**CAUTION:** modifies resolver; roll back with `scripts/host-dns-rollback.sh`).
 
-**Verify:**
-```bash
-curl -I http://192.168.1.50:8080
-```
-You should see an HTTP 200/302 response. If not, re-run the installer and confirm `LAN_IP` matches the host you’re testing from.
+### Configuration flow
+   > **Note:** `.env.example` is deprecated. Copy `arrconf/userr.conf.example` to `${ARR_BASE:-$HOME/srv}/userr.conf`, edit that file (along with `arrconf/proton.auth`), then rerun `./arrstack.sh` to regenerate everything. Do not modify `.env.example`; it will be removed in a future release.
+
+- **Defaults:** `arrconf/userr.conf.defaults.sh`
+- **User overrides:** `${ARR_BASE:-$HOME/srv}/userr.conf`
+- **Proton credentials:** `arrconf/proton.auth` (`PROTON_USER` / `PROTON_PASS`; `+pmp` is enforced automatically)
+- **Run `./arrstack.sh`:** renders `.env`, `docker-compose.yml`, and `Caddyfile` (never edit the generated files directly)
+- **Safe to rerun anytime:** the installer is idempotent and reconciles changes back into the stack
+
+> Generated files: `.env`, `docker-compose.yml`, and `Caddyfile`. Edit `${ARR_BASE:-$HOME/srv}/userr.conf` instead, then rerun `./arrstack.sh` to apply changes.
+
+### Core services vs optional extras
+- **Core:** gluetun, qbittorrent, sonarr, radarr, prowlarr, bazarr, flaresolverr
+- **Optional:** Caddy (`ENABLE_CADDY=1`) — EXPERIMENTAL, Local DNS (`ENABLE_LOCAL_DNS=1`) — EXPERIMENTAL, Configarr, VueTorrent (LSIO mod or manual fallback)
+
+Caddy reverse proxy and Local DNS are **EXPERIMENTAL / in development** and may change or break. Enable them only if you need internal HTTPS hostnames or LAN DNS integration. Local DNS auto-disables when port 53 is already claimed (for example by `systemd-resolved`).
+
+### Security notes
+- Set `LAN_IP` to your host address so services avoid binding to `0.0.0.0` unintentionally.
+- Proton logins automatically append `+pmp`; never remove it or the forwarded port will fail.
+- The Gluetun control API is bound to `LOCALHOST_IP` to keep VPN management local.
+- Keep `EXPOSE_DIRECT_PORTS=0` unless you intentionally publish raw service ports.
+- Caddy basic-auth secrets live in `docker-data/caddy/credentials`; rotate them periodically.
+- Install the internal CA before trusting HTTPS hostnames issued by Caddy.
+
+> ⚠️ Do not expose these services directly to the public internet without additional hardening, a proxy, and authentication layers.
 
 ### VueTorrent WebUI modes
+
+VueTorrent is delivered through the LSIO mod by default; the installer auto-attempts a manual fallback when `QBT_DOCKER_MODS` is unset and warns in the summary if the manual files are incomplete.
 
 - **Default (LSIO mod):** `QBT_DOCKER_MODS` defaults to the VueTorrent LSIO Docker mod so `/vuetorrent` is provisioned automatically inside the container. Leave the value in `${ARR_BASE}/userr.conf` and rerun `./arrstack.sh` to stay on this mode.
 - **Manual install:** Clear `QBT_DOCKER_MODS`, rerun `./arrstack.sh`, and the installer downloads VueTorrent into `/config/vuetorrent`, verifies `public/index.html` and `version.txt`, and points qBittorrent at that folder.
 - **Switch safely:** Changing `QBT_DOCKER_MODS` and rerunning the installer flips modes idempotently. The script rewrites qBittorrent’s `WebUI\RootFolder`, removes stale manual files when the mod is active, and disables the Alternate WebUI if the manual folder is incomplete so the default qBittorrent UI still loads.
 - **Do not mix:** Avoid copying VueTorrent files by hand once the installer runs. Update `QBT_DOCKER_MODS` instead so the scripts keep qBittorrent aligned with the chosen mode.
 
-## Useful commands
-- `./arrstack.sh --rotate-api-key --yes` regenerates the Gluetun API key and writes it back to `.env`.
-- `./arrstack.sh --rotate-caddy-auth --yes` creates a new Caddy basic-auth password and saves the plaintext copy in `docker-data/caddy/credentials`.
-- `./arrstack.sh --setup-host-dns --yes` runs the host helper so Debian Bookworm frees port 53 before the installer exits.
-- `./arrstack.sh --refresh-aliases` rebuilds `.aliasarr` and reloads your shell so helper commands (such as `arr.vpn status`) stay up to date.
-- `./scripts/qbt-helper.sh {show|reset|whitelist}` shows connection info, clears the qBittorrent password, or enables LAN whitelisting.
-- `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
-- `ARRSTACK_DEBUG_PORTS=1 ./arrstack.sh` writes `logs/port-scan-*.jsonl` snapshots for each port check so you can diagnose who bound a port.
+## Common tasks
+- `./arrstack.sh --rotate-api-key` regenerates the Gluetun API key and writes it back to `.env`.
+- `./arrstack.sh --rotate-caddy-auth` rotates the Caddy basic-auth credentials and stores the cleartext copy in `docker-data/caddy/credentials`.
+- `./arrstack.sh --refresh-aliases` rebuilds `.aliasarr` so helpers like `arr.vpn.status`, `arr.vpn.port`, and `arr.logs` stay current.
+- `./arrstack.sh --setup-host-dns` takes over the host resolver (**CAUTION:** modifies `/etc/resolv.conf`; undo with `scripts/host-dns-rollback.sh`).
+- `arr.vpn.port` or `arr.vpn.status` confirms Proton forwarding and overall VPN health.
+- `arr.config.sync` triggers Configarr to refresh Sonarr/Radarr settings after updating API keys in `docker-data/configarr/secrets.yml`.
+- `./scripts/qbt-helper.sh {show|reset|whitelist}` inspects or resets qBittorrent credentials and LAN access rules.
+- `./scripts/doctor.sh` reruns the LAN DNS and port diagnostics the installer executes automatically.
+
+## Troubleshooting
+- **Port conflicts:** rerun `./arrstack.sh` without `--yes` to use the interactive resolver and unblock the offending service.
+- **Local DNS auto-disabled:** port 53 was already bound (commonly by `systemd-resolved`); free it or leave `ENABLE_LOCAL_DNS=0`.
+- **Caddy hostnames untrusted:** download `http://ca.<suffix>/root.crt` or run `scripts/install-caddy-ca.sh` to trust the internal CA.
+- **qBittorrent password unknown:** `docker logs qbittorrent | grep 'temporary password'` prints the autogenerated secret.
+- **Proton forwarded port reports 0:** wait a few minutes, run `arr.vpn.port.sync`, and optionally pin `SERVER_COUNTRIES` in `${ARR_BASE:-$HOME/srv}/userr.conf`.
+- **Configarr changes not applying:** populate API keys in `docker-data/configarr/secrets.yml` and rerun `arr.config.sync`.
 
 ## Configarr (TRaSH-Guides Sync)
 
@@ -124,6 +155,7 @@ Arrstack seeds Configarr with a conservative WEB/Bluray 720p–1080p window, MB/
 
 
 ## Permission profiles
+`ARR_PERMISSION_PROFILE=strict` is the default (secret files `600`, data directories `700`); switch to `collab` for group write access (`770`) when `PGID` is non-root, and reference the defaults file for override knobs.
 `arrstack.sh` defaults to the **strict** permission profile so secrets stay private (files `600`, data directories `700`, umask `0077`). Switch to the **collab** profile when you run multiple media managers, SMB/NFS shares, or post-processing scripts that need to write into the stack:
 
 - Set `ARR_PERMISSION_PROFILE="collab"` in `${ARR_BASE}/userr.conf`.
