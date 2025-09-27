@@ -354,7 +354,23 @@ arrstack_export_userconf_template_vars() {
   local value=""
 
   for var in "${ARRSTACK_USERCONF_TEMPLATE_VARS[@]}"; do
-    value="${!var-}"
+    case "$var" in
+      ARR_USERCONF_PATH)
+        # shellcheck disable=SC2016  # keep literal reference for template output
+        value='${ARR_BASE}/userr.conf'
+        ;;
+      ARR_LOG_DIR)
+        # shellcheck disable=SC2016  # keep literal reference for template output
+        value='${ARR_STACK_DIR}/logs'
+        ;;
+      ARR_INSTALL_LOG)
+        # shellcheck disable=SC2016  # keep literal reference for template output
+        value='${ARR_LOG_DIR}/arrstack-install.log'
+        ;;
+      *)
+        value="${!var-}"
+        ;;
+    esac
     export "${var}=${value}"
   done
 }

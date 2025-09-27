@@ -9,12 +9,12 @@ ARR_BASE="${HOME}/srv"                 # Root directory for generated stack file
 ARR_STACK_DIR="${ARR_BASE}/arrstack"  # Location for docker-compose.yml, scripts, and aliases
 ARR_ENV_FILE="${ARR_STACK_DIR}/.env"  # Path to the generated .env secrets file
 ARR_DOCKER_DIR="${ARR_BASE}/docker-data"  # Docker volumes and persistent data storage
-# ARR_USERCONF_PATH="/root/srv/userr.conf"  # Optional: relocate this file outside ${ARR_BASE}
+# ARR_USERCONF_PATH="${ARR_BASE}/userr.conf"  # Optional: relocate this file outside ${ARR_BASE}
 # ARRCONF_DIR="${HOME}/.config/arrstack"  # Optional: relocate Proton creds outside the repo
 
 # --- Logging and output ---
-ARR_LOG_DIR="/root/srv/arrstack/logs"           # Directory for runtime/service logs (default: /root/srv/arrstack/logs)
-ARR_INSTALL_LOG="/root/srv/arrstack/logs/arrstack-install.log"   # Installer run log location (default: /root/srv/arrstack/logs/arrstack-install.log)
+ARR_LOG_DIR="${ARR_STACK_DIR}/logs"           # Directory for runtime/service logs (default: ${ARR_STACK_DIR}/logs)
+ARR_INSTALL_LOG="${ARR_LOG_DIR}/arrstack-install.log"   # Installer run log location (default: ${ARR_LOG_DIR}/arrstack-install.log)
 ARR_COLOR_OUTPUT="1"       # 1 keeps colorful CLI output, set 0 to disable ANSI colors
 
 # --- Permissions ---
