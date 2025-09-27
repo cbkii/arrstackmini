@@ -183,6 +183,60 @@ ensure_dir_mode() {
   chmod "$mode" "$dir" 2>/dev/null || warn "Could not apply mode ${mode} to ${dir}"
 }
 
+arrstack_stat_mode() {
+  local target="$1"
+
+  if [[ ! -e "$target" ]]; then
+    return 1
+  fi
+
+  stat -c '%a' "$target" 2>/dev/null || return 1
+}
+
+arrstack_is_group_writable() {
+  local target="$1"
+
+  local mode
+  mode="$(arrstack_stat_mode "$target" || true)"
+
+  if [[ -z "$mode" ]]; then
+    return 1
+  fi
+
+  if [[ ! "$mode" =~ ^[0-7]{3,4}$ ]]; then
+    return 1
+  fi
+
+  local numeric=$((8#$mode))
+
+  if (((numeric & 0o020) != 0)); then
+    return 0
+  fi
+
+  return 1
+}
+
+arrstack_append_collab_warning() {
+  local entry="$1"
+
+  if [[ -z "$entry" ]]; then
+    return 0
+  fi
+
+  local current="${COLLAB_PERMISSION_WARNINGS:-}"
+
+  if [[ -n "$current" ]]; then
+    local padded=$'\n'"${current}"$'\n'
+    local needle=$'\n'"${entry}"$'\n'
+    if [[ "$padded" == *"${needle}"* ]]; then
+      return 0
+    fi
+    COLLAB_PERMISSION_WARNINGS+=$'\n'"${entry}"
+  else
+    COLLAB_PERMISSION_WARNINGS="${entry}"
+  fi
+}
+
 ensure_file_mode() {
   local file="$1"
   local mode="$2"

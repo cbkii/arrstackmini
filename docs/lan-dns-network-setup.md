@@ -17,16 +17,16 @@ It assumes the stack’s **`local_dns` container (dnsmasq)** will bind port **53
 
 ## 0. Update the project configuration
 
-Copy the example configuration if you have not already created `arrconf/userconf.sh`:
+Copy the example configuration if you have not already created `~/srv/userr.conf` (or `${ARR_BASE}/userr.conf` if you exported a different base):
 
 ```bash
-cp arrconf/userconf.sh.example arrconf/userconf.sh
+cp arrconf/userr.conf.example ../userr.conf
 ```
 
 Open the file and set the Pi details:
 
 ```bash
-nano arrconf/userconf.sh
+nano ~/srv/userr.conf
 ```
 
 Use the reserved LAN IP and suffix so the stack renders the correct DNS records and service URLs:

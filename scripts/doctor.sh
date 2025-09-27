@@ -8,17 +8,25 @@ REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 # shellcheck source=scripts/common.sh
 . "${REPO_ROOT}/scripts/common.sh"
 
-if [[ -f "${REPO_ROOT}/arrconf/userconf.defaults.sh" ]]; then
+if [[ -f "${REPO_ROOT}/arrconf/userr.conf.defaults.sh" ]]; then
   # shellcheck disable=SC1091
-  # shellcheck source=arrconf/userconf.defaults.sh
-  . "${REPO_ROOT}/arrconf/userconf.defaults.sh"
+  # shellcheck source=arrconf/userr.conf.defaults.sh
+  . "${REPO_ROOT}/arrconf/userr.conf.defaults.sh"
 fi
 
-if [[ -f "${REPO_ROOT}/arrconf/userconf.sh" ]]; then
+ARR_USERCONF_PATH="${ARR_USERCONF_PATH:-${ARR_BASE:-${HOME}/srv}/userr.conf}"
+ARR_USERCONF_SOURCE="${ARR_USERCONF_PATH}"
+
+if [[ -f "${ARR_USERCONF_PATH}" ]]; then
   # shellcheck disable=SC1091
-  # shellcheck source=arrconf/userconf.sh
-  . "${REPO_ROOT}/arrconf/userconf.sh"
+  # shellcheck source=/dev/null
+  . "${ARR_USERCONF_PATH}"
 fi
+
+if [[ "${ARR_USERCONF_PATH}" == "${ARR_USERCONF_SOURCE}" ]]; then
+  ARR_USERCONF_PATH="${ARR_BASE:-${HOME}/srv}/userr.conf"
+fi
+unset ARR_USERCONF_SOURCE
 
 
 port_in_use_with_ss() {

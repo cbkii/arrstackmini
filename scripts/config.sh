@@ -128,7 +128,7 @@ Files that will be created/updated
   • Environment file: ${ARR_ENV_FILE}
   • Compose file: ${ARR_STACK_DIR}/docker-compose.yml
 
-If anything looks incorrect, edit arrconf/userconf.sh before continuing.
+If anything looks incorrect, edit ${ARR_USERCONF_PATH} before continuing.
 ------------------------------------------------------------
 CONFIG
 }

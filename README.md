@@ -22,11 +22,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
    git clone https://github.com/cbkii/arrstackmini.git
    cd arrstackmini
    ```
-2. **Copy the user config template.**
-   ```bash
-   cp arrconf/userconf.sh.example arrconf/userconf.sh
-   ```
-3. **Set your LAN details.** Edit `arrconf/userconf.sh` and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
+2. **Copy the user config template.** This stores your overrides at `${ARR_BASE}/userr.conf` (defaults to `~/srv/userr.conf`).
+  ```bash
+  cp arrconf/userr.conf.example ../userr.conf
+  ```
+3. **Set your LAN details.** Edit `~/srv/userr.conf` (or `${ARR_BASE}/userr.conf` if you exported a different base) and set `LAN_IP` to your Pi (example `192.168.1.50`). Reserve that address in your router so it never changes. Leave `LAN_DOMAIN_SUFFIX` blank unless you plan to enable the optional DNS/proxy features later.
 4. **Add Proton credentials.**
    ```bash
    cp arrconf/proton.auth.example arrconf/proton.auth
@@ -62,6 +62,25 @@ You should see an HTTP 200/302 response. If not, re-run the installer and confir
 - `./scripts/qbt-helper.sh {show|reset|whitelist}` shows connection info, clears the qBittorrent password, or enables LAN whitelisting.
 - `./scripts/doctor.sh` performs the same LAN DNS and port checks the installer runs automatically; re-run it when troubleshooting.
 - `ARRSTACK_DEBUG_PORTS=1 ./arrstack.sh` writes `logs/port-scan-*.jsonl` snapshots for each port check so you can diagnose who bound a port.
+
+## Permission profiles
+`arrstack.sh` defaults to the **strict** permission profile so secrets stay private (files `600`, data directories `700`, umask `0077`). Switch to the **collab** profile when you run multiple media managers, SMB/NFS shares, or post-processing scripts that need to write into the stack:
+
+- Set `ARR_PERMISSION_PROFILE="collab"` in `${ARR_BASE}/userr.conf`.
+- Choose a `PGID` that represents your shared media group (for example `getent group media`). The installer uses that group when applying permissions so secondary users can write downloads and libraries.
+- Collab enables group read/write by default (`umask 0007`, directories `770`, files `660`). Secret files (`.env`, `userr.conf`, Proton credentials) remain `600`.
+- If you leave `PGID=0` (root group) the installer warns and keeps the safer `750/640` defaults instead of exposing write access to every root user.
+
+Advanced operators can override the profile defaults with environment variables before launching the installer:
+
+| Variable | Purpose |
+| --- | --- |
+| `ARR_UMASK_OVERRIDE` | Force a specific umask (octal such as `0007`). |
+| `ARR_DATA_DIR_MODE_OVERRIDE` | Override directory mode for stack data (`770`, `755`, etc.). |
+| `ARR_NONSECRET_FILE_MODE_OVERRIDE` | Override non-secret file mode (defaults to `660` for collab). |
+| `ARR_SECRET_FILE_MODE_OVERRIDE` | Override secret file mode (defaults to `600`). |
+
+Overrides apply after the profile loads, so you can fine-tune behaviour per environment while keeping the docs/examples aligned with the defaults.
 
 ## Docs
 - [LAN DNS & network pre-start](docs/lan-dns-network-setup.md)

@@ -301,7 +301,7 @@ validate_images() {
     for img in "${failed_images[@]}"; do
       warn "  - $img"
     done
-    warn "Check the image names and tags in .env or arrconf/userconf.sh"
+    warn "Check the image names and tags in .env or ${ARR_USERCONF_PATH}"
     warn "================================================"
   fi
 }

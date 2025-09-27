@@ -63,4 +63,36 @@ run_one_time_migrations() {
 
     unset -f ensure_env_backup || true
   fi
+
+  if [[ "${ARR_PERMISSION_PROFILE}" == "collab" && "${COLLAB_GROUP_WRITE_ENABLED:-0}" -eq 1 ]]; then
+    local collab_marker="${ARR_DOCKER_DIR}/.arrstack-collab-v1"
+    if [[ -d "${ARR_DOCKER_DIR}" && ! -e "${collab_marker}" ]]; then
+      local collab_migrations=0
+      local collab_failures=0
+      local dir
+
+      for dir in "${ARR_DOCKER_DIR}" "${ARR_DOCKER_DIR}"/*; do
+        [[ -d "$dir" ]] || continue
+        local mode
+        mode="$(stat -c '%a' "$dir" 2>/dev/null || echo '')"
+        if [[ "$mode" == "750" ]]; then
+          if chmod "$DATA_DIR_MODE" "$dir" 2>/dev/null; then
+            ((collab_migrations++))
+          else
+            warn "Could not migrate ${dir} to collaborative mode ${DATA_DIR_MODE}"
+            collab_failures=1
+          fi
+        fi
+      done
+
+      if ((collab_migrations > 0)); then
+        msg "Updated ${collab_migrations} directory(ies) to ${DATA_DIR_MODE} for the collaborative profile"
+      fi
+
+      if ((collab_failures == 0)); then
+        : >"${collab_marker}" 2>/dev/null || true
+        chmod 600 "${collab_marker}" 2>/dev/null || true
+      fi
+    fi
+  fi
 }

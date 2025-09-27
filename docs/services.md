@@ -10,7 +10,7 @@ Knowing the entry points makes first verification easy and helps you decide whic
 ## Do
 | Service | Default LAN URL | Credentials at first boot | Change ports in |
 | --- | --- | --- | --- |
-| [qBittorrent](https://www.qbittorrent.org/) | `http://<LAN_IP>:8080` | Uses the username/password stored in `.env` (`QBT_USER`/`QBT_PASS`). Rotate them on first login under **Tools → Options → Web UI**. | `.env` (`QBT_HTTP_PORT_HOST`) or `arrconf/userconf.sh` overrides |
+| [qBittorrent](https://www.qbittorrent.org/) | `http://<LAN_IP>:8080` | Uses the username/password stored in `.env` (`QBT_USER`/`QBT_PASS`). Rotate them on first login under **Tools → Options → Web UI**. | `.env` (`QBT_HTTP_PORT_HOST`) or `${ARR_BASE}/userr.conf` overrides |
 | [Sonarr](https://sonarr.tv/) | `http://<LAN_IP>:8989` | Default login disabled; set your own under **Settings → General → Security**. | `.env` (`SONARR_PORT`) |
 | [Radarr](https://radarr.video/) | `http://<LAN_IP>:7878` | No password by default; enable authentication in **Settings → General**. | `.env` (`RADARR_PORT`) |
 | [Prowlarr](https://prowlarr.com/) | `http://<LAN_IP>:9696` | Prompts for setup wizard; create an admin account during onboarding. | `.env` (`PROWLARR_PORT`) |

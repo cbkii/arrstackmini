@@ -10,7 +10,7 @@ The project relies on Bash automation. Knowing what each script is responsible f
 ## Do
 ### `./arrstack.sh`
 The main installer orchestrates the whole build:
-- Loads defaults from `arrconf/userconf.defaults.sh` and your overrides in `arrconf/userconf.sh` before running any tasks.【F:arrstack.sh†L7-L32】
+- Loads defaults from `arrconf/userr.conf.defaults.sh` and your overrides in `${ARR_BASE}/userr.conf` before running any tasks (defaults to `~/srv/userr.conf`).【F:arrstack.sh†L7-L32】
 - Accepts flags such as `--yes`, `--enable-caddy`, `--rotate-api-key`, `--rotate-caddy-auth`, `--setup-host-dns`, and `--refresh-aliases` for non-interactive runs, credential rotation, or alias regeneration.【F:arrstack.sh†L34-L92】
 - Runs preflight checks that ensure Docker, Docker Compose v2, `curl`, `jq`, `openssl`, and your Proton credentials are present before anything else happens.【F:scripts/preflight.sh†L1-L74】【F:scripts/preflight.sh†L90-L128】
 - Creates required directories with safe permissions, migrates legacy files, and cleans old Compose projects before writing new assets.【F:scripts/files.sh†L12-L87】【F:scripts/migrations.sh†L1-L46】【F:scripts/services.sh†L44-L69】

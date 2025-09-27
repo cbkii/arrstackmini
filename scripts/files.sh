@@ -23,6 +23,30 @@ caddy_bcrypt() {
   docker run --rm "${CADDY_IMAGE}" caddy hash-password --algorithm bcrypt --plaintext "$plaintext" 2>/dev/null
 }
 
+arrstack_track_created_media_dir() {
+  local dir="$1"
+
+  if [[ -z "$dir" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${COLLAB_CREATED_MEDIA_DIRS:-}" ]]; then
+    COLLAB_CREATED_MEDIA_DIRS="$dir"
+  else
+    local padded=$'\n'"${COLLAB_CREATED_MEDIA_DIRS}"$'\n'
+    local needle=$'\n'"${dir}"$'\n'
+    if [[ "$padded" != *"${needle}"* ]]; then
+      COLLAB_CREATED_MEDIA_DIRS+=$'\n'"${dir}"
+    fi
+  fi
+}
+
+arrstack_report_collab_skip() {
+  if [[ -n "${COLLAB_GROUP_WRITE_DISABLED_REASON:-}" ]]; then
+    arrstack_append_collab_warning "${COLLAB_GROUP_WRITE_DISABLED_REASON}"
+  fi
+}
+
 mkdirs() {
   msg "📁 Creating directories"
   ensure_dir_mode "$ARR_STACK_DIR" 755
@@ -40,8 +64,34 @@ mkdirs() {
     ensure_dir_mode "${ARR_DOCKER_DIR}/${service}" "$DATA_DIR_MODE"
   done
 
+  local collab_enabled=0
+  if [[ "${ARR_PERMISSION_PROFILE}" == "collab" && "${COLLAB_GROUP_WRITE_ENABLED:-0}" -eq 1 ]]; then
+    collab_enabled=1
+  elif [[ "${ARR_PERMISSION_PROFILE}" == "collab" ]]; then
+    arrstack_report_collab_skip
+  fi
+
   ensure_dir "$DOWNLOADS_DIR"
+  if ((collab_enabled)); then
+    if ! chmod "$DATA_DIR_MODE" "$DOWNLOADS_DIR" 2>/dev/null; then
+      warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${DOWNLOADS_DIR}"
+      arrstack_append_collab_warning "${DOWNLOADS_DIR} is not group-writable; adjust manually so secondary users can write downloads"
+    fi
+    if ! arrstack_is_group_writable "$DOWNLOADS_DIR"; then
+      arrstack_append_collab_warning "${DOWNLOADS_DIR} is not group-writable; adjust manually so secondary users can write downloads"
+    fi
+  fi
+
   ensure_dir "$COMPLETED_DIR"
+  if ((collab_enabled)); then
+    if ! chmod "$DATA_DIR_MODE" "$COMPLETED_DIR" 2>/dev/null; then
+      warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${COMPLETED_DIR}"
+      arrstack_append_collab_warning "${COMPLETED_DIR} is not group-writable; adjust manually so post-processing can move files"
+    fi
+    if ! arrstack_is_group_writable "$COMPLETED_DIR"; then
+      arrstack_append_collab_warning "${COMPLETED_DIR} is not group-writable; adjust manually so post-processing can move files"
+    fi
+  fi
 
   ensure_dir_mode "$ARR_STACK_DIR/scripts" 755
 
@@ -52,22 +102,49 @@ mkdirs() {
     fi
   fi
 
-  if [[ ! -d "$TV_DIR" ]]; then
-    warn "TV directory does not exist: $TV_DIR"
-    warn "Creating it now (may fail if parent directory is missing)"
-    mkdir -p "$TV_DIR" 2>/dev/null || warn "Could not create TV directory"
-  fi
+  manage_media_dir() {
+    local dir="$1"
+    local label="$2"
+    local created=0
 
-  if [[ ! -d "$MOVIES_DIR" ]]; then
-    warn "Movies directory does not exist: $MOVIES_DIR"
-    warn "Creating it now (may fail if parent directory is missing)"
-    mkdir -p "$MOVIES_DIR" 2>/dev/null || warn "Could not create Movies directory"
-  fi
+    if [[ -z "$dir" ]]; then
+      return 0
+    fi
 
-  if [[ -n "${SUBS_DIR:-}" && ! -d "$SUBS_DIR" ]]; then
-    warn "Subtitles directory does not exist: ${SUBS_DIR}"
-    warn "Creating it now (may fail if parent directory is missing)"
-    mkdir -p "$SUBS_DIR" 2>/dev/null || warn "Could not create subtitles directory"
+    if [[ ! -d "$dir" ]]; then
+      warn "${label} directory does not exist: ${dir}"
+      warn "Creating it now (may fail if parent directory is missing)"
+      if mkdir -p "$dir" 2>/dev/null; then
+        created=1
+        arrstack_track_created_media_dir "$dir"
+      else
+        warn "Could not create ${label} directory"
+        return 0
+      fi
+    fi
+
+    if ((collab_enabled)); then
+      if ((created)); then
+        if ! chmod "$DATA_DIR_MODE" "$dir" 2>/dev/null; then
+          warn "Could not apply collaborative mode ${DATA_DIR_MODE} to ${dir}"
+          arrstack_append_collab_warning "${dir} is not group-writable; adjust manually so secondary users can write ${label}"
+        elif ! arrstack_is_group_writable "$dir"; then
+          arrstack_append_collab_warning "${dir} is not group-writable; adjust manually so secondary users can write ${label}"
+        fi
+      else
+        if ! arrstack_is_group_writable "$dir"; then
+          warn "${label} directory exists with non-group-writable permissions: ${dir}"
+          arrstack_append_collab_warning "${dir} stays non-group-writable (existing ${label} library); update manually if the media group should write here"
+        fi
+      fi
+    fi
+  }
+
+  manage_media_dir "$TV_DIR" "TV"
+  manage_media_dir "$MOVIES_DIR" "Movies"
+
+  if [[ -n "${SUBS_DIR:-}" ]]; then
+    manage_media_dir "$SUBS_DIR" "subtitles"
   fi
 
   if [[ -n "${PUID:-}" && -n "${PGID:-}" ]]; then
@@ -139,6 +216,7 @@ write_env() {
   CADDY_BASIC_AUTH_USER="$(sanitize_user "$CADDY_BASIC_AUTH_USER")"
 
   local direct_ports_requested="${EXPOSE_DIRECT_PORTS:-0}"
+  local userconf_path="${ARR_USERCONF_PATH:-${ARR_BASE:-${HOME}/srv}/userr.conf}"
 
   if [[ -z "${LAN_IP:-}" || "$LAN_IP" == "0.0.0.0" ]]; then
     if detected_ip="$(detect_lan_ip 2>/dev/null)"; then
@@ -146,7 +224,7 @@ write_env() {
       msg "Auto-detected LAN_IP: $LAN_IP"
     else
       LAN_IP="0.0.0.0"
-      warn "LAN_IP could not be detected automatically; set it in arrconf/userconf.sh so services bind to the correct interface."
+      warn "LAN_IP could not be detected automatically; set it in ${userconf_path} so services bind to the correct interface."
     fi
   else
     msg "Using configured LAN_IP: $LAN_IP"
@@ -154,7 +232,7 @@ write_env() {
 
   if (( direct_ports_requested == 1 )); then
     if [[ -z "${LAN_IP:-}" || "$LAN_IP" == "0.0.0.0" ]]; then
-      die "EXPOSE_DIRECT_PORTS=1 requires LAN_IP to be set to your host's private IPv4 address in arrconf/userconf.sh."
+      die "EXPOSE_DIRECT_PORTS=1 requires LAN_IP to be set to your host's private IPv4 address in ${userconf_path}."
     fi
     if ! is_private_ipv4 "$LAN_IP"; then
       die "LAN_IP='${LAN_IP}' is not a private IPv4 address. Set LAN_IP to your LAN host IP before exposing ports."
@@ -356,6 +434,7 @@ write_compose() {
     local include_local_dns=0
     local local_dns_state_message="Local DNS container disabled (ENABLE_LOCAL_DNS=0)"
     local -a upstream_dns_servers=()
+    local userconf_path="${ARR_USERCONF_PATH:-${ARR_BASE:-${HOME}/srv}/userr.conf}"
 
     mapfile -t upstream_dns_servers < <(collect_upstream_dns_servers)
 
@@ -390,7 +469,7 @@ write_compose() {
     {
       if ((include_caddy == 0)); then
         printf '# Caddy reverse proxy disabled (ENABLE_CADDY=0).\n'
-        printf '# Set ENABLE_CADDY=1 in arrconf/userconf.sh and rerun ./arrstack.sh to add HTTPS hostnames via Caddy.\n'
+        printf '# Set ENABLE_CADDY=1 in %s and rerun ./arrstack.sh to add HTTPS hostnames via Caddy.\n' "$userconf_path"
       fi
 
       cat <<'YAML'
@@ -984,6 +1063,7 @@ write_caddy_assets() {
   local data_dir="${caddy_root}/data"
   local config_dir="${caddy_root}/config"
   local caddyfile="${caddy_root}/Caddyfile"
+  local userconf_path="${ARR_USERCONF_PATH:-${ARR_BASE:-${HOME}/srv}/userr.conf}"
 
   ensure_dir "$caddy_root"
   ensure_dir "$data_dir"
@@ -1022,7 +1102,7 @@ write_caddy_assets() {
   local caddyfile_content
   caddyfile_content="$({
     printf '# Auto-generated by arrstack.sh\n'
-    printf '# Adjust LAN CIDRs or add TLS settings via arrconf/userconf.sh overrides.\n\n'
+    printf '# Adjust LAN CIDRs or add TLS settings via %s overrides.\n\n' "$userconf_path"
     printf '{\n'
     printf '  admin off\n'
     printf '}\n\n'
