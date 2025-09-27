@@ -23,6 +23,7 @@ Notes:
 - Replace `<LAN_IP>` with the address detected by the installer (example `192.168.1.50`).
 - If you enable Caddy and local DNS later, hostnames such as `https://qbittorrent.<suffix>` become available in addition to the raw IP:PORT URLs.
 - Use [Config reference](config.md) to locate additional overrides and credentials.
+- VueTorrent WebUI: keep `QBT_DOCKER_MODS` set to the LSIO mod for the built-in `/vuetorrent` assets, or clear it to install VueTorrent into `/config/vuetorrent` automatically on each run.
 
 ## Verify
 After `docker compose up -d`, open `http://<LAN_IP>:8080` in a browser to confirm qBittorrent is reachable. Enable the proxy profile later if you need HTTPS hostnames.

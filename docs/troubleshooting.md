@@ -16,6 +16,15 @@ Most issues come from DNS conflicts, VPN startup delays, or missing certificates
   ```
   The output should list `Server: 192.168.1.50`.
 
+### Symptom: VueTorrent returns HTTP 500 or the login page is blank
+- **Fix:** Rerun `./arrstack.sh` and ensure `QBT_DOCKER_MODS` matches the mode you expect. A non-empty value keeps the LSIO Docker mod active and points qBittorrent at `/vuetorrent`. Setting it blank triggers the manual installer, which refreshes `/config/vuetorrent`, verifies `public/index.html` and `version.txt`, and disables the Alternate WebUI if those files are missing so the default qBittorrent UI still loads.
+- **Verify:**
+  ```bash
+  docker exec qbittorrent test -f /vuetorrent/public/index.html   # LSIO mod
+  docker exec qbittorrent test -f /config/vuetorrent/public/index.html   # Manual install
+  ```
+  Only one of the checks should pass based on the configured mode. Edit `.env`/`userr.conf` and rerun `./arrstack.sh` if the wrong path succeeds.
+
 ### Symptom: Port 53 already in use on the Pi
 - **Fix:** Run the host helper to disable `systemd-resolved` and start the `local_dns` container.
   ```bash

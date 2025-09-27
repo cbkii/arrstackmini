@@ -1,85 +1,213 @@
 # shellcheck shell=bash
-install_vuetorrent() {
-  msg "🎨 Installing VueTorrent WebUI..."
 
-  local vuetorrent_dir="${ARR_DOCKER_DIR}/qbittorrent/vuetorrent"
+vuetorrent_manual_is_complete() {
+  local dir="$1"
+
+  [[ -d "$dir" && -f "$dir/public/index.html" && -f "$dir/version.txt" ]]
+}
+
+vuetorrent_manual_version() {
+  local dir="$1"
+
+  if [[ -f "$dir/version.txt" ]]; then
+    head -n1 "$dir/version.txt" 2>/dev/null | tr -d '\r\n'
+  fi
+}
+
+install_vuetorrent() {
+  local manual_dir="${ARR_DOCKER_DIR}/qbittorrent/vuetorrent"
   local releases_url="https://api.github.com/repos/VueTorrent/VueTorrent/releases/latest"
 
-  ensure_dir "$vuetorrent_dir"
-
-  local download_url=""
-  download_url=$(curl -sL "$releases_url" | jq -r '.assets[] | select(.name == "vuetorrent.zip") | .browser_download_url' 2>/dev/null || printf '')
-
-  if [[ -z "$download_url" ]]; then
-    warn "Could not find VueTorrent download URL, skipping..."
-    return 0
-  fi
-
-  if ! command -v unzip >/dev/null 2>&1; then
-    warn "unzip command not available; skipping VueTorrent installation"
-    return 0
-  fi
-
-  local temp_zip="/tmp/vuetorrent-$$.zip"
-  if ! curl -sL "$download_url" -o "$temp_zip"; then
-    rm -f "$temp_zip"
-    warn "  Failed to download VueTorrent, continuing without it"
-    return 0
-  fi
-
-  local temp_extract=""
-  if ! temp_extract="$(arrstack_mktemp_dir "/tmp/vuetorrent.XXXX")"; then
-    rm -f "$temp_zip"
-    warn "  Failed to create temporary directory for VueTorrent, continuing without it"
-    return 0
-  fi
-
-  if ! unzip -qo "$temp_zip" -d "$temp_extract"; then
-    rm -f "$temp_zip"
-    rm -rf "$temp_extract"
-    warn "  Failed to extract VueTorrent archive, continuing without it"
-    return 0
-  fi
-
-  rm -f "$temp_zip"
-
-  local source_root="$temp_extract"
-  if [[ ! -f "$source_root/index.html" ]]; then
-    local nested_index=""
-    nested_index="$(find "$temp_extract" -type f -name 'index.html' -print -quit 2>/dev/null || printf '')"
-    if [[ -n "$nested_index" ]]; then
-      source_root="$(dirname "$nested_index")"
+  if [[ "${VUETORRENT_MODE}" != "manual" ]]; then
+    msg "🎨 Using VueTorrent from LSIO Docker mod"
+    # shellcheck disable=SC2034
+    VUETORRENT_ALT_ENABLED=1
+    # shellcheck disable=SC2034
+    VUETORRENT_VERSION=""
+    # shellcheck disable=SC2034
+    VUETORRENT_STATUS_LEVEL="msg"
+    # shellcheck disable=SC2034
+    VUETORRENT_STATUS_MESSAGE="VueTorrent via LSIO Docker mod (WebUI root ${VUETORRENT_ROOT})."
+    if [[ -d "$manual_dir" ]]; then
+      msg "  Removing manual VueTorrent directory at ${manual_dir} (LSIO mod active)"
+      rm -rf "$manual_dir" 2>/dev/null || warn "  Could not remove ${manual_dir}"
     fi
-  fi
-
-  if [[ ! -f "$source_root/index.html" ]]; then
-    rm -rf "$temp_extract"
-    warn "  VueTorrent archive did not contain an index.html, skipping installation"
     return 0
   fi
 
-  find "$vuetorrent_dir" -mindepth 1 -exec rm -rf {} + 2>/dev/null || true
+  msg "🎨 Ensuring VueTorrent WebUI (manual mode)"
 
-  ensure_dir "$vuetorrent_dir"
-
-  local copy_failed=0
-  shopt -s dotglob nullglob
-  if ! cp -a "$source_root"/* "$vuetorrent_dir"/ 2>/dev/null; then
-    copy_failed=1
-  fi
-  shopt -u dotglob nullglob
-
-  rm -rf "$temp_extract"
-
-  if ((copy_failed)); then
-    warn "  Failed to install VueTorrent files, continuing without it"
-    return 0
+  local had_existing_complete=0
+  if vuetorrent_manual_is_complete "$manual_dir"; then
+    had_existing_complete=1
   fi
 
-  chown -R "${PUID}:${PGID}" "$vuetorrent_dir" 2>/dev/null || true
+  local attempted_install=0
+  local install_success=0
+  local download_url=""
+  local temp_zip=""
+  local temp_extract=""
+  local staging_dir=""
+  local backup_dir=""
+
+  while true; do
+    if ! check_dependencies jq unzip; then
+      warn "  Missing jq or unzip; skipping VueTorrent download"
+      break
+    fi
+
+    attempted_install=1
+
+    download_url=$(curl -sL "$releases_url" | jq -r '.assets[] | select(.name == "vuetorrent.zip") | .browser_download_url' 2>/dev/null || printf '')
+    if [[ -z "$download_url" ]]; then
+      warn "  Could not determine VueTorrent download URL"
+      break
+    fi
+
+    temp_zip="/tmp/vuetorrent-$$.zip"
+    if ! curl -sL "$download_url" -o "$temp_zip"; then
+      warn "  Failed to download VueTorrent archive"
+      break
+    fi
+
+    if ! temp_extract="$(arrstack_mktemp_dir "/tmp/vuetorrent.XXXX")"; then
+      warn "  Failed to create extraction directory"
+      break
+    fi
+
+    if ! unzip -qo "$temp_zip" -d "$temp_extract"; then
+      warn "  Failed to extract VueTorrent archive"
+      break
+    fi
+
+    local source_root="$temp_extract"
+    if [[ ! -f "$source_root/index.html" ]]; then
+      local nested_index=""
+      nested_index="$(find "$temp_extract" -type f -name 'index.html' -print -quit 2>/dev/null || printf '')"
+      if [[ -n "$nested_index" ]]; then
+        source_root="$(dirname "$nested_index")"
+      fi
+    fi
+
+    if [[ ! -f "$source_root/index.html" ]]; then
+      warn "  VueTorrent archive did not include index.html"
+      break
+    fi
+
+    if ! staging_dir="$(arrstack_mktemp_dir "/tmp/vuetorrent.staging.XXXX")"; then
+      warn "  Failed to create staging directory"
+      break
+    fi
+
+    if ! cp -a "$source_root"/. "$staging_dir"/; then
+      warn "  Failed to stage VueTorrent files"
+      break
+    fi
+
+    if [[ ! -f "$staging_dir/public/index.html" ]]; then
+      warn "  Staged VueTorrent files missing public/index.html"
+      break
+    fi
+
+    if [[ ! -f "$staging_dir/version.txt" ]]; then
+      warn "  Staged VueTorrent files missing version.txt"
+      break
+    fi
+
+    if [[ -d "$manual_dir" ]]; then
+      backup_dir="${manual_dir}.bak.$$"
+      if ! mv "$manual_dir" "$backup_dir"; then
+        warn "  Failed to move existing VueTorrent install aside"
+        break
+      fi
+    fi
+
+    ensure_dir "${ARR_DOCKER_DIR}/qbittorrent"
+    if ! mv "$staging_dir" "$manual_dir"; then
+      warn "  Failed to activate new VueTorrent install"
+      if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
+        mv "$backup_dir" "$manual_dir" 2>/dev/null || warn "  Failed to restore previous VueTorrent files"
+      fi
+      break
+    fi
+
+    staging_dir=""
+
+    if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
+      rm -rf "$backup_dir" 2>/dev/null || true
+      backup_dir=""
+    fi
+
+    install_success=1
+    break
+  done
+
+  if [[ -n "$temp_zip" ]]; then
+    rm -f "$temp_zip" 2>/dev/null || true
+  fi
+  if [[ -n "$temp_extract" ]]; then
+    rm -rf "$temp_extract" 2>/dev/null || true
+  fi
+  if [[ -n "$staging_dir" && -d "$staging_dir" ]]; then
+    rm -rf "$staging_dir" 2>/dev/null || true
+  fi
+  if [[ -n "$backup_dir" && -d "$backup_dir" && ! -d "$manual_dir" ]]; then
+    mv "$backup_dir" "$manual_dir" 2>/dev/null || rm -rf "$backup_dir" 2>/dev/null || true
+  fi
+
+  if ((install_success)); then
+    chown -R "${PUID}:${PGID}" "$manual_dir" 2>/dev/null || true
+  fi
+
+  local manual_complete=0
+  if vuetorrent_manual_is_complete "$manual_dir"; then
+    manual_complete=1
+  fi
+
+  if ((manual_complete)); then
+    local version
+    version="$(vuetorrent_manual_version "$manual_dir")"
+    # shellcheck disable=SC2034
+    VUETORRENT_VERSION="$version"
+    # shellcheck disable=SC2034
+    VUETORRENT_ALT_ENABLED=1
+    # shellcheck disable=SC2034
+    VUETORRENT_STATUS_LEVEL="msg"
+    if ((install_success)); then
+      msg "  ✅ VueTorrent installed at ${manual_dir}${version:+ (version ${version})}"
+    elif ((had_existing_complete)); then
+      msg "  ℹ️ VueTorrent already present at ${manual_dir}${version:+ (version ${version})}"
+    else
+      msg "  ✅ VueTorrent files verified at ${manual_dir}"
+    fi
+    if [[ -n "$version" ]]; then
+      # shellcheck disable=SC2034
+      VUETORRENT_STATUS_MESSAGE="VueTorrent manual install ready at ${VUETORRENT_ROOT} (version ${version})."
+    else
+      # shellcheck disable=SC2034
+      VUETORRENT_STATUS_MESSAGE="VueTorrent manual install ready at ${VUETORRENT_ROOT}."
+    fi
+  else
+    if ((attempted_install)); then
+      warn "  Manual VueTorrent install is incomplete"
+    elif ((had_existing_complete)); then
+      warn "  Existing VueTorrent files missing required assets"
+    else
+      warn "  Manual VueTorrent files not found"
+    fi
+    # shellcheck disable=SC2034
+    VUETORRENT_VERSION=""
+    # shellcheck disable=SC2034
+    VUETORRENT_ALT_ENABLED=0
+    # shellcheck disable=SC2034
+    VUETORRENT_STATUS_LEVEL="warn"
+    # shellcheck disable=SC2034
+    VUETORRENT_STATUS_MESSAGE="Manual VueTorrent install unavailable; qBittorrent default UI active."
+    write_qbt_config
+  fi
+
   docker ps -a --filter "label=com.docker.compose.project=arrstack" --format "{{.ID}}" \
     | xargs -r docker rm -f >/dev/null 2>&1 || true
-  msg "  ✅ VueTorrent installed successfully"
 }
 
 service_container_name() {

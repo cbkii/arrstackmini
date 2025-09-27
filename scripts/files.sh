@@ -636,6 +636,11 @@ YAML
       PGID: ${PGID}
       TZ: ${TIMEZONE}
       LANG: en_US.UTF-8
+YAML
+    if [[ -n "${QBT_DOCKER_MODS}" ]]; then
+      printf '      DOCKER_MODS: ${QBT_DOCKER_MODS}\n' >>"$tmp"
+    fi
+    cat <<'YAML' >>"$tmp"
     volumes:
       - ${ARR_DOCKER_DIR}/qbittorrent:/config
       - ${DOWNLOADS_DIR}:/downloads
@@ -1252,6 +1257,12 @@ write_qbt_config() {
   QBT_AUTH_WHITELIST="$auth_whitelist"
   msg "  Stored WebUI auth whitelist entries: ${auth_whitelist}"
 
+  local vt_root="${VUETORRENT_ROOT:-/config/vuetorrent}"
+  local vt_alt_value="true"
+  if [[ "${VUETORRENT_ALT_ENABLED:-1}" -eq 0 ]]; then
+    vt_alt_value="false"
+  fi
+
   local default_conf
   default_conf="$(cat <<EOF
 [AutoRun]
@@ -1278,8 +1289,8 @@ Downloads\SavePath=/completed/
 Downloads\TempPath=/downloads/incomplete/
 Downloads\TempPathEnabled=true
 WebUI\Address=0.0.0.0
-WebUI\AlternativeUIEnabled=true
-WebUI\RootFolder=/config/vuetorrent
+WebUI\AlternativeUIEnabled=${vt_alt_value}
+WebUI\RootFolder=${vt_root}
 WebUI\Port=8080
 WebUI\Username=${QBT_USER}
 WebUI\LocalHostAuth=true
@@ -1299,15 +1310,19 @@ EOF
   fi
 
   local managed_spec
-  managed_spec=$'WebUI\\AlternativeUIEnabled=true\n'
-  managed_spec+=$'WebUI\\RootFolder=/config/vuetorrent\n'
-  managed_spec+=$'WebUI\\ServerDomains=*\n'
-  managed_spec+=$'WebUI\\LocalHostAuth=true\n'
-  managed_spec+=$'WebUI\\AuthSubnetWhitelistEnabled=true\n'
-  managed_spec+=$'WebUI\\CSRFProtection=true\n'
-  managed_spec+=$'WebUI\\ClickjackingProtection=true\n'
-  managed_spec+=$'WebUI\\HostHeaderValidation=true\n'
-  managed_spec+="WebUI\\AuthSubnetWhitelist=${auth_whitelist}"
+  local -a managed_lines=(
+    "WebUI\\AlternativeUIEnabled=${vt_alt_value}"
+    "WebUI\\RootFolder=${vt_root}"
+    "WebUI\\ServerDomains=*"
+    "WebUI\\LocalHostAuth=true"
+    "WebUI\\AuthSubnetWhitelistEnabled=true"
+    "WebUI\\CSRFProtection=true"
+    "WebUI\\ClickjackingProtection=true"
+    "WebUI\\HostHeaderValidation=true"
+    "WebUI\\AuthSubnetWhitelist=${auth_whitelist}"
+  )
+  managed_spec="$(printf '%s\n' "${managed_lines[@]}")"
+  managed_spec="${managed_spec%$'\n'}"
 
   local managed_spec_for_awk
   # Escape backslashes so awk -v does not treat sequences like \A as escapes

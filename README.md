@@ -54,6 +54,13 @@ curl -I http://192.168.1.50:8080
 ```
 You should see an HTTP 200/302 response. If not, re-run the installer and confirm `LAN_IP` matches the host you’re testing from.
 
+### VueTorrent WebUI modes
+
+- **Default (LSIO mod):** `QBT_DOCKER_MODS` defaults to the VueTorrent LSIO Docker mod so `/vuetorrent` is provisioned automatically inside the container. Leave the value in `.env`/`userr.conf` to stay on this mode.
+- **Manual install:** Clear `QBT_DOCKER_MODS`, rerun `./arrstack.sh`, and the installer downloads VueTorrent into `/config/vuetorrent`, verifies `public/index.html` and `version.txt`, and points qBittorrent at that folder.
+- **Switch safely:** Changing `QBT_DOCKER_MODS` and rerunning the installer flips modes idempotently. The script rewrites qBittorrent’s `WebUI\RootFolder`, removes stale manual files when the mod is active, and disables the Alternate WebUI if the manual folder is incomplete so the default qBittorrent UI still loads.
+- **Do not mix:** Avoid copying VueTorrent files by hand once the installer runs. Update `QBT_DOCKER_MODS` instead so the scripts keep qBittorrent aligned with the chosen mode.
+
 ## Useful commands
 - `./arrstack.sh --rotate-api-key --yes` regenerates the Gluetun API key and writes it back to `.env`.
 - `./arrstack.sh --rotate-caddy-auth --yes` creates a new Caddy basic-auth password and saves the plaintext copy in `docker-data/caddy/credentials`.
