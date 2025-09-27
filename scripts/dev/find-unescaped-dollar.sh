@@ -5,9 +5,14 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/dev/find-unescaped-dollar.sh [COMPOSE_FILE]
 
-Scan a docker-compose.yml for environment interpolation tokens (e.g. ${VAR})
-and report any that do not have a matching definition in the generated .env file
-or the repository defaults.
+Scan docker-compose.yml for ${VAR} tokens and report any that do not have a
+matching definition from:
+  - The generated .env (if present)
+  - arrconf/userr.conf.defaults.sh
+  - ${ARR_BASE}/userr.conf (if present)
+  - The derived variable allow list (ARRSTACK_DERIVED_ENV_VARS)
+
+This helper no longer reads .env.example (deprecated as a configuration surface).
 USAGE
 }
 
@@ -19,7 +24,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-compose_file="${1:-}";
+compose_file="${1:-}"
 if [[ -z "$compose_file" ]]; then
   if [[ -n "${ARR_STACK_DIR:-}" ]]; then
     compose_file="${ARR_STACK_DIR}/docker-compose.yml"
@@ -35,35 +40,44 @@ fi
 
 compose_dir="$(cd "$(dirname "$compose_file")" && pwd)"
 
-collect_keys() {
+collect_keys_from_file() {
   local file="$1"
-  if [[ ! -f "$file" ]]; then
-    return
-  fi
-  awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/ {print $1}' "$file"
+  [[ -f "$file" ]] || return 0
+  awk -F= '/^[A-Za-z_][A-Za-z0-9_]*=/{print $1}' "$file"
+}
+
+collect_shell_vars() {
+  (
+    set -a
+    # shellcheck disable=SC1091
+    . "${REPO_ROOT}/arrconf/userr.conf.defaults.sh" 2>/dev/null || true
+    local userconf="${ARR_USERCONF_PATH:-${ARR_BASE:-${HOME}/srv}/userr.conf}"
+    if [[ -f "$userconf" ]]; then
+      # shellcheck disable=SC1090,SC1091
+      . "$userconf" 2>/dev/null || true
+    fi
+
+    if declare -f arrstack_collect_all_expected_env_keys >/dev/null 2>&1; then
+      arrstack_collect_all_expected_env_keys
+    else
+      printf '%s\n' "${ARRSTACK_USERCONF_TEMPLATE_VARS[@]:-}" "${ARRSTACK_DERIVED_ENV_VARS[@]:-}"
+    fi
+  ) | awk 'NF' | sort -u
 }
 
 declare -A allow_map=()
 
-while IFS= read -r key; do
-  [[ -z "$key" ]] && continue
-  allow_map["$key"]=1
-done < <(collect_keys "${compose_dir}/.env" 2>/dev/null || true)
+if [[ -f "${compose_dir}/.env" ]]; then
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    allow_map["$key"]=1
+  done < <(collect_keys_from_file "${compose_dir}/.env")
+fi
 
 while IFS= read -r key; do
-  [[ -z "$key" ]] && continue
+  [[ -n "$key" ]] || continue
   allow_map["$key"]=1
-done < <(collect_keys "${REPO_ROOT}/.env.example" 2>/dev/null || true)
-
-while IFS= read -r key; do
-  [[ -z "$key" ]] && continue
-  allow_map["$key"]=1
-done < <(collect_keys "${REPO_ROOT}/arrconf/userr.conf.defaults.sh" 2>/dev/null || true)
-
-while IFS= read -r key; do
-  [[ -z "$key" ]] && continue
-  allow_map["$key"]=1
-done < <(collect_keys "${REPO_ROOT}/arrconf/userr.conf.example" 2>/dev/null || true)
+done < <(collect_shell_vars)
 
 # Common compose internals we intentionally reference
 for key in COMPOSE_PROJECT_NAME DOCKER_CLIENT_TIMEOUT DOCKER_HOST; do

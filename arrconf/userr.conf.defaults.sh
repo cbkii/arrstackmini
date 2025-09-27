@@ -49,7 +49,7 @@ COMPLETED_DIR="${COMPLETED_DIR:-${DOWNLOADS_DIR}/completed}"
 MEDIA_DIR="${MEDIA_DIR:-/media/mediasmb}"
 TV_DIR="${TV_DIR:-${MEDIA_DIR}/Shows}"
 MOVIES_DIR="${MOVIES_DIR:-${MEDIA_DIR}/Movies}"
-# SUBS_DIR="${SUBS_DIR:-${MEDIA_DIR}/subs}"
+SUBS_DIR="${SUBS_DIR:-}"
 
 # Container identity (current user by default)
 PUID="${PUID:-$(id -u)}"
@@ -211,6 +211,26 @@ FLARESOLVERR_IMAGE="${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.3
 CONFIGARR_IMAGE="${CONFIGARR_IMAGE:-ghcr.io/raydak-labs/configarr:latest}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 #
+# ConfigArr quality/profile defaults
+ARR_VIDEO_MIN_RES="${ARR_VIDEO_MIN_RES:-720p}"
+ARR_VIDEO_MAX_RES="${ARR_VIDEO_MAX_RES:-1080p}"
+ARR_EP_MIN_MB="${ARR_EP_MIN_MB:-250}"
+ARR_EP_MAX_GB="${ARR_EP_MAX_GB:-5}"
+ARR_TV_RUNTIME_MIN="${ARR_TV_RUNTIME_MIN:-45}"
+ARR_SEASON_MAX_GB="${ARR_SEASON_MAX_GB:-30}"
+ARR_LANG_PRIMARY="${ARR_LANG_PRIMARY:-en}"
+ARR_ENGLISH_ONLY="${ARR_ENGLISH_ONLY:-1}"
+ARR_DISCOURAGE_MULTI="${ARR_DISCOURAGE_MULTI:-1}"
+ARR_PENALIZE_HD_X265="${ARR_PENALIZE_HD_X265:-1}"
+ARR_STRICT_JUNK_BLOCK="${ARR_STRICT_JUNK_BLOCK:-1}"
+ARR_JUNK_NEGATIVE_SCORE="${ARR_JUNK_NEGATIVE_SCORE:--1000}"
+ARR_X265_HD_NEGATIVE_SCORE="${ARR_X265_HD_NEGATIVE_SCORE:--200}"
+ARR_MULTI_NEGATIVE_SCORE="${ARR_MULTI_NEGATIVE_SCORE:--50}"
+ARR_ENGLISH_POSITIVE_SCORE="${ARR_ENGLISH_POSITIVE_SCORE:-50}"
+SONARR_TRASH_TEMPLATE="${SONARR_TRASH_TEMPLATE:-sonarr-v4-quality-profile-web-1080p}"
+RADARR_TRASH_TEMPLATE="${RADARR_TRASH_TEMPLATE:-radarr-v5-quality-profile-hd-bluray-web}"
+ARR_MBMIN_DECIMALS="${ARR_MBMIN_DECIMALS:-1}"
+#
 # Behaviour flags
 ASSUME_YES="${ASSUME_YES:-0}"
 FORCE_ROTATE_API_KEY="${FORCE_ROTATE_API_KEY:-0}"
@@ -258,6 +278,45 @@ ARRSTACK_USERCONF_TEMPLATE_VARS=(
   CONFIGARR_IMAGE
 )
 
+ARRSTACK_USERCONF_IMPLICIT_VARS=(
+  ARR_BASE
+  ARR_STACK_DIR
+  ARR_ENV_FILE
+  ARR_DOCKER_DIR
+  CADDY_IMAGE
+  ARR_PERMISSION_PROFILE
+  DOWNLOADS_DIR
+  COMPLETED_DIR
+  MEDIA_DIR
+  TV_DIR
+  MOVIES_DIR
+  SUBS_DIR
+  LAN_IP
+  LOCALHOST_IP
+  PUID
+  PGID
+  QBT_USER
+  QBT_PASS
+  GLUETUN_API_KEY
+)
+
+# Derived (non-user) environment keys written into .env by write_env; kept here
+# so tooling can validate compose interpolation without needing .env.example.
+ARRSTACK_DERIVED_ENV_VARS=(
+  VPN_TYPE
+  DNS_HOST_ENTRY
+  OPENVPN_USER
+  OPENVPN_PASSWORD
+  OPENVPN_USER_ENFORCED
+  COMPOSE_PROJECT_NAME
+  COMPOSE_PROFILES
+  VPN_SERVICE_PROVIDER
+  GLUETUN_API_KEY
+  GLUETUN_FIREWALL_INPUT_PORTS
+  GLUETUN_FIREWALL_OUTBOUND_SUBNETS
+  CADDY_BASIC_AUTH_HASH
+)
+
 # shellcheck disable=SC2034  # exported for template rendering via envsubst
 UPSTREAM_DNS_2_DISPLAY="${UPSTREAM_DNS_2:-<unset>}"
 
@@ -280,6 +339,35 @@ arrstack_userconf_envsubst_spec() {
   done
 
   printf '%s\n' "${spec# }"
+}
+
+arrstack_collect_all_expected_env_keys() {
+  local -A seen=()
+  local -a ordered=()
+  local var=""
+
+  for var in "${ARRSTACK_USERCONF_TEMPLATE_VARS[@]:-}"; do
+    if [[ -n "$var" && -z "${seen[$var]:-}" ]]; then
+      ordered+=("$var")
+      seen["$var"]=1
+    fi
+  done
+
+  for var in "${ARRSTACK_USERCONF_IMPLICIT_VARS[@]:-}"; do
+    if [[ -n "$var" && -z "${seen[$var]:-}" ]]; then
+      ordered+=("$var")
+      seen["$var"]=1
+    fi
+  done
+
+  for var in "${ARRSTACK_DERIVED_ENV_VARS[@]:-}"; do
+    if [[ -n "$var" && -z "${seen[$var]:-}" ]]; then
+      ordered+=("$var")
+      seen["$var"]=1
+    fi
+  done
+
+  printf '%s\n' "${ordered[@]}"
 }
 
 arrstack_render_userconf_template() {

@@ -26,7 +26,7 @@ The stack pins each image to a tested tag. Occasionally a registry removes an ol
    cd "${ARR_STACK_DIR:-$PWD}/.."
    tar -czf "arrstack-backup-$(date +%Y%m%d).tar.gz" arrstack docker-data
    ```
-2. **Adjust tags.** Edit `.env` or `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`) to change any `*_IMAGE` values.
+2. **Adjust tags.** Edit `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`) to change any `*_IMAGE` values; the installer will regenerate `.env` for you.
 3. **Apply changes.**
    ```bash
    ./arrstack.sh --yes
@@ -39,7 +39,7 @@ The stack pins each image to a tested tag. Occasionally a registry removes an ol
    Ensure every container reports `running` before resuming automation.
 
 ### Recover from `manifest unknown`
-1. Run the helper to repair `.env`:
+1. Run the helper to repair the generated `.env`:
    ```bash
    ${ARR_STACK_DIR}/scripts/fix-versions.sh
    ```

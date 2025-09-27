@@ -24,10 +24,10 @@ Copy `arrconf/proton.auth.example` to `arrconf/proton.auth` and fill in `PROTON_
 Use the group that owns your shared downloads or media storage (for example `getent group media`). The installer grants group read/write access only when `PGID` matches that group. Leaving `PGID=0` (root group) keeps the safer `750/640` defaults and prints a warning so you can avoid exposing write access to every root user on the host.
 
 ### How do I update to new container versions?
-Read [Version management](VERSION_MANAGEMENT.md). Back up `.env`, adjust tags, rerun `./arrstack.sh --yes`, and confirm services start.
+Read [Version management](VERSION_MANAGEMENT.md). Back up your configuration (including `${ARR_BASE}/userr.conf`), adjust tags there, rerun `./arrstack.sh --yes`, and confirm services start.
 
 ### What if I want to rerun the installer safely?
-It is idempotent. Run `./arrstack.sh --yes` anytime after editing `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`) or `.env`. The script shows a summary before it restarts containers.
+It is idempotent. Run `./arrstack.sh --yes` anytime after editing `${ARR_BASE}/userr.conf` (default `~/srv/userr.conf`). The script shows a summary before it restarts containers.
 
 ### Can I expose services to the Internet?
 Only through Gluetun and Caddy with strong basic auth. Forwarding ports directly from the Pi bypasses VPN protection and is not recommended.
