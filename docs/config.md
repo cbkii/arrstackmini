@@ -49,6 +49,10 @@ Clear defaults keep the stack reproducible. Changing only what you need reduces 
 - **Image tags (`*_IMAGE`)** – pinned to known-good releases. Update only after reading [Version management](VERSION_MANAGEMENT.md).
 - **Service ports (`*_PORT`)** – exposed on the LAN as `http://LAN_IP:PORT` by default. Enabling Caddy adds HTTPS frontends on 80/443.
 
+### Logging
+- **`ARR_LOG_DIR`** – relocate installer and runtime logs (defaults to `${ARR_STACK_DIR}/logs`). The installer now respects the directory override when creating log files and symlinks.
+- **`ARR_INSTALL_LOG`** – path for a stable symlink pointing to the latest installer run. Keep the default (`${ARR_LOG_DIR}/arrstack-install.log`) unless you archive logs elsewhere.
+
 ### Advanced flags (rarely change)
 - **`ASSUME_YES`** – set to `1` only for unattended installs.
 - **`FORCE_ROTATE_API_KEY`**, **`FORCE_REGEN_CADDY_AUTH`**, **`SETUP_HOST_DNS`**, **`REFRESH_ALIASES`** – automation knobs used by `arrstack.sh`. Trigger them with command-line flags instead of editing the file directly.

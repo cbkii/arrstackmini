@@ -562,17 +562,41 @@ die() {
 }
 
 init_logging() {
-  local log_dir="${ARR_STACK_DIR}/logs"
-  mkdir -p "$log_dir"
+  local log_dir="${ARR_LOG_DIR:-${ARR_STACK_DIR}/logs}"
+  ensure_dir_mode "$log_dir" "$DATA_DIR_MODE"
 
-  LOG_FILE="${log_dir}/arrstack-$(date +%Y%m%d-%H%M%S).log"
-  ln -sf "$LOG_FILE" "${log_dir}/latest.log"
+  local timestamp
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  LOG_FILE="${log_dir}/arrstack-${timestamp}.log"
+
+  : >"$LOG_FILE"
+  ensure_nonsecret_file_mode "$LOG_FILE"
+
+  local latest_link="${log_dir}/latest.log"
+  ln -sf "$LOG_FILE" "$latest_link"
+
+  local install_log="${ARR_INSTALL_LOG:-${log_dir}/arrstack-install.log}"
+  local install_hint=""
+  if [[ -n "$install_log" ]]; then
+    local install_dir
+    install_dir="$(dirname "$install_log")"
+    ensure_dir_mode "$install_dir" "$DATA_DIR_MODE"
+    if [[ "$install_log" != "$LOG_FILE" ]]; then
+      ln -sf "$LOG_FILE" "$install_log"
+      install_hint="Latest install log symlink: ${install_log}"
+    else
+      install_hint="Install log: ${install_log}"
+    fi
+  fi
 
   exec > >(tee -a "$LOG_FILE")
   exec 2>&1
 
   msg "Installation started at $(date)"
   msg "Log file: $LOG_FILE"
+  if [[ -n "$install_hint" ]]; then
+    msg "$install_hint"
+  fi
 }
 
 acquire_lock() {
