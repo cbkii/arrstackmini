@@ -77,6 +77,16 @@ PF_ASYNC_MAX_TOTAL_WAIT="45"    # Async helper max wait time when rotating (defa
 PF_ASYNC_POLL_INTERVAL="5"      # Async helper polling interval in seconds (default: 5)
 PF_ASYNC_CYCLE_AFTER="30"          # Async helper retry interval for fresh ports (default: 30)
 
+# --- VPN Auto-Reconnect Settings (advanced) ---
+# VPN_AUTO_RECONNECT_ENABLED="0"                    # Enable auto-reconnect feature (default: 0)
+# VPN_SPEED_THRESHOLD_KBPS="12"                     # Speed threshold in kbps (default: 12)
+# VPN_CHECK_INTERVAL_MINUTES="20"                   # Check interval in minutes (default: 20)
+# VPN_CONSECUTIVE_CHECKS="3"                        # Required consecutive slow checks (default: 3)
+# VPN_ALLOWED_HOURS_START="2"                       # Start hour for auto-reconnect window (default: 2)
+# VPN_ALLOWED_HOURS_END="8"                         # End hour for auto-reconnect window (default: 8)
+# VPN_RECONNECT_COOLDOWN_HOURS="24"                 # Hours to wait after max attempts (default: 24)
+# VPN_MAX_ATTEMPTS_PER_SESSION="6"                  # Max reconnect attempts before cooldown (default: 6)
+
 # --- Container images (advanced) ---
 # GLUETUN_IMAGE="qmcgaw/gluetun:v3.39.1"                     # Override the Gluetun container tag
 # QBITTORRENT_IMAGE="lscr.io/linuxserver/qbittorrent:5.1.2-r2-ls415"  # Override the qBittorrent container tag

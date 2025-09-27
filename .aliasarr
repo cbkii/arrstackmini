@@ -500,6 +500,15 @@ ProtonVPN & Gluetun (arr.vpn ...):
   arr.vpn paths                Display credential/config paths for ProtonVPN assets
   arr.vpn creds                Open ${ARRCONF_DIR}/proton.auth in $EDITOR for quick edits
 
+VPN Auto-Reconnect (arr.vpn.auto ...):
+  arr.vpn.auto.status          Show auto-reconnect status and configuration
+  arr.vpn.auto.enable          Enable auto-reconnect (requires VPN_AUTO_RECONNECT_ENABLED=1 in .env)
+  arr.vpn.auto.disable         Disable auto-reconnect
+  arr.vpn.auto.pause           Temporarily pause auto-reconnect
+  arr.vpn.auto.kill            Disable auto-reconnect for 24 hours
+  arr.vpn.auto.logs            Follow auto-reconnect history log
+  arr.vpn.auto.test            Test VPN reconnection once
+
 qBittorrent helpers:
   arr.qbt.url                  Print the qBittorrent base URL
   arr.qbt.list                 List torrent names
@@ -925,3 +934,20 @@ arr.bazarr.restart() { docker restart bazarr; }
 arr.flaresolverr.url() { printf 'http://%s:%s\n' "$(_arr_host)" "$(_arr_env_get FLARESOLVERR_PORT)"; }
 arr.flaresolverr.logs() { docker logs -f flaresolverr; }
 arr.flaresolverr.restart() { docker restart flaresolverr; }
+
+# VPN Auto-Reconnect helpers
+arr.vpn.auto.status() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" status; }
+arr.vpn.auto.enable() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" enable; }
+arr.vpn.auto.disable() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" disable; }
+arr.vpn.auto.pause() { touch "${ARR_STACK_DIR}/.vpn-reconnect-pause"; echo "VPN auto-reconnect temporarily paused"; }
+arr.vpn.auto.kill() { touch "${ARR_STACK_DIR}/.vpn-reconnect-kill-24h"; echo "VPN auto-reconnect disabled for 24 hours"; }
+arr.vpn.auto.logs() { 
+  local log_file="${ARR_DOCKER_DIR}/gluetun/auto-reconnect/history.log"
+  if [[ -f "$log_file" ]]; then
+    tail -f "$log_file"
+  else
+    echo "VPN auto-reconnect history log not found: $log_file" >&2
+    return 1
+  fi
+}
+arr.vpn.auto.test() { "${ARR_STACK_DIR}/scripts/vpn-auto-reconnect.sh" test-reconnect; }
