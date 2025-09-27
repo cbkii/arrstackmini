@@ -2,8 +2,6 @@
 
 Self-host the *arr ecosystem on a Raspberry Pi 5 or any Debian Bookworm box with Proton VPN port forwarding. Designed for beginners who want a fast, reproducible home media stack.
 
-> **Note:** `.env.example` is deprecated. Copy `arrconf/userr.conf.example` to `${ARR_BASE:-$HOME/srv}/userr.conf`, edit that file (along with `arrconf/proton.auth`), then rerun `./arrstack.sh` to regenerate everything. Do not modify `.env.example`; it will be removed in a future release.
-
 ## Prerequisites
 - Raspberry Pi 5 (or similar 64-bit Debian Bookworm host) with static LAN IP, 4 CPU cores, 4 GB RAM.
 - Proton VPN Plus or Unlimited account for port forwarding.
@@ -51,6 +49,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g
 9. **Optional HTTPS/DNS extras.** Install the internal CA with `scripts/install-caddy-ca.sh` or take over host DNS via `./arrstack.sh --setup-host-dns` (**CAUTION:** modifies resolver; roll back with `scripts/host-dns-rollback.sh`).
 
 ### Configuration flow
+   > **Note:** `.env.example` is deprecated. Copy `arrconf/userr.conf.example` to `${ARR_BASE:-$HOME/srv}/userr.conf`, edit that file (along with `arrconf/proton.auth`), then rerun `./arrstack.sh` to regenerate everything. Do not modify `.env.example`; it will be removed in a future release.
+
 - **Defaults:** `arrconf/userr.conf.defaults.sh`
 - **User overrides:** `${ARR_BASE:-$HOME/srv}/userr.conf`
 - **Proton credentials:** `arrconf/proton.auth` (`PROTON_USER` / `PROTON_PASS`; `+pmp` is enforced automatically)
